@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Local data / confidential files
+data/excel/*
+!data/excel/.gitkeep
+data/sqlite/*
+!data/sqlite/.gitkeep
+*.xlsx
+*.xlsm
+*.xls
+*.db
+*.sqlite
+*.sqlite3
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
