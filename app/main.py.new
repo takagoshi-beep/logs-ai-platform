@@ -2,16 +2,12 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 
 from database.inspector import get_table_row_count, get_table_sample, list_tables
-from database.importer import import_latest_excel_to_sqlite
-from database.schema_inspector import get_table_schema, list_database_schema
-from database.sql_executor import execute_sql
 from database.status import get_database_status
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_EXCEL_DIR = ROOT_DIR / "data" / "excel"
 DEFAULT_DB_PATH = ROOT_DIR / "data" / "sqlite" / "logsys.db"
 
 app = FastAPI(
@@ -109,9 +105,8 @@ def run_query(payload: dict[str, str]) -> dict[str, Any]:
     from database.connection import get_db_connection
 
     with get_db_connection(DEFAULT_DB_PATH) as conn:
-        cursor = conn.execute(sql)
-        rows = cursor.fetchall()
-        columns = [description[0] for description in cursor.description] if cursor.description else []
+        rows = conn.execute(sql).fetchall()
+        columns = [row[0] for row in conn.execute(f"SELECT * FROM ({sql}) LIMIT 0").description]
 
     return {
         "sql": sql,
@@ -123,64 +118,3 @@ def run_query(payload: dict[str, str]) -> dict[str, Any]:
 @app.get("/db/status")
 def db_status() -> dict[str, Any]:
     return get_database_status(DEFAULT_DB_PATH)
-
-
-@app.get("/db/schema")
-def db_schema() -> list[dict[str, Any]]:
-    if not DEFAULT_DB_PATH.exists():
-        raise HTTPException(status_code=404, detail="Database file not found")
-    return list_database_schema(DEFAULT_DB_PATH)
-
-
-@app.get("/db/schema/{table_name}")
-def db_schema_table(table_name: str) -> dict[str, Any]:
-    if not DEFAULT_DB_PATH.exists():
-        raise HTTPException(status_code=404, detail="Database file not found")
-    try:
-        return get_table_schema(DEFAULT_DB_PATH, table_name)
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Table not found")
-
-
-@app.post("/db/sql")
-def db_sql(payload: dict[str, str]) -> dict[str, Any]:
-    if not DEFAULT_DB_PATH.exists():
-        raise HTTPException(status_code=404, detail="Database file not found")
-
-    sql = (payload.get("sql") or "").strip()
-    try:
-        rows = execute_sql(DEFAULT_DB_PATH, sql)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    return {
-        "success": True,
-        "rows": rows,
-        "count": len(rows),
-    }
-
-
-@app.post("/db/import")
-def db_import() -> dict[str, Any]:
-    try:
-        result = import_latest_excel_to_sqlite(DEFAULT_EXCEL_DIR, DEFAULT_DB_PATH)
-    except Exception as exc:
-        return JSONResponse(
-            status_code=500,
-            content={"success": False, "error": f"Importer failure: {exc}"},
-        )
-
-    if result["status"] != "ok":
-        return JSONResponse(
-            status_code=500,
-            content={"success": False, "error": result.get("message", "Database import failed")},
-        )
-
-    return {
-        "success": True,
-        "excel_file": result["excel_path"],
-        "database": result["db_path"],
-        "tables": result["tables"],
-    }

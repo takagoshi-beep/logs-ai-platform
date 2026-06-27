@@ -54,3 +54,14 @@ def test_import_latest_excel_to_sqlite_creates_database_and_registry(tmp_path: P
     assert registry_rows >= 1
     assert schema_rows >= 1
     assert validation_rows >= 1
+
+
+def test_import_latest_excel_to_sqlite_returns_error_when_no_excel_file(tmp_path: Path) -> None:
+    excel_dir = tmp_path / "excel"
+    excel_dir.mkdir(parents=True)
+    db_path = tmp_path / "sqlite" / "logsys.db"
+
+    result = importer.import_latest_excel_to_sqlite(excel_dir, db_path)
+
+    assert result["status"] == "error"
+    assert "No Excel files found" in result["message"]
