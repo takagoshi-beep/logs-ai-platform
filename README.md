@@ -80,6 +80,16 @@ The API will expose:
 
 Business modules are available in `business/` for domain-specific data access.
 
+### Customer business module
+
+The customer business module supports flexible customer data access based on schema inspection.
+
+- `get_customer_schema(db_path)` returns the customer table and columns.
+- `get_customers(db_path, limit=100)` returns customer rows.
+- `get_customer(db_path, customer_code)` returns a single customer.
+- `search_customers(db_path, keyword, limit=100)` searches customers by name.
+- `get_top_customers_by_sales(db_path, limit=10)` reuses sales logic for customer sales ranking.
+
 Open:
 
 ```text

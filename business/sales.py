@@ -14,7 +14,7 @@ from database.sql_executor import execute_sql
 SALES_TABLE_KEYWORDS = ["sales", "order", "invoice", "transaction", "revenue"]
 CUSTOMER_KEYWORDS = ["customer", "client", "buyer"]
 DATE_KEYWORDS = ["date", "order_date", "invoice_date", "transaction_date", "sale_date"]
-AMOUNT_KEYWORDS = ["amount", "total", "price", "revenue", "sales_amount"]
+AMOUNT_KEYWORDS = ["amount", "total", "price", "revenue", "sales_amount", "sales"]
 
 
 def _find_best_table_name(table_names: list[str]) -> str | None:
