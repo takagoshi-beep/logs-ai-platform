@@ -154,6 +154,118 @@ The product business module provides dynamic access to product-related tables us
 - `get_product(db_path, product_code)` returns a single product by product code.
 - `search_products(db_path, keyword, limit=50)` searches product names.
 
+## Sprint 7: business intent and routing
+
+The business layer now separates intent classification from execution routing so future LLM-based replacements can be introduced more easily.
+
+- `business/intent.py` provides rule-based `classify_intent(message)` for domain/action detection.
+- `business/router.py` provides `route_business_query(message, db_path)` to dispatch to existing sales/product/customer business functions.
+- `POST /business/query` accepts a message and returns the detected intent together with the routed result.
+
+## Sprint 8: enhanced intent parsing
+
+Intent parsing now also extracts:
+
+- `period`: `today`, `yesterday`, `this_month`, `last_month`, or `this_year`
+- `count`: numeric ranking size such as `5` from `トップ5`
+- `category`: normalized product categories such as `hat`, `bag`, or `sunglasses`
+
+These fields are added to the JSON intent payload while preserving the existing `domain`, `action`, and `keywords` structure for compatibility.
+
+## Sprint 9: system map and logic registry
+
+The platform now exposes a simple registry of business logic so the AI layer can understand the available operations.
+
+- `system/definitions.py` stores the logic catalog.
+- `system/logic_registry.py` provides accessors for the registry and system map.
+- `GET /system/map` returns a grouped overview of domains and logic names.
+- `GET /system/logic` returns the full logic registry.
+- `GET /system/logic/{logic_name}` returns the metadata for a specific logic.
+
+## Sprint 10: knowledge layer
+
+A new knowledge layer keeps business terminology and company/brand information separate from the business logic layer.
+
+- `knowledge/glossary.py` stores glossary items such as OEM, ODM, gross profit, logical cost, and actual cost.
+- `knowledge/company.py` stores company metadata such as LOGS, 丸太屋, FOLTEK, and Arts Division.
+- `knowledge/brands.py` stores brand metadata such as newhattan.
+- `GET /knowledge` returns all knowledge categories.
+- `GET /knowledge/{category}` returns a specific category.
+- `GET /knowledge/search?q=` searches the glossary entries.
+
+## Sprint 11: planner layer
+
+A lightweight rule-based planner has been added to compose multi-step actions from intent, knowledge, business logic, and system metadata.
+
+- `planner/plan.py` creates a plan from a natural-language message.
+- `planner/executor.py` executes the plan step by step.
+- `POST /planner/plan` returns the generated plan.
+- `POST /planner/execute` executes the generated plan.
+
+## Sprint 12: workflow layer
+
+A new workflow layer manages how the planner's steps are executed as a structured flow.
+
+- `workflow/models.py` defines `Workflow`, `WorkflowStep`, and `WorkflowResult` objects.
+- `workflow/builder.py` converts planner steps into a workflow object.
+- `workflow/engine.py` executes workflow steps while delegating to the existing knowledge, business, and system modules.
+- `POST /workflow/create` creates a workflow from a plan or message.
+- `POST /workflow/run` executes a workflow.
+
+## Sprint 13: answer generation
+
+The platform now includes a lightweight answer generator that turns workflow results into human-readable text.
+
+- `answer/generator.py` creates a natural-language response from workflow results.
+- `answer/formatter.py` provides helpers for knowledge, ranking, list, and system output formatting.
+- `POST /answer` runs planning, workflow execution, and answer generation in sequence.
+
+## Sprint 14: learning layer
+
+A learning layer was added to capture query logs, feedback, and improvement requests without modifying business logic or definitions automatically.
+
+- `learning/query_log.py` stores query logs with intent, plan, workflow, answer, success, error, and feedback metadata.
+- `learning/feedback.py` records user feedback statuses.
+- `learning/improvements.py` manages improvement items, statuses, proposed solutions, and implementation tracking.
+- `learning/insights.py` summarizes learning data and suggests improvements from problematic feedback.
+- `POST /answer` now saves a query log automatically and returns its `log_id`.
+- Learning APIs expose logs, feedback, summaries, improvements, and improvement actions.
+
+## Sprint 15: self-awareness layer
+
+A self-awareness layer was added so the system can describe its own capabilities, limitations, next recommendations, and current status.
+
+- `self_awareness/capabilities.py` exposes current capabilities, limitations, and next recommendations.
+- `self_awareness/status.py` reports status metrics such as test count, logic count, knowledge count, improvement count, and active layers.
+- `GET /self/capabilities`, `GET /self/limitations`, `GET /self/recommendations`, and `GET /self/status` expose this information.
+- `POST /answer` also responds to questions like “何ができますか？” using the self-awareness layer.
+
+## Sprint 16: admin dashboard layer
+
+An admin dashboard layer was added so administrators can inspect usage, improvement backlog, and quality signals through API endpoints.
+
+- `admin/dashboard.py` aggregates summary, health, recent improvements, and recommendations.
+- `admin/metrics.py` exposes usage, improvement, and quality metrics.
+- `GET /admin/dashboard`, `GET /admin/metrics/usage`, `GET /admin/metrics/improvements`, and `GET /admin/metrics/quality` provide read-only monitoring access.
+
+## Sprint 17: change management layer
+
+A change-management layer was added to track improvement requests through a lightweight lifecycle from draft to release.
+
+- `change_management/models.py` defines the `ChangeRequest` model.
+- `change_management/repository.py` manages create/list/get/update operations.
+- `change_management/lifecycle.py` manages approve/reject/implement/validate/release transitions.
+- `GET /change`, `GET /change/{id}`, and the corresponding POST endpoints expose this workflow.
+- Improvements created in the learning layer automatically generate a change request entry for review.
+
+Example:
+
+```bash
+curl -X POST http://127.0.0.1:8000/business/query \
+  -H "Content-Type: application/json" \
+  -d '{"message":"売上ランキングを見せて"}'
+```
+
 ## Notes
 
 - The SQLite database is created at data/sqlite/logsys.db
