@@ -1,0 +1,9 @@
+[app]
+name = "LOGS AI Platform"
+environment = "dev"
+version = "0.2.0-dev"
+runtime_mode = "local"
+storage_backend = "sqlite"
+sqlite_db_path = "data/sqlite/logsys.db"
+default_user_id = "default"
+default_organization_id = "default"

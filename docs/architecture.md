@@ -4,6 +4,8 @@
 
 - Entry/API layer (`app/`)
 - Data and database layer (`database/`, `data/`)
+- Session layer (`session/`)
+- Configuration layer (`config/`)
 - Business domain layer (`business/`)
 - Knowledge layer (`knowledge/`)
 - System metadata layer (`system/`)
@@ -14,6 +16,7 @@
 - Tool Registry layer (`tools/`)
 - Workflow layer (`workflow/`)
 - Answer layer (`answer/`)
+- Observability layer (`observability/`)
 - AI Runtime orchestration layer (`ai/runtime.py`)
 - LLM Gateway layer (`ai/gateway.py`, `ai/providers/`, `prompts/`)
 - Memory layer (`memory/`)
@@ -31,6 +34,15 @@
 - Data and database layer
   - Imports Excel to SQLite, inspects schema, executes read-safe SQL.
   - Owns persistence concerns for ERP data.
+  - Uses repository abstractions so storage backends can be swapped later.
+
+- Session layer
+  - Manages request-scoped session state for `session_id`, `user_id`, `organization_id`, and linked `trace_id` values.
+  - Must remain separate from Memory.
+
+- Configuration layer
+  - Provides environment-specific runtime settings for dev, staging, and production.
+  - Supports deployment metadata and cloud runtime preparation.
 
 - Business domain layer
   - Executes sales/product/customer business logic and business routing.
@@ -71,6 +83,11 @@
 
 - Answer layer
   - Converts workflow results into readable response text.
+
+- Observability layer
+  - Captures trace records for runtime and layer execution.
+  - Stores trace sessions for later retrieval through the API.
+  - Must not alter business logic or knowledge content.
 
 - AI Runtime orchestration layer
   - End-to-end orchestration: memory context, planning, workflow, answer, logging, memory write.
@@ -121,6 +138,7 @@ flowchart LR
   TR --> KNO[Knowledge]
   TR --> SYS[System]
   RT --> ANS[Answer Generator]
+  RT --> OBS[Observability Trace]
   RT --> GW[LLM Gateway]
   GW --> PR[Prompt Templates]
   GW --> LLM[Provider]
@@ -133,6 +151,7 @@ flowchart LR
 ### Direct code-level dependency highlights
 
 - Runtime depends on Context, Intent, Planner, Workflow, Answer, Gateway, Learning, Memory.
+- Runtime depends on Observability for trace capture, but Observability must remain passive.
 - Runtime references latest validation report metadata but does not run validation checks per request.
 - Context depends on provider registry and provider contracts for Memory/Knowledge/User/Organization/Runtime sources.
 - Context selection is rule-based and can be overridden explicitly by provider_names.
@@ -140,6 +159,7 @@ flowchart LR
 - Validation depends on importer/schema inspection and produces durable reports.
 - Workflow Engine depends on Tool Registry, and Tool Registry depends on Business/Knowledge/System handlers.
 - API layer currently exposes both end-to-end endpoint and layer-direct endpoints.
+- API layer now exposes `POST /chat`, `GET /trace/{trace_id}`, `GET /health`, and `GET /version` as the cloud-facing entry surface.
 
 ## 4) Responsibility Overlaps (Current)
 

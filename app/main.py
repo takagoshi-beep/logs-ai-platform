@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from admin.dashboard import get_admin_dashboard
 from admin.metrics import get_improvement_metrics, get_quality_metrics, get_usage_metrics
+from config.settings import get_settings
 from ai.runtime import run_chat
 from answer.generator import generate_answer
 from business.router import route_business_query
@@ -13,6 +14,9 @@ from change_management.lifecycle import approve_change, implement_change, reject
 from change_management.repository import create_change_request, get_change_request, list_change_requests, update_status
 from context.builder import build_context
 from context.registry import get_default_providers, list_providers
+from database.repository import get_repository
+from conversation.resolver import resolve_conversation_context
+from conversation.store import create_conversation, get_conversation, get_recent_conversations, list_turns
 from intent.classifier import classify_intent
 from intent.registry import list_intent_types
 from database.inspector import get_table_row_count, get_table_sample, list_tables
@@ -31,8 +35,10 @@ from learning.improvements import (
 from learning.insights import get_learning_summary, suggest_improvements
 from learning.query_log import get_query_log, list_query_logs, save_query_log
 from memory.store import get_memory, list_memories, search_memories
+from observability.tracer import get_trace_session
 from planner.executor import execute_plan
 from planner.plan import create_plan
+from session.manager import attach_trace_id, create_session
 from self_awareness.capabilities import get_capabilities, get_limitations, get_next_recommendations
 from self_awareness.status import get_ai_status
 from system.logic_registry import get_logic_by_name, get_logic_registry, get_system_map
@@ -47,7 +53,8 @@ from database.status import get_database_status
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_EXCEL_DIR = ROOT_DIR / "data" / "excel"
-DEFAULT_DB_PATH = ROOT_DIR / "data" / "sqlite" / "logsys.db"
+_SETTINGS = get_settings()
+DEFAULT_DB_PATH = _SETTINGS.db_path
 
 app = FastAPI(
     title="LOGS AI Platform",
@@ -88,8 +95,23 @@ def health() -> dict[str, Any]:
     return {
         "status": "ok",
         "service": "logs-ai-platform",
+        "version": _SETTINGS.version,
+        "environment": _SETTINGS.environment,
+        "runtime_mode": _SETTINGS.runtime_mode,
+        "storage_backend": _SETTINGS.storage_backend,
         "db_exists": DEFAULT_DB_PATH.exists(),
         "db_path": str(DEFAULT_DB_PATH),
+    }
+
+
+@app.get("/version")
+def version() -> dict[str, Any]:
+    return {
+        "app_name": _SETTINGS.app_name,
+        "version": _SETTINGS.version,
+        "environment": _SETTINGS.environment,
+        "runtime_mode": _SETTINGS.runtime_mode,
+        "storage_backend": _SETTINGS.storage_backend,
     }
 
 
@@ -97,7 +119,7 @@ def health() -> dict[str, Any]:
 def tables() -> list[dict[str, Any]]:
     if not DEFAULT_DB_PATH.exists():
         raise HTTPException(status_code=404, detail="Database file not found")
-    return list_tables(DEFAULT_DB_PATH)
+    return get_repository(DEFAULT_DB_PATH).list_tables()
 
 
 @app.get("/tables/{table_name}/sample")
@@ -105,8 +127,9 @@ def table_sample(table_name: str) -> dict[str, Any]:
     if not DEFAULT_DB_PATH.exists():
         raise HTTPException(status_code=404, detail="Database file not found")
 
-    sample_rows = get_table_sample(DEFAULT_DB_PATH, table_name)
-    row_count = get_table_row_count(DEFAULT_DB_PATH, table_name)
+    repository = get_repository(DEFAULT_DB_PATH)
+    sample_rows = repository.get_table_sample(table_name)
+    row_count = repository.get_table_row_count(table_name)
     return {
         "table_name": table_name,
         "row_count": row_count,
@@ -141,12 +164,15 @@ def run_query(payload: dict[str, str]) -> dict[str, Any]:
     if not lowered_sql.startswith("select"):
         raise HTTPException(status_code=400, detail="Only SELECT statements are allowed")
 
-    from database.connection import get_db_connection
+    from database.sql_executor import validate_select_sql
 
-    with get_db_connection(DEFAULT_DB_PATH) as conn:
-        cursor = conn.execute(sql)
-        rows = cursor.fetchall()
-        columns = [description[0] for description in cursor.description] if cursor.description else []
+    try:
+        validate_select_sql(sql)
+        rows = get_repository(DEFAULT_DB_PATH).execute_select(sql)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    columns = list(rows[0].keys()) if rows else []
 
     return {
         "sql": sql,
@@ -157,14 +183,14 @@ def run_query(payload: dict[str, str]) -> dict[str, Any]:
 
 @app.get("/db/status")
 def db_status() -> dict[str, Any]:
-    return get_database_status(DEFAULT_DB_PATH)
+    return get_repository(DEFAULT_DB_PATH).get_database_status()
 
 
 @app.get("/db/schema")
 def db_schema() -> list[dict[str, Any]]:
     if not DEFAULT_DB_PATH.exists():
         raise HTTPException(status_code=404, detail="Database file not found")
-    return list_database_schema(DEFAULT_DB_PATH)
+    return get_repository(DEFAULT_DB_PATH).list_database_schema()
 
 
 @app.get("/db/schema/{table_name}")
@@ -172,7 +198,7 @@ def db_schema_table(table_name: str) -> dict[str, Any]:
     if not DEFAULT_DB_PATH.exists():
         raise HTTPException(status_code=404, detail="Database file not found")
     try:
-        return get_table_schema(DEFAULT_DB_PATH, table_name)
+        return get_repository(DEFAULT_DB_PATH).get_table_schema(table_name)
     except ValueError:
         raise HTTPException(status_code=404, detail="Table not found")
 
@@ -183,10 +209,11 @@ def db_sql(payload: dict[str, str]) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Database file not found")
 
     sql = (payload.get("sql") or "").strip()
+    from database.sql_executor import validate_select_sql
+
     try:
-        rows = execute_sql(DEFAULT_DB_PATH, sql)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        validate_select_sql(sql)
+        rows = get_repository(DEFAULT_DB_PATH).execute_select(sql)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -353,13 +380,61 @@ def answer(payload: dict[str, str]) -> dict[str, Any]:
     }
 
 
-@app.post("/ai/chat")
-def ai_chat(payload: dict[str, str]) -> dict[str, Any]:
+@app.post("/chat")
+def chat(payload: dict[str, Any]) -> dict[str, Any]:
     message = (payload.get("message") or "").strip()
-    user_id = (payload.get("user_id") or "default").strip() or "default"
+    user_id = (payload.get("user_id") or _SETTINGS.default_user_id).strip() or _SETTINGS.default_user_id
+    organization_id = (payload.get("organization_id") or _SETTINGS.default_organization_id).strip() or _SETTINGS.default_organization_id
+    session_id = (payload.get("session_id") or "").strip() or None
+    conversation_id = (payload.get("conversation_id") or "").strip() or None
+
     if not message:
         raise HTTPException(status_code=400, detail="Message is required")
-    return run_chat(message, user_id=user_id)
+
+    session = create_session(user_id=user_id, organization_id=organization_id, session_id=session_id)
+    result = run_chat(message, user_id=user_id, session_id=session_id, conversation_id=conversation_id)
+    attach_trace_id(session.session_id, result["trace_id"])
+    result.update(
+        {
+            "session_id": session.session_id,
+            "conversation_id": result.get("conversation_id"),
+            "user_id": session.user_id,
+            "organization_id": session.organization_id,
+            "session": session.to_dict(),
+        }
+    )
+    return result
+
+
+@app.post("/ai/chat")
+def ai_chat_alias(payload: dict[str, Any]) -> dict[str, Any]:
+    return chat(payload)
+
+
+@app.get("/conversation/{conversation_id}")
+def conversation_detail(conversation_id: str) -> dict[str, Any]:
+    conversation = get_conversation(conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conversation
+
+
+@app.get("/conversation/{conversation_id}/turns")
+def conversation_turns(conversation_id: str, limit: int = 20) -> list[dict[str, Any]]:
+    return list_turns(conversation_id, limit=limit)
+
+
+@app.get("/conversation/recent/{user_id}")
+def recent_conversations(user_id: str, limit: int = 10) -> list[dict[str, Any]]:
+    return get_recent_conversations(user_id, limit=limit)
+
+
+@app.get("/trace/{trace_id}")
+def trace_detail(trace_id: str) -> dict[str, Any]:
+    trace = get_trace_session(trace_id)
+    if trace is None:
+        raise HTTPException(status_code=404, detail="Trace not found")
+    return trace
 
 
 @app.post("/context/build")

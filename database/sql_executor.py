@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import re
-import sqlite3
 from pathlib import Path
 from typing import Any
 
-from database.connection import get_db_connection
+from database.repository import get_repository
 
 FORBIDDEN_SQL_PATTERN = re.compile(
     r"\b(insert|update|delete|drop|alter|create|pragma|attach|detach)\b",
@@ -28,7 +27,4 @@ def validate_select_sql(sql: str) -> None:
 
 def execute_sql(db_path: Path, sql: str, params: tuple[Any, ...] | None = None) -> list[dict[str, Any]]:
     validate_select_sql(sql)
-    with get_db_connection(db_path) as conn:
-        cursor = conn.execute(sql, params or ())
-        rows = cursor.fetchall()
-        return [dict(row) for row in rows]
+    return get_repository(db_path).execute_select(sql, params=params)

@@ -50,6 +50,9 @@ Each layer has a clear responsibility boundary.
 - Memory
   - Responsible for storing and retrieving conversational context.
   - Must not perform quality evaluation or change governance.
+- Session
+  - Responsible for request-scoped identifiers and trace linkage.
+  - Must remain separate from Memory and must not store conversational history.
 - Context
   - Responsible for aggregating the information needed for the current question before planning.
   - Responsible for selecting and prioritizing providers by question type before collection.
@@ -77,6 +80,9 @@ Each layer has a clear responsibility boundary.
 - Answer
   - Responsible for human-readable response generation.
   - Must not fabricate unsupported facts.
+- Observability
+  - Responsible for trace capture, trace session storage, and post-execution inspection.
+  - Must remain passive and must not change runtime decisions, business rules, or knowledge content.
 - Learning
   - Responsible for logging, feedback analysis, and improvement suggestions.
   - Must not auto-apply code or definition changes.
@@ -93,6 +99,8 @@ Each layer has a clear responsibility boundary.
 - Context ignores priority rules and collects every provider blindly.
 - Intent bypasses classification and directly executes business actions.
 - Validation runs for every user chat request.
+- Observability changes the answer content.
+- Session stores conversational memory.
 
 ## 7. Improvement Governance
 
@@ -119,6 +127,7 @@ Current supported capabilities:
 - Knowledge
 - Planner
 - Context
+- Session
 - Intent
 - Validation
 - Workflow
@@ -130,6 +139,7 @@ Current supported capabilities:
 - Admin
 - Self Awareness
 - LLM Gateway
+- Observability
 
 ## 9. Context Priority / Provider Selection
 

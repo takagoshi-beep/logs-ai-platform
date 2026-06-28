@@ -74,7 +74,10 @@ uvicorn app.main:app --reload
 
 The API will expose:
 
+- /chat
+- /ai/chat
 - /health
+- /version
 - /tables
 - /tables/{table_name}/sample
 - /query
@@ -107,6 +110,26 @@ Then open the automatic API docs and execute the endpoints from the browser:
 ```text
 http://127.0.0.1:8000/docs
 ```
+
+## Cloud Deployment
+
+The runtime is structured so the chat entrypoint can run as a cloud API service while keeping Business Logic and Knowledge unchanged.
+
+- `POST /chat` is the primary chat API for web apps and future Claude-side UI clients.
+- `POST /ai/chat` remains available as a compatibility alias.
+- `GET /trace/{trace_id}` provides post-request observability for one execution path.
+- `GET /health` and `GET /version` provide deployment checks and build metadata.
+- `session/` keeps request-scoped session state separate from Memory.
+- `config/` contains `dev`, `staging`, and `production` settings files.
+- Storage access goes through a repository abstraction so the SQLite backend can be replaced later.
+
+Local Docker start:
+
+```bash
+docker compose up --build
+```
+
+The container exposes the FastAPI service on port `8000`.
 
 ## DB schema inspection
 
@@ -468,6 +491,28 @@ Validation execution policy:
 - Validation is for administrator operation, post-import verification, and periodic execution.
 - Runtime does not run heavy validation checks during normal `/ai/chat` requests.
 - Runtime and admin surfaces can read the latest validation report metadata.
+
+## Sprint 26: observability layer
+
+An observability layer was added to trace AI Runtime execution without changing business or knowledge logic.
+
+- `observability/models.py` defines `TraceRecord` and `TraceSession`.
+- `observability/tracer.py` keeps in-memory trace sessions and appends records for Runtime, Validation, Context, Intent, Planner, Workflow, Business, Knowledge, and Answer stages.
+- `ai/runtime.py` now returns `trace_id` with every chat response.
+- `GET /trace/{trace_id}` returns the recorded trace session for inspection.
+
+Trace records capture:
+
+- `trace_id`
+- `timestamp`
+- `layer`
+- `input`
+- `output`
+- `elapsed_ms`
+- `success`
+- `error`
+
+Trace sessions keep the full sequence for one question so the runtime path can be reviewed after execution.
 - Recommended run timings: Excel updates, import completion, manual admin run, and scheduled jobs.
 
 Example:

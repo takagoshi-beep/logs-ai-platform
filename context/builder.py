@@ -11,6 +11,7 @@ def build_context(
     message: str,
     user_id: str = "default",
     provider_names: list[str] | None = None,
+    conversation_context: dict[str, Any] | None = None,
 ) -> ContextResult:
     selection = (
         {
@@ -26,6 +27,10 @@ def build_context(
     provider_results: list[ContextProviderResult] = []
     aggregated_context: dict[str, Any] = {}
     summary_parts: list[str] = []
+
+    if conversation_context is not None:
+        aggregated_context["conversation"] = conversation_context
+        summary_parts.append("conversation=ok")
 
     for name in provider_order:
         provider = get_provider(name)
