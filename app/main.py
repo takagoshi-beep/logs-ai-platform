@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from admin.dashboard import get_admin_dashboard
 from admin.metrics import get_improvement_metrics, get_quality_metrics, get_usage_metrics
+from ai.runtime import run_chat
 from answer.generator import generate_answer
 from business.router import route_business_query
 from change_management.lifecycle import approve_change, implement_change, reject_change, release_change, validate_change
@@ -343,6 +344,14 @@ def answer(payload: dict[str, str]) -> dict[str, Any]:
         "answer": answer_result["answer"],
         "log_id": log_id,
     }
+
+
+@app.post("/ai/chat")
+def ai_chat(payload: dict[str, str]) -> dict[str, Any]:
+    message = (payload.get("message") or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message is required")
+    return run_chat(message)
 
 
 @app.post("/learning/log")

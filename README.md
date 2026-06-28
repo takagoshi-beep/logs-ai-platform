@@ -258,6 +258,25 @@ A change-management layer was added to track improvement requests through a ligh
 - `GET /change`, `GET /change/{id}`, and the corresponding POST endpoints expose this workflow.
 - Improvements created in the learning layer automatically generate a change request entry for review.
 
+## Sprint 17: AI runtime layer extension
+
+The AI runtime layer now provides a single orchestrator entrypoint that executes planner, workflow, answer generation, and learning log recording in sequence.
+
+- `ai/runtime.py` adds `run_chat(message)`.
+- `POST /ai/chat` accepts a user message and returns the end-to-end result.
+- Runtime handles stage-aware failures and returns:
+  - `success=false`
+  - `error`
+  - `stage` (`planner`, `workflow`, `answer`, or `learning`)
+
+Example:
+
+```bash
+curl -X POST http://127.0.0.1:8000/ai/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"OEMとは？"}'
+```
+
 Example:
 
 ```bash
