@@ -3,6 +3,8 @@
 LOGS AI Platform is an internal AI/data platform for using Logsys-connected Excel data as a structured business intelligence layer.
 
 - Design constitution: [docs/philosophy.md](docs/philosophy.md)
+- Architecture: [docs/architecture.md](docs/architecture.md)
+- ADRs: [docs/decisions/](docs/decisions)
 
 ## Sprint 1 goal
 
