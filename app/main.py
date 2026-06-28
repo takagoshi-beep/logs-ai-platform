@@ -26,6 +26,7 @@ from learning.improvements import (
 )
 from learning.insights import get_learning_summary, suggest_improvements
 from learning.query_log import get_query_log, list_query_logs, save_query_log
+from memory.store import get_memory, list_memories, search_memories
 from planner.executor import execute_plan
 from planner.plan import create_plan
 from self_awareness.capabilities import get_capabilities, get_limitations, get_next_recommendations
@@ -349,9 +350,28 @@ def answer(payload: dict[str, str]) -> dict[str, Any]:
 @app.post("/ai/chat")
 def ai_chat(payload: dict[str, str]) -> dict[str, Any]:
     message = (payload.get("message") or "").strip()
+    user_id = (payload.get("user_id") or "default").strip() or "default"
     if not message:
         raise HTTPException(status_code=400, detail="Message is required")
-    return run_chat(message)
+    return run_chat(message, user_id=user_id)
+
+
+@app.get("/memory")
+def memory_list(limit: int = 100) -> list[dict[str, Any]]:
+    return list_memories(limit=limit)
+
+
+@app.get("/memory/search")
+def memory_search(q: str, limit: int = 20) -> list[dict[str, Any]]:
+    return search_memories(q, limit=limit)
+
+
+@app.get("/memory/{memory_id}")
+def memory_detail(memory_id: str) -> dict[str, Any]:
+    item = get_memory(memory_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return item
 
 
 @app.post("/learning/log")

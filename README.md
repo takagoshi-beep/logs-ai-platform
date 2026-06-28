@@ -277,6 +277,91 @@ curl -X POST http://127.0.0.1:8000/ai/chat \
   -d '{"message":"OEMとは？"}'
 ```
 
+## Sprint 18: LLM gateway layer
+
+An LLM gateway layer was added so runtime can call an external provider through a stable interface without changing Planner, Workflow, or Learning responsibilities.
+
+- `ai/gateway.py` provides a gateway that loads prompts from `prompts/` and dispatches inference to a provider.
+- `ai/providers/base.py` defines the provider interface and shared exceptions.
+- `ai/providers/openai.py` implements the OpenAI provider.
+- `ai/runtime.py` now calls the gateway in the answer stage.
+- Prompt templates are stored in:
+  - `prompts/answer_system.txt`
+  - `prompts/answer_user.txt`
+
+Environment variables:
+
+- `LLM_PROVIDER` (default: `openai`)
+- `OPENAI_API_KEY` (required for real OpenAI calls)
+- `OPENAI_MODEL` (default: `gpt-4o-mini`)
+- `OPENAI_TIMEOUT_SECONDS` (default: `20`)
+- `OPENAI_MAX_RETRIES` (default: `2`)
+
+The OpenAI provider includes timeout, retry, and exception handling for authentication, transient errors, and malformed responses.
+
+## Sprint 19: tool registry layer
+
+A tool registry layer was added so available tools can be managed through one unified contract.
+
+- `tools/definitions.py` defines a `ToolDefinition` with:
+  - `name`
+  - `description`
+  - `input_schema`
+  - `output_schema`
+  - `handler`
+- `tools/registry.py` provides `ToolRegistry` and `execute(tool_name, args)`.
+- `tools/executor.py` registers built-in tools and future placeholders.
+- Registered core tools:
+  - `business`
+  - `knowledge`
+  - `system`
+- Future dummy tool definitions were added:
+  - `calendar`
+  - `mail`
+  - `image`
+  - `web`
+
+Planner now returns tool-name based targets (for example `knowledge`, `business`, `system`) instead of detailed internal function paths.
+Workflow execution now calls tools via `ToolRegistry.execute(...)`.
+LLM tool-calling orchestration is intentionally not implemented yet in this sprint.
+
+## Sprint 20: memory layer
+
+A memory layer was added so LOGS AI can reference prior conversation context without introducing vector search or automatic code changes.
+
+- `memory/store.py` manages JSONL-based memory persistence.
+  - `save_memory(record)`
+  - `list_memories(limit=100)`
+  - `search_memories(keyword, limit=20)`
+  - `get_memory(memory_id)`
+- `memory/context.py` provides `build_context(message, user_id="default")`.
+  - finds related memories
+  - collects recent memories
+  - builds a lightweight context summary
+
+Runtime flow was extended to:
+
+1. build memory context
+2. create plan with context
+3. create workflow
+4. execute workflow
+5. generate answer
+6. save learning log
+7. save memory record
+
+New memory APIs:
+
+- `GET /memory`
+- `GET /memory/search?q=`
+- `GET /memory/{memory_id}`
+
+`POST /ai/chat` now accepts optional `user_id`.
+
+Memory and Learning responsibilities are separated:
+
+- Learning: improvement and quality management
+- Memory: conversation context retrieval for runtime
+
 Example:
 
 ```bash

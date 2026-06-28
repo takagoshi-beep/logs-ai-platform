@@ -9,8 +9,8 @@ def test_create_workflow_from_plan() -> None:
         "success": True,
         "message": "OEMとは？先月の売上も教えて",
         "steps": [
-            {"step": 1, "type": "knowledge", "target": "knowledge.search", "description": "lookup"},
-            {"step": 2, "type": "business", "target": "business.router", "description": "business"},
+            {"step": 1, "type": "knowledge", "target": "knowledge", "tool": "knowledge", "description": "lookup"},
+            {"step": 2, "type": "business", "target": "business", "tool": "business", "description": "business"},
         ],
     }
 
@@ -26,8 +26,8 @@ def test_execute_workflow_runs_knowledge_and_business_steps() -> None:
         "success": True,
         "message": "OEMとは？先月の売上も教えて",
         "steps": [
-            {"step": 1, "type": "knowledge", "target": "knowledge.search", "description": "lookup"},
-            {"step": 2, "type": "business", "target": "business.router", "description": "business"},
+            {"step": 1, "type": "knowledge", "target": "knowledge", "tool": "knowledge", "description": "lookup"},
+            {"step": 2, "type": "business", "target": "business", "tool": "business", "description": "business"},
         ],
     }
     workflow = create_workflow(plan)
@@ -43,7 +43,7 @@ def test_execute_workflow_with_system_step() -> None:
         "success": True,
         "message": "どのロジックがあるか教えて",
         "steps": [
-            {"step": 1, "type": "system", "target": "system.logic_registry", "description": "system"},
+            {"step": 1, "type": "system", "target": "system", "tool": "system", "description": "system"},
         ],
     }
     workflow = create_workflow(plan)

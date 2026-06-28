@@ -5,9 +5,10 @@ from typing import Any
 from business.intent import classify_intent
 
 
-def create_plan(message: str) -> dict[str, Any]:
+def create_plan(message: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
     text = (message or "").lower()
     intent = classify_intent(message)
+    _ = context  # Context is accepted for runtime integration; planner logic remains rule-based.
 
     steps = []
     if any(token in text for token in ["とは", "意味", "定義", "define", "definition", "what is"]):
@@ -15,7 +16,8 @@ def create_plan(message: str) -> dict[str, Any]:
             {
                 "step": len(steps) + 1,
                 "type": "knowledge",
-                "target": "knowledge.search",
+                "target": "knowledge",
+                "tool": "knowledge",
                 "description": "Look up the requested business term in the knowledge layer.",
             }
         )
@@ -25,7 +27,8 @@ def create_plan(message: str) -> dict[str, Any]:
             {
                 "step": len(steps) + 1,
                 "type": "business",
-                "target": "business.router",
+                "target": "business",
+                "tool": "business",
                 "description": "Route the query to the relevant business logic layer.",
             }
         )
@@ -35,7 +38,8 @@ def create_plan(message: str) -> dict[str, Any]:
             {
                 "step": len(steps) + 1,
                 "type": "system",
-                "target": "system.logic_registry",
+                "target": "system",
+                "tool": "system",
                 "description": "Inspect the system registry for available logic definitions.",
             }
         )
@@ -46,6 +50,7 @@ def create_plan(message: str) -> dict[str, Any]:
                 "step": 1,
                 "type": "unknown",
                 "target": "unknown",
+                "tool": "unknown",
                 "description": "No matching planner action was identified.",
             }
         )

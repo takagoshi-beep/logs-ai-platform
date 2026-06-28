@@ -1,0 +1,18 @@
+ユーザー質問:
+{{ message }}
+
+Planner結果(JSON):
+{{ plan_json }}
+
+Workflow結果(JSON):
+{{ workflow_json }}
+
+実行結果(JSON):
+{{ results_json }}
+
+下書き回答:
+{{ draft_answer }}
+
+指示:
+- 下書きを改善し、最終回答のみを返してください。
+- 余計な前置きは不要です。

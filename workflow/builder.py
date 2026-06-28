@@ -10,10 +10,11 @@ def create_workflow(plan: dict[str, Any]) -> dict[str, Any]:
     steps = []
     for item in plan.get("steps", []):
         step_id = f"step-{item.get('step', len(steps) + 1)}"
+        tool_name = item.get("tool") or item.get("target") or item.get("type", "unknown")
         steps.append(
             WorkflowStep(
                 step_id=step_id,
-                name=item.get("target") or f"step-{item.get('step', len(steps) + 1)}",
+                name=tool_name or f"step-{item.get('step', len(steps) + 1)}",
                 step_type=item.get("type", "unknown"),
                 depends_on=[],
                 input={"message": plan.get("message", "")},
