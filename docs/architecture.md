@@ -8,6 +8,9 @@
 - Knowledge layer (`knowledge/`)
 - System metadata layer (`system/`)
 - Planner layer (`planner/`)
+- Context layer (`context/`)
+- Intent layer (`intent/`)
+- Validation layer (`validation/`)
 - Tool Registry layer (`tools/`)
 - Workflow layer (`workflow/`)
 - Answer layer (`answer/`)
@@ -41,6 +44,22 @@
 - Planner layer
   - Produces plan steps from user message (rule-based).
   - Outputs tool-oriented steps for execution phase.
+
+- Context layer
+  - Aggregates question-specific context through provider contracts before planning.
+  - Collects memory, knowledge, user, organization, and runtime context in one place.
+  - Selects providers by rule-based priority before collecting context.
+  - Must not execute business logic or update databases directly.
+
+- Intent layer
+  - Classifies what the user is asking for after context is assembled and before planning.
+  - Uses rule-based intent types such as explain, search, ranking, compare, summarize, continue, generate, improve, and status.
+  - Must not call business logic, update databases, or connect to external systems.
+
+- Validation layer
+  - Performs data-quality checks for Excel inputs and SQLite schema/row shape.
+  - Produces validation reports for admin and runtime metadata reference.
+  - Runs on admin operation, post-import, or periodic schedules, not per user question.
 
 - Tool Registry layer
   - Registers executable tool definitions and dispatches by tool name.
@@ -86,8 +105,15 @@
 flowchart LR
   U[User] --> API[API Layer app/main.py]
   API --> RT[AI Runtime]
-  RT --> MEM[Memory Context]
-  RT --> PL[Planner]
+  API --> VAL[Validation Runner]
+  RT --> CTX[Context Builder]
+  RT --> INT[Intent Classifier]
+  CTX --> MEM[Memory Provider]
+  CTX --> KCTX[Knowledge Provider]
+  CTX --> UCTX[User Provider]
+  CTX --> ORG[Organization Provider]
+  CTX --> RCTX[Runtime Provider]
+  INT --> PL[Planner]
   PL --> WF[Workflow Builder]
   WF --> WFE[Workflow Engine]
   WFE --> TR[Tool Registry]
@@ -100,11 +126,18 @@ flowchart LR
   GW --> LLM[Provider]
   RT --> LRN[Learning Query Log]
   RT --> MEMW[Memory Store]
+  VAL --> VREP[Validation Report Store]
+  RT -. metadata only .-> VREP
 ```
 
 ### Direct code-level dependency highlights
 
-- Runtime depends on Planner, Workflow, Answer, Gateway, Learning, Memory.
+- Runtime depends on Context, Intent, Planner, Workflow, Answer, Gateway, Learning, Memory.
+- Runtime references latest validation report metadata but does not run validation checks per request.
+- Context depends on provider registry and provider contracts for Memory/Knowledge/User/Organization/Runtime sources.
+- Context selection is rule-based and can be overridden explicitly by provider_names.
+- Intent depends on rule-based classifier logic and can be overridden by explicit context if needed.
+- Validation depends on importer/schema inspection and produces durable reports.
 - Workflow Engine depends on Tool Registry, and Tool Registry depends on Business/Knowledge/System handlers.
 - API layer currently exposes both end-to-end endpoint and layer-direct endpoints.
 
@@ -133,8 +166,8 @@ flowchart LR
   - Gateway falls back to draft answer internally, while Runtime has stage-based error contracts.
   - This mixes silent fallback and explicit failure styles.
 
-- Planner context is accepted but not used
-  - Runtime passes memory context into Planner, but Planner remains context-agnostic.
+- Intent is accepted but Planner still keeps backward-compatible keyword fallback
+  - Runtime passes classified intent into Planner, but Planner remains rule-based and keeps a message fallback path.
   - This is acceptable for current sprint goals, but architecture doc should state this explicitly.
 
 ## 6) Refactoring Candidates (Prioritized)
@@ -163,6 +196,10 @@ flowchart LR
 
 - The platform has transitioned from data-first API into layered AI orchestration.
 - Runtime is now the integration point for context-aware chat execution.
+- Context is a working table for each question and is not a replacement for Memory storage.
+- Context Priority / Provider Selection determines which working sources are consulted first.
+- Intent is the question-meaning layer between context and planning.
+- Validation is a separate data-quality assurance lane and does not run for each chat request.
 - Tool Registry is the abstraction boundary between orchestrators and executable business/knowledge/system tools.
 - Learning and Memory are separated by intent, but should be further clarified by contract and lifecycle.
 - Near-term architecture goal is reducing duplicate orchestration/execution paths while preserving existing APIs.

@@ -4,10 +4,12 @@ from typing import Any
 
 from ai.gateway import LLMGateway
 from answer.generator import generate_answer
+from context.builder import build_context
+from intent.classifier import classify_intent
 from learning.query_log import save_query_log
-from memory.context import build_context
 from memory.store import save_memory
 from planner.plan import create_plan
+from validation.report import get_latest_validation_report
 from workflow.builder import create_workflow
 from workflow.engine import execute_workflow
 
@@ -32,13 +34,14 @@ def _enrich_workflow_results(workflow: dict[str, Any], results: list[dict[str, A
 def _save_failure_log(
     message: str,
     error: str,
+    intent: dict[str, Any] | None = None,
     plan: dict[str, Any] | None = None,
     workflow: dict[str, Any] | None = None,
     answer: str | None = None,
 ) -> str:
     return save_query_log(
         message=message,
-        intent=(plan or {}).get("intent", {}),
+        intent=intent or (plan or {}).get("intent", {}),
         plan=plan or {},
         workflow=workflow or {},
         answer=answer,
@@ -55,18 +58,36 @@ def run_chat(message: str, user_id: str = "default") -> dict[str, Any]:
     results: list[dict[str, Any]] = []
     answer_text: str | None = None
     context: dict[str, Any] = {}
+    intent: dict[str, Any] = {}
+    validation: dict[str, Any] = {}
+
+    latest_validation = get_latest_validation_report()
+    if latest_validation:
+        validation = {
+            "report_id": latest_validation.get("report_id"),
+            "status": latest_validation.get("status"),
+            "checked_at": latest_validation.get("checked_at"),
+            "score": latest_validation.get("score"),
+        }
 
     try:
-        context = build_context(text, user_id=user_id)
+        context_result = build_context(text, user_id=user_id)
+        context = context_result.to_dict()
     except Exception as exc:  # noqa: BLE001
-        return {"success": False, "message": text, "error": str(exc), "stage": "memory"}
+        return {"success": False, "message": text, "error": str(exc), "stage": "context"}
 
     try:
-        plan = create_plan(text, context)
+        intent_result = classify_intent(text, context=context)
+        intent = intent_result.to_dict()
+    except Exception as exc:  # noqa: BLE001
+        return {"success": False, "message": text, "error": str(exc), "stage": "intent"}
+
+    try:
+        plan = create_plan(text, context, intent)
     except Exception as exc:  # noqa: BLE001
         error_text = str(exc)
         try:
-            log_id = _save_failure_log(text, error_text)
+            log_id = _save_failure_log(text, error_text, intent=intent)
             return {"success": False, "message": text, "error": error_text, "stage": "planner", "log_id": log_id}
         except Exception as log_exc:  # noqa: BLE001
             return {"success": False, "message": text, "error": f"{error_text}; {log_exc}", "stage": "learning"}
@@ -126,7 +147,7 @@ def run_chat(message: str, user_id: str = "default") -> dict[str, Any]:
     try:
         log_id = save_query_log(
             message=text,
-            intent=plan.get("intent", {}),
+            intent=intent or plan.get("intent", {}),
             plan=plan,
             workflow=workflow,
             answer=answer_text,
@@ -139,6 +160,7 @@ def run_chat(message: str, user_id: str = "default") -> dict[str, Any]:
             "message": text,
             "error": str(exc),
             "stage": "learning",
+                "intent": intent,
             "plan": plan,
             "workflow": workflow,
             "results": results,
@@ -180,6 +202,7 @@ def run_chat(message: str, user_id: str = "default") -> dict[str, Any]:
             "error": workflow_error,
             "stage": "workflow",
             "context": context,
+            "validation": validation,
             "plan": plan,
             "workflow": workflow,
             "results": results,
@@ -190,7 +213,9 @@ def run_chat(message: str, user_id: str = "default") -> dict[str, Any]:
     return {
         "success": True,
         "message": text,
+        "intent": intent,
         "context": context,
+        "validation": validation,
         "plan": plan,
         "workflow": workflow,
         "results": results,

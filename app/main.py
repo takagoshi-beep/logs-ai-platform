@@ -11,6 +11,10 @@ from answer.generator import generate_answer
 from business.router import route_business_query
 from change_management.lifecycle import approve_change, implement_change, reject_change, release_change, validate_change
 from change_management.repository import create_change_request, get_change_request, list_change_requests, update_status
+from context.builder import build_context
+from context.registry import get_default_providers, list_providers
+from intent.classifier import classify_intent
+from intent.registry import list_intent_types
 from database.inspector import get_table_row_count, get_table_sample, list_tables
 from knowledge.brands import get_brand_info
 from knowledge.company import get_company_info
@@ -32,6 +36,8 @@ from planner.plan import create_plan
 from self_awareness.capabilities import get_capabilities, get_limitations, get_next_recommendations
 from self_awareness.status import get_ai_status
 from system.logic_registry import get_logic_by_name, get_logic_registry, get_system_map
+from validation.report import get_latest_validation_report, list_validation_reports, save_validation_report
+from validation.runner import run_validation
 from workflow.builder import create_workflow
 from workflow.engine import execute_workflow
 from database.importer import import_latest_excel_to_sqlite
@@ -354,6 +360,75 @@ def ai_chat(payload: dict[str, str]) -> dict[str, Any]:
     if not message:
         raise HTTPException(status_code=400, detail="Message is required")
     return run_chat(message, user_id=user_id)
+
+
+@app.post("/context/build")
+def context_build(payload: dict[str, Any]) -> dict[str, Any]:
+    message = (payload.get("message") or "").strip()
+    user_id = (payload.get("user_id") or "default").strip() or "default"
+    provider_names = payload.get("provider_names")
+
+    if not message:
+        raise HTTPException(status_code=400, detail="Message is required")
+
+    if provider_names is not None and not isinstance(provider_names, list):
+        raise HTTPException(status_code=400, detail="provider_names must be a list")
+
+    result = build_context(message=message, user_id=user_id, provider_names=provider_names)
+    return result.to_dict()
+
+
+@app.get("/context/providers")
+def context_providers() -> dict[str, Any]:
+    return {
+        "providers": list_providers(),
+        "default_providers": get_default_providers(),
+    }
+
+
+@app.post("/intent/classify")
+def intent_classify(payload: dict[str, Any]) -> dict[str, Any]:
+    message = (payload.get("message") or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message is required")
+
+    context = payload.get("context")
+    if context is not None and not isinstance(context, dict):
+        raise HTTPException(status_code=400, detail="context must be an object")
+
+    return classify_intent(message, context=context).to_dict()
+
+
+@app.get("/intent/types")
+def intent_types() -> dict[str, Any]:
+    return {"types": list_intent_types()}
+
+
+@app.get("/validation/report")
+def validation_report() -> dict[str, Any]:
+    latest = get_latest_validation_report()
+    if latest is None:
+        return {
+            "success": False,
+            "status": "not_found",
+            "message": "No validation report available",
+            "report": None,
+        }
+    return {
+        "success": True,
+        "status": "ok",
+        "report": latest,
+        "recent_reports": list_validation_reports(limit=5),
+    }
+
+
+@app.post("/validation/run")
+def validation_run() -> dict[str, Any]:
+    report = run_validation()
+    report_id = save_validation_report(report)
+    payload = dict(report)
+    payload["report_id"] = report_id
+    return payload
 
 
 @app.get("/memory")

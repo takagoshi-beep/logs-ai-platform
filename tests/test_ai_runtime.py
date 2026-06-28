@@ -55,7 +55,7 @@ def test_run_chat_uses_gateway(monkeypatch) -> None:
 
 
 def test_run_chat_failure_returns_success_false(monkeypatch) -> None:
-    def raise_error(_message: str, _context: dict | None = None) -> dict:
+    def raise_error(*_args, **_kwargs) -> dict:
         raise RuntimeError("planner failure")
 
     monkeypatch.setattr(runtime, "create_plan", raise_error)

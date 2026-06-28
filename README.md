@@ -4,6 +4,8 @@ LOGS AI Platform is an internal AI/data platform for using Logsys-connected Exce
 
 - Design constitution: [docs/philosophy.md](docs/philosophy.md)
 - Architecture: [docs/architecture.md](docs/architecture.md)
+- System Manifest: [docs/system_manifest.md](docs/system_manifest.md)
+- Raw Data Validation: [docs/raw_data_validation.md](docs/raw_data_validation.md)
 - ADRs: [docs/decisions/](docs/decisions)
 
 ## Sprint 1 goal
@@ -365,6 +367,108 @@ Memory and Learning responsibilities are separated:
 
 - Learning: improvement and quality management
 - Memory: conversation context retrieval for runtime
+
+## Sprint 21: context layer
+
+A new context layer was added to aggregate only the information needed for the current question before planning.
+
+- `context/models.py` defines `ContextProviderResult` and `ContextResult`, including `selection` metadata.
+- `context/registry.py` provides provider registration and default-provider discovery.
+- `context/selector.py` selects and prioritizes providers based on question rules.
+- `context/builder.py` executes providers and aggregates their outputs.
+- `context/providers/` includes:
+  - `memory.py`
+  - `knowledge.py`
+  - `user.py`
+  - `organization.py`
+  - `runtime.py`
+
+New context APIs:
+
+- `POST /context/build`
+- `GET /context/providers`
+
+Runtime flow now starts with context aggregation:
+
+1. build context
+2. create plan with context
+3. create workflow
+4. execute workflow
+5. generate answer
+6. save learning log
+7. save memory record
+
+Context and Memory responsibilities are distinct:
+
+- Memory: store and retrieve long-lived conversation records
+- Context: aggregate working context for the current question
+
+Context Priority / Provider Selection:
+
+- `context/selector.py` uses rule-based matching to decide which providers should be consulted first.
+- Memory is prioritized for follow-up questions such as `前回` or `続き`.
+- Knowledge is prioritized for definition-style or domain-term questions such as `とは` or `OEM`.
+- User, organization, and runtime providers are prioritized when the question points to the speaker, company context, or system status.
+- `context/builder.py` uses selector output unless `provider_names` is explicitly provided.
+- Explicit `provider_names` always overrides selector output for backward compatibility.
+
+Context constraints:
+
+- Context does not execute business logic.
+- Context does not update DB directly.
+- LLM connection is not used in the Context layer.
+- External API integration is not used in the Context layer.
+
+## Sprint 23: intent layer
+
+A new intent layer was added after Context so the platform can determine what the user is asking for before planning execution.
+
+- `intent/models.py` defines `IntentResult`.
+- `intent/registry.py` manages the supported intent types.
+- `intent/classifier.py` classifies questions with rule-based patterns only.
+
+New intent APIs:
+
+- `POST /intent/classify`
+- `GET /intent/types`
+
+Intent flow now sits between context aggregation and planning:
+
+1. build context
+2. classify intent
+3. create plan
+4. create workflow
+5. execute workflow
+6. generate answer
+7. save learning log
+8. save memory record
+
+Intent responsibilities:
+
+- Intent determines what the user wants.
+- Intent does not call business logic directly.
+- Intent does not update the database.
+- Intent does not connect to LLMs or external APIs.
+
+## Sprint 25: validation layer
+
+A dedicated validation layer was added to separate data-quality assurance from Runtime question-answering.
+
+- `validation/checks.py` provides lightweight structural checks for Excel, SQLite, tables, columns, row counts, and business-table candidates.
+- `validation/runner.py` provides `run_validation()` with score, status, issues, and summary output.
+- `validation/report.py` stores and retrieves validation reports in JSONL.
+
+Validation APIs:
+
+- `POST /validation/run`
+- `GET /validation/report`
+
+Validation execution policy:
+
+- Validation is for administrator operation, post-import verification, and periodic execution.
+- Runtime does not run heavy validation checks during normal `/ai/chat` requests.
+- Runtime and admin surfaces can read the latest validation report metadata.
+- Recommended run timings: Excel updates, import completion, manual admin run, and scheduled jobs.
 
 Example:
 
