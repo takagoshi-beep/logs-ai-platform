@@ -13,6 +13,15 @@ def format_list_result(result: Any) -> str:
 
 def format_ranking_result(result: Any) -> str:
     if isinstance(result, dict):
+        top_sales = result.get("top_sales") or []
+        if top_sales:
+            lines = []
+            for item in top_sales[:10]:
+                label = item.get("label") or item.get("name") or f"row-{item.get('rank', '')}"
+                amount = item.get("amount")
+                lines.append(f"{label}: {amount}")
+            return "ランキング結果:\n" + "\n".join(lines)
+
         top_customers = result.get("top_customers") or []
         if top_customers:
             lines = []
@@ -22,6 +31,32 @@ def format_ranking_result(result: Any) -> str:
                 lines.append(f"{customer}: {total}")
             return "ランキング結果:\n" + "\n".join(lines)
         return "ランキング結果はありません。"
+    return str(result)
+
+
+def format_business_result(result: Any) -> str:
+    if isinstance(result, dict):
+        if result.get("tables") and isinstance(result.get("tables"), list):
+            return "テーブル一覧:\n" + "\n".join(f"- {name}" for name in result.get("tables", []))
+        if result.get("top_sales"):
+            return format_ranking_result(result)
+        if result.get("table_name") and "row_count" in result:
+            warnings = result.get("warnings") or []
+            warning_text = f"\n注意: {'; '.join(warnings)}" if warnings else ""
+            return (
+                f"テーブル {result.get('table_name')} の概要:\n"
+                f"行数: {result.get('row_count')}\n"
+                f"サンプル件数: {len(result.get('sample', []))}{warning_text}"
+            )
+        if result.get("sample_total_amount") is not None:
+            warnings = result.get("warnings") or []
+            warning_text = f"\n注意: {'; '.join(warnings)}" if warnings else ""
+            return (
+                f"売上サマリー:\n"
+                f"対象テーブル: {result.get('table_name')}\n"
+                f"行数: {result.get('row_count')}\n"
+                f"サンプル合計: {result.get('sample_total_amount')}{warning_text}"
+            )
     return str(result)
 
 

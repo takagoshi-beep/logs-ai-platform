@@ -1,0 +1,15 @@
+start
+folder_id=1ptYjFOzJcBopyk4AAIodep1fnLAbgBaB
+authenticating
+authenticated
+listing_raw_files
+raw_files=3
+target_files=3
+skipped_files=0
+running_importer_sync
+listing_files_started: folder_id=1ptYjFOzJcBopyk4AAIodep1fnLAbgBaB
+listing_files_completed: folder_id=1ptYjFOzJcBopyk4AAIodep1fnLAbgBaB excel_files=1 spreadsheet_files=2 files=3
+storage_refresh_started: db_path=C:\Users\takag\Documents\GitHub\logs-ai-platform\data\sqlite\logsys.db
+storage_refresh_completed: catalog_files=3
+excel_download_started: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx file_id=1UL3Rg72K3soFybiu44fUM_kQTjX3ZeN2
+excel_download_completed: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx file_id=1UL3Rg72K3soFybiu44fUM_kQTjX3ZeN2 bytes=123868676

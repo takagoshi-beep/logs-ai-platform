@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from answer.formatter import format_knowledge_result, format_ranking_result, format_system_result
+from answer.formatter import format_business_result, format_knowledge_result, format_ranking_result, format_system_result
 
 
 def generate_answer(message: str, workflow_result: dict[str, Any]) -> dict[str, Any]:
@@ -16,10 +16,7 @@ def generate_answer(message: str, workflow_result: dict[str, Any]) -> dict[str, 
         if step_type == "knowledge":
             sections.append(f"知識:\n{format_knowledge_result(result_payload)}")
         elif step_type == "business":
-            if isinstance(result_payload, dict) and result_payload.get("top_customers"):
-                sections.append(f"業務:\n{format_ranking_result(result_payload)}")
-            else:
-                sections.append(f"業務:\n{result_payload}")
+            sections.append(f"業務:\n{format_business_result(result_payload)}")
         elif step_type == "system":
             sections.append(f"システム:\n{format_system_result(result_payload)}")
 

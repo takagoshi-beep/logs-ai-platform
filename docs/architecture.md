@@ -12,6 +12,7 @@
 - Planner layer (`planner/`)
 - Context layer (`context/`)
 - Intent layer (`intent/`)
+- Question Understanding layer (`question/`)
 - Validation layer (`validation/`)
 - Tool Registry layer (`tools/`)
 - Workflow layer (`workflow/`)
@@ -67,6 +68,11 @@
   - Classifies what the user is asking for after context is assembled and before planning.
   - Uses rule-based intent types such as explain, search, ranking, compare, summarize, continue, generate, improve, and status.
   - Must not call business logic, update databases, or connect to external systems.
+
+- Question Understanding layer
+  - Extracts structured question fields such as metric, operation, entity_type, period, limit, and filters.
+  - Runs after Intent and before Planner to improve deterministic tool selection.
+  - Must stay rule-based and must not call LLM or execute business logic.
 
 - Validation layer
   - Performs data-quality checks for Excel inputs and SQLite schema/row shape.
@@ -125,12 +131,14 @@ flowchart LR
   API --> VAL[Validation Runner]
   RT --> CTX[Context Builder]
   RT --> INT[Intent Classifier]
+  RT --> QST[Question Parser]
   CTX --> MEM[Memory Provider]
   CTX --> KCTX[Knowledge Provider]
   CTX --> UCTX[User Provider]
   CTX --> ORG[Organization Provider]
   CTX --> RCTX[Runtime Provider]
-  INT --> PL[Planner]
+  INT --> QST
+  QST --> PL[Planner]
   PL --> WF[Workflow Builder]
   WF --> WFE[Workflow Engine]
   WFE --> TR[Tool Registry]
@@ -150,7 +158,7 @@ flowchart LR
 
 ### Direct code-level dependency highlights
 
-- Runtime depends on Context, Intent, Planner, Workflow, Answer, Gateway, Learning, Memory.
+- Runtime depends on Context, Intent, Question Understanding, Planner, Workflow, Answer, Gateway, Learning, Memory.
 - Runtime depends on Observability for trace capture, but Observability must remain passive.
 - Runtime references latest validation report metadata but does not run validation checks per request.
 - Context depends on provider registry and provider contracts for Memory/Knowledge/User/Organization/Runtime sources.
@@ -223,6 +231,99 @@ flowchart LR
 - Tool Registry is the abstraction boundary between orchestrators and executable business/knowledge/system tools.
 - Learning and Memory are separated by intent, but should be further clarified by contract and lifecycle.
 - Near-term architecture goal is reducing duplicate orchestration/execution paths while preserving existing APIs.
+
+## 8) External Source and Storage Foundation (Sprint 29)
+
+To prepare Google Drive / Spreadsheet and cloud DB integration, the platform now includes `connector/`, `ingestion/`, and `storage/` foundations.
+
+- Connector layer abstracts external source APIs and file metadata contracts.
+- Ingestion layer orchestrates source sync jobs and prepares handoff to validation/storage.
+- Storage layer abstracts DB backend differences between SQLite and PostgreSQL.
+
+Canonical data path:
+
+```mermaid
+flowchart TD
+  GD[Google Drive / Spreadsheet] --> CONN[Connector]
+  CONN --> ING[Ingestion]
+  ING --> VAL[Validation]
+  VAL --> STO[Storage]
+  STO --> BIZ[Business / AI OS]
+```
+
+Scope constraints in this sprint:
+
+- Real Google API and OAuth are not enabled yet.
+- PostgreSQL repository remains scaffold-level until production activation.
+- Existing Business, Knowledge, Context, Intent, Planner, and Workflow responsibilities remain unchanged.
+
+## 9) Source Registry Expansion (Sprint 30)
+
+The ingestion layer now includes explicit source definitions for Google Drive preparation.
+
+- `ingestion/source_registry.py` manages source metadata contracts.
+- Initial sources include Logsys and sales-authored spreadsheet groups.
+- Each source can define connector target, folder_id, file_pattern, data_category, and enabled flag.
+
+Current first-target categories:
+
+- Logsys data sources
+- Sales data sources
+
+Future extension candidates (excluded in Sprint 30):
+
+- Mail attachments
+- PDF files
+- Google Docs
+- Proposal document workflows
+
+Data handling policy:
+
+- GitHub stores code and docs only.
+- Real datasets stay in Google Drive and cloud storage backends.
+
+## 10) Storage-to-Business Query Runtime Path (Sprint 31)
+
+For user questions, the runtime path now prioritizes structured data in Storage through Business layer access.
+
+- Storage acts as the query-time structured data store.
+- Business layer reads Storage through repository interfaces.
+- Runtime/Planner must not embed SQL logic.
+- User-time requests must not directly call Google Drive.
+- Google Drive remains an ingestion sync origin only.
+
+Runtime query-time chain:
+
+```mermaid
+flowchart LR
+  Q[User Question] --> RT[Runtime]
+  RT --> PL[Planner]
+  PL --> WF[Workflow]
+  WF --> BQ[Business Query Tool]
+  BQ --> BL[Business Logic]
+  BL --> ST[Storage Repository]
+  ST --> DB[(Structured DB)]
+  RT --> ANS[Answer]
+```
+
+## 11) Business Tool Registry Layer (Sprint 33)
+
+Business capabilities are now managed through a dedicated selector/registry pair inside the business domain.
+
+- Planner asks Business Tool Selector to choose a business tool.
+- Business Tool Registry resolves tool metadata and handler.
+- Selected business tool executes Business Query functions that read via repository abstractions.
+- Formatter converts deterministic business outputs to user answers without requiring LLM for supported cases.
+
+```mermaid
+flowchart TD
+  INT[Intent] --> PL[Planner]
+  PL --> SEL[Business Tool Selector]
+  SEL --> REG[Business Tool Registry]
+  REG --> BQ[Business Query]
+  BQ --> FMT[Business Formatter]
+  FMT --> ANS[Answer]
+```
 
 ## Constraints
 

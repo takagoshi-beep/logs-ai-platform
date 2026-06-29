@@ -36,6 +36,7 @@ def test_trace_records_core_layers() -> None:
     assert "Runtime" in layers
     assert "Context" in layers
     assert "Intent" in layers
+    assert "Question" in layers
     assert "Planner" in layers
     assert "Workflow" in layers
     assert "Answer" in layers

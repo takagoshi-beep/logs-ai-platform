@@ -1,0 +1,1 @@
+{"catalog_status_code": 200, "catalog": {"count": 0, "items": []}, "status_status_code": 200, "status": {"last_synced_at": null, "files_processed": 0, "rows_imported": 0, "validation_status": "not_synced", "errors": []}}

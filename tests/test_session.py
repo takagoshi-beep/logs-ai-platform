@@ -42,5 +42,5 @@ def test_version_endpoint_returns_configuration() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["app_name"] == "LOGS AI Platform"
-    assert payload["version"]
+    assert payload["version"] == "v1.0.0-RC1"
     assert payload["environment"]

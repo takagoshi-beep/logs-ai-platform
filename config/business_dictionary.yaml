@@ -1,0 +1,168 @@
+metric:
+  sales:
+    canonical: sales_amount
+    label: 売上金額
+    synonyms:
+      - 売上
+      - 売上高
+      - 売上金額
+      - revenue
+      - sales
+  gross_profit:
+    canonical: gross_profit
+    label: 粗利
+    synonyms:
+      - 粗利
+      - 粗利益
+  gross_margin:
+    canonical: gross_margin
+    label: 粗利率
+    synonyms:
+      - 粗利率
+      - 利益率
+  order_amount:
+    canonical: order_amount
+    label: 受注金額
+    synonyms:
+      - 受注金額
+      - 受注額
+      - order_amount
+
+entity:
+  sales:
+    canonical: sales
+    label: 売上
+    synonyms:
+      - 売上
+      - 売上高
+      - 売上金額
+      - revenue
+      - sales
+  customer:
+    canonical: customer
+    label: 顧客
+    synonyms:
+      - 顧客
+      - 得意先
+      - 取引先
+      - クライアント
+      - customer
+  product:
+    canonical: product
+    label: 商品
+    synonyms:
+      - 商品
+      - 製品
+      - アイテム
+      - product
+  order:
+    canonical: order
+    label: 受注
+    synonyms:
+      - 受注
+      - 注文
+      - オーダー
+      - order
+
+operation:
+  ranking:
+    canonical: ranking
+    label: ランキング
+    synonyms:
+      - ランキング
+      - 上位
+      - トップ
+      - ranking
+  summary:
+    canonical: summary
+    label: 要約
+    synonyms:
+      - 要約
+      - サマリー
+      - summary
+  schema:
+    canonical: schema
+    label: スキーマ
+    synonyms:
+      - schema
+      - 列
+      - カラム
+      - 項目
+  count:
+    canonical: count
+    label: 件数
+    synonyms:
+      - count
+      - 件数
+      - 何件
+  search:
+    canonical: search
+    label: 検索
+    synonyms:
+      - search
+      - 検索
+      - 調べる
+  compare:
+    canonical: compare
+    label: 比較
+    synonyms:
+      - compare
+      - 比較
+      - 違い
+
+product_category:
+  hat:
+    canonical: hat
+    label: 帽子
+    synonyms:
+      - 帽子
+      - hat
+      - cap
+
+customer:
+  default:
+    canonical: customer
+    label: 顧客
+    synonyms:
+      - 顧客
+      - 得意先
+      - 取引先
+      - クライアント
+
+period:
+  today:
+    canonical: today
+    label: 今日
+    synonyms:
+      - today
+      - 今日
+  this_week:
+    canonical: this_week
+    label: 今週
+    synonyms:
+      - this_week
+      - 今週
+  this_month:
+    canonical: this_month
+    label: 今月
+    synonyms:
+      - this_month
+      - 今月
+  last_month:
+    canonical: last_month
+    label: 先月
+    synonyms:
+      - last_month
+      - 先月
+  this_year:
+    canonical: this_year
+    label: 今年
+    synonyms:
+      - this_year
+      - 今年
+  last_year:
+    canonical: last_year
+    label: 去年
+    synonyms:
+      - last_year
+      - 去年

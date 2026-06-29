@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Any
+from dataclasses import asdict
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -8,8 +9,13 @@ from admin.dashboard import get_admin_dashboard
 from admin.metrics import get_improvement_metrics, get_quality_metrics, get_usage_metrics
 from config.settings import get_settings
 from ai.runtime import run_chat
+from ai.explain import explain_question
 from answer.generator import generate_answer
 from business.router import route_business_query
+from business.query import get_business_tables, get_sales_summary as get_storage_sales_summary, get_table_overview, get_top_sales
+from business.query import get_database_summary, get_table_columns as get_business_table_columns, get_table_count as get_business_table_count
+from business.tool_registry import get_default_business_tool_registry
+from business.tool_selector import select_business_tool
 from change_management.lifecycle import approve_change, implement_change, reject_change, release_change, validate_change
 from change_management.repository import create_change_request, get_change_request, list_change_requests, update_status
 from context.builder import build_context
@@ -35,21 +41,30 @@ from learning.improvements import (
 from learning.insights import get_learning_summary, suggest_improvements
 from learning.query_log import get_query_log, list_query_logs, save_query_log
 from memory.store import get_memory, list_memories, search_memories
-from observability.tracer import get_trace_session
+from authorization.layer import check_authorization
+from observability.tracer import add_trace_record, get_trace_session, start_trace_session
 from planner.executor import execute_plan
 from planner.plan import create_plan
+from question.parser import parse_question
+from semantic.layer import analyze_semantics
 from session.manager import attach_trace_id, create_session
 from self_awareness.capabilities import get_capabilities, get_limitations, get_next_recommendations
 from self_awareness.status import get_ai_status
 from system.logic_registry import get_logic_by_name, get_logic_registry, get_system_map
+from system.ops import get_system_diagnostics, get_system_health, get_system_info, get_system_manifest
 from validation.report import get_latest_validation_report, list_validation_reports, save_validation_report
-from validation.runner import run_validation
+from validation.runner import run_validation, validate_synced_storage
 from workflow.builder import create_workflow
 from workflow.engine import execute_workflow
 from database.importer import import_latest_excel_to_sqlite
 from database.schema_inspector import get_table_schema, list_database_schema
 from database.sql_executor import execute_sql
 from database.status import get_database_status
+from connector.registry import get_default_connector_registry
+from ingestion.sync import sync_source
+from ingestion.google_drive_importer import get_storage_catalog, get_sync_status, sync_google_drive_to_storage, update_sync_status
+from ingestion.source_registry import get_default_source_registry
+from tools.executor import execute_tool
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_EXCEL_DIR = ROOT_DIR / "data" / "excel"
@@ -59,7 +74,7 @@ DEFAULT_DB_PATH = _SETTINGS.db_path
 app = FastAPI(
     title="LOGS AI Platform",
     description="Internal ERP intelligence platform for LOGS / Logsys data.",
-    version="0.1.0",
+    version=_SETTINGS.version,
 )
 
 
@@ -112,6 +127,205 @@ def version() -> dict[str, Any]:
         "environment": _SETTINGS.environment,
         "runtime_mode": _SETTINGS.runtime_mode,
         "storage_backend": _SETTINGS.storage_backend,
+    }
+
+
+@app.get("/system/health")
+def system_health() -> dict[str, Any]:
+    return get_system_health()
+
+
+@app.get("/system/info")
+def system_info() -> dict[str, Any]:
+    return get_system_info()
+
+
+@app.get("/system/manifest")
+def system_manifest() -> dict[str, Any]:
+    return get_system_manifest()
+
+
+@app.get("/system/diagnostics")
+def system_diagnostics() -> dict[str, Any]:
+    return get_system_diagnostics()
+
+
+@app.get("/connectors")
+def connectors() -> dict[str, Any]:
+    registry = get_default_connector_registry()
+    return {"connectors": registry.list_connectors()}
+
+
+@app.get("/connectors/{name}/files")
+def connector_files(name: str) -> dict[str, Any]:
+    registry = get_default_connector_registry()
+    try:
+        connector = registry.get_connector(name)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Connector not found")
+
+    files = connector.list_files()
+    return {
+        "source": name,
+        "count": len(files),
+        "files": [asdict(item) for item in files],
+    }
+
+
+@app.post("/ingestion/sync/{source_id}")
+def ingestion_sync(source_id: str) -> dict[str, Any]:
+    try:
+        job = sync_source(source_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    return {"success": True, "job": asdict(job)}
+
+
+@app.post("/storage/sync")
+def storage_sync(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    body = payload or {}
+    folder_id = str(body.get("folder_id") or "").strip()
+
+    trace_session = start_trace_session("storage/sync", user_id="system")
+    result = sync_google_drive_to_storage(folder_id=folder_id, db_path=DEFAULT_DB_PATH)
+    add_trace_record(
+        trace_session,
+        "StorageSync",
+        {"folder_id": folder_id},
+        {
+            "sync_time": result.get("sync_time"),
+            "folder_id": result.get("folder_id"),
+            "files": result.get("files", 0),
+            "table_count": result.get("table_count", result.get("tables", 0)),
+            "elapsed_time": result.get("elapsed_time", 0.0),
+        },
+        float(result.get("elapsed_time", 0.0)) * 1000.0,
+        str(result.get("status")) == "success",
+    )
+
+    result["trace_id"] = trace_session.trace_id
+    return result
+
+
+@app.post("/api/sync")
+def api_sync(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    body = payload or {}
+    folder_id = str(body.get("folder_id") or "").strip()
+    settings = get_settings()
+    effective_folder_id = folder_id or settings.google_drive_folder_id or settings.google_drive_logsys_folder_id or settings.google_drive_sales_folder_id
+    if not effective_folder_id:
+        raise HTTPException(status_code=400, detail="folder_id is required")
+
+    if settings.google_oauth_enabled:
+        credentials_path = Path(settings.google_credentials_path)
+        token_path = Path(settings.google_token_path)
+        if not credentials_path.exists():
+            raise HTTPException(status_code=400, detail=f"Google credentials file not found: {credentials_path}")
+        if not token_path.exists():
+            raise HTTPException(status_code=400, detail=f"Google token file not found: {token_path}")
+
+    trace_session = start_trace_session("api/sync", user_id="system")
+    sync_result = sync_google_drive_to_storage(folder_id=effective_folder_id, db_path=DEFAULT_DB_PATH)
+    if sync_result.get("status") == "error":
+        raise HTTPException(status_code=400, detail={"errors": sync_result.get("errors", []), "message": "Google Drive sync failed"})
+
+    validation_report = validate_synced_storage(DEFAULT_DB_PATH)
+    save_validation_report(validation_report)
+    validation_status = str(validation_report.get("status") or "unknown")
+    if validation_status == "error":
+        raise HTTPException(status_code=400, detail={"errors": validation_report.get("issues", []), "message": "Validation failed after sync"})
+
+    update_sync_status(
+        db_path=DEFAULT_DB_PATH,
+        last_synced_at=str(sync_result.get("sync_time") or ""),
+        files_processed=int(sync_result.get("files", 0)),
+        rows_imported=int(sync_result.get("rows_imported", 0)),
+        validation_status=validation_status,
+        errors=[str(item) for item in sync_result.get("errors", [])],
+    )
+
+    add_trace_record(
+        trace_session,
+        "StorageSync",
+        {"folder_id": folder_id},
+        {
+            "sync_time": sync_result.get("sync_time"),
+            "folder_id": sync_result.get("folder_id"),
+            "files": sync_result.get("files", 0),
+            "table_count": sync_result.get("table_count", sync_result.get("tables", 0)),
+            "elapsed_time": sync_result.get("elapsed_time", 0.0),
+        },
+        float(sync_result.get("elapsed_time", 0.0)) * 1000.0,
+        str(sync_result.get("status")) in {"success", "warning"},
+    )
+    add_trace_record(
+        trace_session,
+        "Validation",
+        {"source": "api/sync"},
+        {
+            "status": validation_status,
+            "score": validation_report.get("score"),
+            "error_count": validation_report.get("summary", {}).get("error_count"),
+            "warning_count": validation_report.get("summary", {}).get("warning_count"),
+        },
+        0.0,
+        validation_status != "error",
+    )
+
+    return {
+        "status": "success",
+        "trace_id": trace_session.trace_id,
+        "folder_id": sync_result.get("folder_id"),
+        "files": int(sync_result.get("files", 0)),
+        "tables": int(sync_result.get("table_count", sync_result.get("tables", 0))),
+        "rows_imported": int(sync_result.get("rows_imported", 0)),
+        "validation_status": validation_status,
+        "errors": [str(item) for item in sync_result.get("errors", [])],
+        "last_synced_at": sync_result.get("sync_time"),
+        "elapsed_time": float(sync_result.get("elapsed_time", 0.0)),
+    }
+
+
+@app.get("/api/catalog")
+def api_catalog() -> dict[str, Any]:
+    catalog = get_storage_catalog(DEFAULT_DB_PATH)
+    return {
+        "count": len(catalog),
+        "items": catalog,
+    }
+
+
+@app.get("/api/sync/status")
+def api_sync_status() -> dict[str, Any]:
+    status = get_sync_status(DEFAULT_DB_PATH)
+    return status
+
+
+@app.get("/ingestion/sources")
+def ingestion_sources() -> dict[str, Any]:
+    registry = get_default_source_registry()
+    return {"sources": [asdict(item) for item in registry.list_sources()]}
+
+
+@app.get("/ingestion/sources/{source_id}")
+def ingestion_source_detail(source_id: str) -> dict[str, Any]:
+    registry = get_default_source_registry()
+    try:
+        source = registry.get_source(source_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Ingestion source not found")
+    return {"source": asdict(source)}
+
+
+@app.get("/ingestion/sources/category/{category}")
+def ingestion_sources_by_category(category: str) -> dict[str, Any]:
+    registry = get_default_source_registry()
+    items = registry.list_sources_by_category(category)
+    return {
+        "category": category,
+        "sources": [asdict(item) for item in items],
+        "count": len(items),
     }
 
 
@@ -260,6 +474,86 @@ def business_query(payload: dict[str, str]) -> dict[str, Any]:
     return route_business_query(message, DEFAULT_DB_PATH)
 
 
+@app.get("/business/tables")
+def business_tables() -> dict[str, Any]:
+    return get_business_tables(DEFAULT_DB_PATH)
+
+
+@app.get("/business/tables/{table_name}/overview")
+def business_table_overview(table_name: str) -> dict[str, Any]:
+    return get_table_overview(table_name, DEFAULT_DB_PATH)
+
+
+@app.get("/business/sales/summary")
+def business_sales_summary() -> dict[str, Any]:
+    return get_storage_sales_summary(DEFAULT_DB_PATH)
+
+
+@app.get("/business/sales/top")
+def business_sales_top(limit: int = 10) -> dict[str, Any]:
+    return get_top_sales(limit=limit, db_path=DEFAULT_DB_PATH)
+
+
+@app.get("/business/database/summary")
+def business_database_summary() -> dict[str, Any]:
+    return get_database_summary(DEFAULT_DB_PATH)
+
+
+@app.get("/business/table/{table}/count")
+def business_table_count(table: str) -> dict[str, Any]:
+    return get_business_table_count(table, DEFAULT_DB_PATH)
+
+
+@app.get("/business/table/{table}/columns")
+def business_table_columns(table: str) -> dict[str, Any]:
+    return get_business_table_columns(table, DEFAULT_DB_PATH)
+
+
+@app.get("/business/tools")
+def business_tools() -> dict[str, Any]:
+    registry = get_default_business_tool_registry()
+    return {"tools": [item.to_dict() for item in registry.list_business_tools()]}
+
+
+@app.post("/business/tools/select")
+def business_tool_select(payload: dict[str, Any]) -> dict[str, Any]:
+    message = str(payload.get("message", "")).strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="message is required")
+
+    intent_type = str(payload.get("intent_type", "")).strip()
+    selection = select_business_tool(
+        message=message,
+        intent={"intent_type": intent_type} if intent_type else None,
+        context=payload.get("context") if isinstance(payload.get("context"), dict) else None,
+        question=payload.get("question") if isinstance(payload.get("question"), dict) else None,
+    )
+    return selection
+
+
+@app.post("/business/tools/execute")
+def business_tool_execute(payload: dict[str, Any]) -> dict[str, Any]:
+    tool_name = str(payload.get("tool_name", "")).strip()
+    if not tool_name:
+        raise HTTPException(status_code=400, detail="tool_name is required")
+
+    args = payload.get("args")
+    if args is None:
+        args = {}
+    if not isinstance(args, dict):
+        raise HTTPException(status_code=400, detail="args must be an object")
+
+    user_id = str(payload.get("user_id") or _SETTINGS.default_user_id).strip() or _SETTINGS.default_user_id
+    auth = check_authorization(user_id=user_id, action=tool_name, resource={"tool_name": tool_name, "args": args})
+    if not auth.allowed:
+        raise HTTPException(status_code=403, detail=auth.reason)
+
+    result = execute_tool("business.execute_tool", {"tool_name": tool_name, "args": args, "user_id": user_id})
+    if isinstance(result, dict) and result.get("success") is False and result.get("error"):
+        raise HTTPException(status_code=404, detail=str(result.get("error")))
+    return {"success": True, "tool_name": tool_name, "authorization": auth.to_dict(), "result": result}
+
+
 @app.get("/system/map")
 def system_map() -> dict[str, Any]:
     return get_system_map()
@@ -406,6 +700,23 @@ def chat(payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+@app.post("/api/chat")
+def api_chat(payload: dict[str, Any]) -> dict[str, Any]:
+    question = (payload.get("question") or payload.get("message") or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="question is required")
+    return chat({**payload, "message": question})
+
+
+@app.post("/api/explain")
+def api_explain(payload: dict[str, Any]) -> dict[str, Any]:
+    question = (payload.get("question") or "").strip()
+    user_id = (payload.get("user_id") or _SETTINGS.default_user_id).strip() or _SETTINGS.default_user_id
+    if not question:
+        raise HTTPException(status_code=400, detail="question is required")
+    return explain_question(question, user_id=user_id)
+
+
 @app.post("/ai/chat")
 def ai_chat_alias(payload: dict[str, Any]) -> dict[str, Any]:
     return chat(payload)
@@ -472,6 +783,44 @@ def intent_classify(payload: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="context must be an object")
 
     return classify_intent(message, context=context).to_dict()
+
+
+@app.post("/question/parse")
+def question_parse(payload: dict[str, Any]) -> dict[str, Any]:
+    message = (payload.get("message") or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message is required")
+
+    context = payload.get("context")
+    if context is not None and not isinstance(context, dict):
+        raise HTTPException(status_code=400, detail="context must be an object")
+
+    intent = payload.get("intent")
+    if intent is not None and not isinstance(intent, dict):
+        raise HTTPException(status_code=400, detail="intent must be an object")
+
+    return parse_question(message=message, intent=intent, context=context).to_dict()
+
+
+@app.post("/semantic/analyze")
+def semantic_analyze(payload: dict[str, Any]) -> dict[str, Any]:
+    message = (payload.get("message") or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message is required")
+
+    context = payload.get("context")
+    if context is not None and not isinstance(context, dict):
+        raise HTTPException(status_code=400, detail="context must be an object")
+
+    intent = payload.get("intent")
+    if intent is not None and not isinstance(intent, dict):
+        raise HTTPException(status_code=400, detail="intent must be an object")
+
+    question = payload.get("question")
+    if question is not None and not isinstance(question, dict):
+        raise HTTPException(status_code=400, detail="question must be an object")
+
+    return analyze_semantics(message=message, question=question, intent=intent, context=context).to_dict()
 
 
 @app.get("/intent/types")

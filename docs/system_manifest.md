@@ -36,12 +36,13 @@ When a question is received, LOGS AI follows this baseline processing order:
 1. Memory
 2. Context
 3. Intent
-4. Planner
-5. Workflow
-6. Tool Registry
-7. Business / Knowledge / System
-8. Answer
-9. Learning
+4. Question Understanding
+5. Planner
+6. Workflow
+7. Tool Registry
+8. Business / Knowledge / System
+9. Answer
+10. Learning
 
 ## 5. Layer Contract
 
@@ -61,6 +62,10 @@ Each layer has a clear responsibility boundary.
   - Responsible for understanding user intent and routing direction.
   - Responsible for classifying what the user is asking for after context is assembled.
   - Must not execute business logic directly, update databases, or call external systems.
+- Question Understanding
+  - Responsible for extracting structured fields (metric, operation, entity_type, period, limit, filters).
+  - Responsible for preparing deterministic selector hints between Intent and Planner.
+  - Must remain rule-based and must not execute business logic or call LLM providers.
 - Validation
   - Responsible for data-quality checks and validation-report generation.
   - Must run independently from normal runtime chat flow.
@@ -182,3 +187,91 @@ Planned expansion areas:
 - Admin UI
 - GitHub Issue integration
 - Cloud deployment
+
+## 12. Source and Storage Expansion Baseline (Sprint 29)
+
+The system now includes foundational layers for external-source ingestion and storage-backend switching.
+
+- Source systems: Google Drive / Google Spreadsheet (placeholder connectors)
+- Connector: source abstraction and metadata access contract
+- Ingestion: source sync orchestration and job metadata
+- Validation: data quality gates before persistence
+- Storage: backend abstraction (SQLite now, PostgreSQL later)
+- Business / AI OS: consumes structured data only
+
+Required processing chain:
+
+```text
+Google Drive / Spreadsheet
+-> Connector
+-> Ingestion
+-> Validation
+-> Storage
+-> Business / AI OS
+```
+
+Governance for this baseline:
+
+- Real Google API calls and OAuth are out of scope in this sprint.
+- Raw source data is not committed to GitHub.
+- GitHub is limited to logic, tests, and documentation artifacts.
+
+## 13. Google Drive Source Management Baseline (Sprint 30)
+
+Google Drive is the raw data origin for planned cloud-ready ingestion.
+
+- Initial synchronization scope:
+  - Logsys-origin data (Excel/Spreadsheet, sales/product/customer/order/purchase/stock candidates)
+  - Sales-authored operational sheets (sales management, customer notes, estimate management, progress management)
+- Processing chain remains mandatory:
+  - Connector -> Ingestion -> Validation -> Storage -> Business / AI OS
+
+Explicitly excluded in this sprint:
+
+- Mail
+- PDF
+- Google Docs
+- Proposal documents
+
+Repository and data policy:
+
+- GitHub stores implementation logic and tests only.
+- Actual business data is stored in Google Drive / Cloud DB.
+
+## 14. Query-Time Data Access Rule (Sprint 31)
+
+At query time, AI OS must use Storage-backed Business Logic access.
+
+- Storage is the structured data reference store.
+- Business Logic must access Storage through repository contracts.
+- Runtime, Planner, and LLM must not write SQL directly.
+- Query-time access must not fetch directly from Google Drive.
+- Google Drive is the ingestion source; Storage is the answering source.
+
+Enforced path for question answering:
+
+```text
+Storage -> Business Logic -> Runtime -> Answer
+```
+
+## 15. Business Tool Selection Rule (Sprint 33)
+
+Business logic must be selected and executed through Business Tool Selector and Business Tool Registry contracts.
+
+- Intent and Planner decide that business handling is required.
+- Business Tool Selector chooses one business tool by rules.
+- Business Tool Registry resolves and executes that tool handler.
+- Tool handlers read data only through Storage/Repository paths.
+- Formatter transforms business output into deterministic user-facing answers.
+
+Required structure:
+
+```text
+Intent
+-> Planner
+-> Business Tool Selector
+-> Business Tool Registry
+-> Business Query
+-> Formatter
+-> Answer
+```

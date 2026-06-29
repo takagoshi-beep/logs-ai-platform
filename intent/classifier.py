@@ -9,6 +9,30 @@ from intent.registry import get_intent_type
 
 _RULES: list[dict[str, Any]] = [
     {
+        "intent_type": "table_count",
+        "patterns": ["何件", "件あります", "row count", "count"],
+        "reason": "table count keywords indicate row-count intent",
+        "requires_business_logic": True,
+    },
+    {
+        "intent_type": "schema",
+        "patterns": ["列", "カラム", "columns", "schema"],
+        "reason": "schema keywords indicate table schema intent",
+        "requires_business_logic": True,
+    },
+    {
+        "intent_type": "database_info",
+        "patterns": ["どんなテーブル", "テーブルがあります", "database", "db"],
+        "reason": "database summary keywords indicate database info intent",
+        "requires_business_logic": True,
+    },
+    {
+        "intent_type": "table_info",
+        "patterns": ["テーブル", "table"],
+        "reason": "table keywords indicate table information intent",
+        "requires_business_logic": True,
+    },
+    {
         "intent_type": "continue",
         "patterns": ["前回", "以前", "続き", "この件", "引き続き"],
         "reason": "follow-up keywords indicate continuation of prior context",

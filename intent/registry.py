@@ -13,6 +13,10 @@ _INTENT_TYPES: dict[str, dict[str, Any]] = {
     "generate": {"name": "generate", "description": "Generate text or a new artifact"},
     "improve": {"name": "improve", "description": "Request an improvement or correction"},
     "status": {"name": "status", "description": "Ask about capabilities, state, or constraints"},
+    "database_info": {"name": "database_info", "description": "Ask about database-level table summaries"},
+    "table_info": {"name": "table_info", "description": "Ask about one table details"},
+    "table_count": {"name": "table_count", "description": "Ask row counts for one table"},
+    "schema": {"name": "schema", "description": "Ask about table columns/schema"},
     "unknown": {"name": "unknown", "description": "No rule matched"},
 }
 

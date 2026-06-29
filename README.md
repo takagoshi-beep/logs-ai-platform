@@ -76,6 +76,7 @@ The API will expose:
 
 - /chat
 - /ai/chat
+- /question/parse
 - /health
 - /version
 - /tables
@@ -210,6 +211,15 @@ The platform now exposes a simple registry of business logic so the AI layer can
 - `GET /system/map` returns a grouped overview of domains and logic names.
 - `GET /system/logic` returns the full logic registry.
 - `GET /system/logic/{logic_name}` returns the metadata for a specific logic.
+
+## Sprint 34: Question Understanding layer
+
+Question Understanding is added as a deterministic rule-based stage between Intent and Planner.
+
+- `question/parser.py` parses the user message into structured fields.
+- Extracted fields include `metric`, `operation`, `entity_type`, `period`, `limit`, and `filters`.
+- Runtime trace includes a `Question` layer and normalized fields (`question_metric`, `question_operation`, `question_entity_type`, `question_period`, `question_limit`, `question_confidence`).
+- `POST /question/parse` exposes parsing as a standalone API.
 
 ## Sprint 10: knowledge layer
 
@@ -523,7 +533,253 @@ curl -X POST http://127.0.0.1:8000/business/query \
   -d '{"message":"売上ランキングを見せて"}'
 ```
 
+## Sprint 29: Storage / Connector / Ingestion foundation
+
+This sprint adds a cloud-ready foundation so data sources and DB backends can be swapped without changing existing Business Logic, Knowledge, Context, Intent, Planner, or Workflow responsibilities.
+
+- Storage Layer:
+  - `storage/models.py` defines `StorageConfig`.
+  - `storage/repository.py` defines the repository interface.
+  - `storage/sqlite.py` provides the working SQLite implementation.
+  - `storage/postgres.py` provides a PostgreSQL scaffold for later activation.
+
+- Connector Layer:
+  - `connector/google_drive/` and `connector/google_sheets.py` provide connector implementations.
+  - `connector/registry.py` provides registration and retrieval of connectors.
+
+- Ingestion Layer:
+  - `ingestion/loader.py` is the entrypoint from connector data to downstream validation/storage.
+  - `ingestion/sync.py` provides `sync_source(source_name)`.
+
+External data flow (foundation):
+
+```text
+Google Drive / Spreadsheet
+  -> Connector
+  -> Ingestion
+  -> Validation
+  -> Storage
+  -> Business / AI OS
+```
+
+New APIs:
+
+- `GET /connectors`
+- `GET /connectors/{name}/files`
+- `POST /ingestion/sync/{source_name}`
+
+Data governance policy:
+
+- Google Drive / Spreadsheet are the source-of-truth raw data locations.
+- DB is the structured storage location for AI OS operations.
+- GitHub stores logic, tests, and documentation only.
+- Raw data (`data/excel`), SQLite artifacts (`data/sqlite`), and `.env` must remain outside version control.
+
 ## Notes
 
 - The SQLite database is created at data/sqlite/logsys.db
 - Do not commit Excel, SQLite, or other confidential data files to GitHub.
+
+## Sprint 30: Google Drive source-management preparation
+
+Sprint 30 extends the source-management baseline for upcoming Google Drive API integration.
+
+- Google Drive is defined as the raw source-of-truth location.
+- First synchronization targets are:
+  - Logsys data (sales, product, customer, purchase, order, stock candidates)
+  - Sales-authored data (sales management, customer notes, estimate management, progress management)
+- Current ingestion path remains:
+  - Connector -> Ingestion -> Validation -> Storage -> AI OS
+- Out of scope in this sprint:
+  - Email
+  - PDF
+  - Google Docs
+  - Proposal documents
+
+Google Drive connector structure (mock-auth ready):
+
+- `connector/google_drive/client.py`
+  - Google API client/authentication abstraction (currently mock).
+- `connector/google_drive/service.py`
+  - Drive folder file retrieval service and connector adapter.
+- `connector/google_drive/models.py`
+  - Retrieval result models for Excel and Spreadsheet files.
+- `connector/google_drive/config.py`
+  - Folder/auth configuration loading.
+
+Storage synchronization flow:
+
+```text
+Google Drive Folder
+  -> Connector Layer
+  -> Ingestion (google_drive_importer)
+  -> Storage(SQLite, full refresh replace)
+  -> Business Logic
+  -> AI Runtime
+```
+
+New sync API:
+
+- `POST /storage/sync`
+
+Example:
+
+```bash
+curl -X POST http://127.0.0.1:8000/storage/sync \
+  -H "Content-Type: application/json" \
+  -d '{"folder_id":"your-drive-folder-id"}'
+```
+
+Response example:
+
+```json
+{
+  "status": "success",
+  "folder_id": "your-drive-folder-id",
+  "files": 12,
+  "tables": 34,
+  "sync_time": "2026-06-29T00:00:00+00:00",
+  "elapsed_time": 0.42
+}
+```
+
+Trace for storage sync includes:
+
+- `sync_time`
+- `folder_id`
+- `files`
+- `table_count`
+- `elapsed_time`
+
+Required environment variables (mock auth mode):
+
+- `GOOGLE_DRIVE_ENABLED=true`
+- `GOOGLE_DRIVE_LOGSYS_FOLDER_ID=<drive-folder-id>`
+- `GOOGLE_DRIVE_SALES_FOLDER_ID=<drive-folder-id>`
+
+Google API/OAuth settings note:
+
+- Current implementation supports real OAuth with readonly scopes and a mock fallback for tests.
+- Keep `credentials.json`, `token.json`, and any OAuth secrets out of version control.
+
+### Run commands
+
+Initial OAuth authentication:
+
+```bash
+python scripts/google_drive_oauth.py
+```
+
+Sync execution:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/sync \
+  -H "Content-Type: application/json" \
+  -d '{"folder_id":"your-drive-folder-id"}'
+```
+
+Catalog check:
+
+```bash
+curl http://127.0.0.1:8000/api/catalog
+```
+
+Sync status check:
+
+```bash
+curl http://127.0.0.1:8000/api/sync/status
+```
+
+Chat API question:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"question":"売上トップ10は？"}'
+```
+
+Failure handling:
+
+- `folder_id` missing: `400` with `folder_id is required`
+- `credentials.json` missing: `400` with the missing credentials path
+- `token.json` missing: `400` with the missing token path
+- Google API permission errors: returned as sync errors with explicit messages in `errors`
+- No target files found: `400` with a `No target Excel or Spreadsheet files found...` message
+- Validation failure: `400` with `Validation failed after sync`
+
+### E2E verification checklist
+
+1. Run OAuth initial auth script.
+2. Run `POST /api/sync` with a real Drive folder ID.
+3. Confirm `GET /api/catalog` returns table/sheet metadata.
+4. Confirm `GET /api/sync/status` returns latest sync summary.
+5. Confirm `POST /api/chat` answers `売上トップ10は？`.
+
+Governance:
+
+- GitHub stores logic, tests, and documentation only.
+- Actual data stays in Google Drive / Cloud DB.
+- No real folder IDs, credentials, or OAuth secrets are committed.
+
+## Sprint 31: Storage-backed business query flow
+
+Sprint 31 establishes the runtime query path that reads structured data from Storage via Business Logic before full Google Drive live sync is enabled.
+
+- Storage is the structured data reference layer at question time.
+- Business Logic reads Storage through repository abstractions.
+- Runtime and Planner do not write SQL directly.
+- Question handling does not access Google Drive directly.
+- Google Drive is a synchronization source; Storage is the query-time source.
+
+Flow:
+
+```text
+Google Drive (sync source)
+  -> Ingestion
+  -> Storage
+  -> Business Logic
+  -> Runtime
+  -> Answer
+
+## Sprint 32: Business-only answers without LLM
+
+Sprint 32 adds a deterministic Business answer path for database/table questions.
+
+- Business layer reads SQLite storage through repository abstractions.
+- If the question can be answered by Business logic alone, the runtime uses Business Formatter output directly.
+- In this path, LLM is not called.
+- Query-time policy remains:
+  - Google Drive is sync source only.
+  - Storage is the question-time reference source.
+
+Deterministic answer path:
+
+```text
+Repository
+  -> Business
+  -> Business Formatter
+  -> Answer
+
+## Sprint 33: Business Tool Registry and Selector
+
+Sprint 33 organizes business capabilities as selectable tools behind a dedicated Business Tool Registry.
+
+- Business Tool Registry manages discoverable business tools.
+- Business Tool Selector chooses the right business tool from message and intent using rule-based logic.
+- Business features are selected through the registry rather than hard-coded function calls in planner/workflow.
+- Runtime and Planner continue to avoid direct SQL handling.
+- LLM-free business questions are executed through Business Tool selection and formatter output.
+
+Selection flow:
+
+```text
+Intent
+  -> Planner
+  -> Business Tool Selector
+  -> Business Tool Registry
+  -> Business Query
+  -> Formatter
+  -> Answer
+```
+```
+```
