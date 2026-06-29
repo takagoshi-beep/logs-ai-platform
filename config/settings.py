@@ -24,6 +24,16 @@ class AppSettings:
     storage_provider: str = "sqlite"
     sqlite_path: str = "data/sqlite/logsys.db"
     postgres_url: str = ""
+    supabase_url: str = ""
+    supabase_db_url: str = ""
+    supabase_service_role_key: str = ""
+    supabase_anon_key: str = ""
+    supabase_schema_raw: str = "ai_os_raw"
+    supabase_schema_core: str = "ai_os_core"
+    supabase_schema_meta: str = "ai_os_meta"
+    supabase_batch_size: int = 1000
+    supabase_max_retries: int = 5
+    supabase_write_mode: str = "insert"
     google_drive_enabled: bool = True
     google_sheets_enabled: bool = True
     google_oauth_enabled: bool = False
@@ -48,6 +58,15 @@ def _to_bool(value: Any, default: bool = False) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _to_int(value: Any, default: int) -> int:
+    if value is None:
+        return default
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
 def _default_payload(environment: str) -> dict[str, Any]:
     return {
         "app": {
@@ -60,6 +79,16 @@ def _default_payload(environment: str) -> dict[str, Any]:
             "storage_provider": "sqlite",
             "sqlite_path": "data/sqlite/logsys.db",
             "postgres_url": "",
+            "supabase_url": "",
+            "supabase_db_url": "",
+            "supabase_service_role_key": "",
+            "supabase_anon_key": "",
+            "supabase_schema_raw": "ai_os_raw",
+            "supabase_schema_core": "ai_os_core",
+            "supabase_schema_meta": "ai_os_meta",
+            "supabase_batch_size": 1000,
+            "supabase_max_retries": 5,
+            "supabase_write_mode": "insert",
             "google_drive_enabled": True,
             "google_sheets_enabled": True,
             "google_oauth_enabled": False,
@@ -108,6 +137,46 @@ def load_settings(environment: str | None = None) -> AppSettings:
     )
     sqlite_path = str(os.getenv("SQLITE_PATH") or app.get("sqlite_path") or app.get("sqlite_db_path", "data/sqlite/logsys.db"))
     postgres_url = str(os.getenv("POSTGRES_URL") or app.get("postgres_url", ""))
+    supabase_url = str(os.getenv("SUPABASE_URL") or app.get("supabase_url", ""))
+    supabase_db_url = str(
+        os.getenv("SUPABASE_DB_URL")
+        or os.getenv("DATABASE_URL")
+        or app.get("supabase_db_url", "")
+        or app.get("database_url", "")
+        or postgres_url
+    )
+    supabase_service_role_key = str(
+        os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        or app.get("supabase_service_role_key", "")
+    )
+    supabase_anon_key = str(
+        os.getenv("SUPABASE_ANON_KEY")
+        or app.get("supabase_anon_key", "")
+    )
+    supabase_schema_raw = str(
+        os.getenv("SUPABASE_SCHEMA_RAW")
+        or app.get("supabase_schema_raw", "ai_os_raw")
+    )
+    supabase_schema_core = str(
+        os.getenv("SUPABASE_SCHEMA_CORE")
+        or app.get("supabase_schema_core", "ai_os_core")
+    )
+    supabase_schema_meta = str(
+        os.getenv("SUPABASE_SCHEMA_META")
+        or app.get("supabase_schema_meta", "ai_os_meta")
+    )
+    supabase_batch_size = _to_int(
+        os.getenv("SUPABASE_BATCH_SIZE") or app.get("supabase_batch_size"),
+        default=1000,
+    )
+    supabase_max_retries = _to_int(
+        os.getenv("SUPABASE_MAX_RETRIES") or app.get("supabase_max_retries"),
+        default=5,
+    )
+    supabase_write_mode = str(
+        os.getenv("SUPABASE_WRITE_MODE")
+        or app.get("supabase_write_mode", "insert")
+    ).strip().lower()
     google_drive_enabled = _to_bool(
         os.getenv("GOOGLE_DRIVE_ENABLED", app.get("google_drive_enabled")),
         default=True,
@@ -151,6 +220,16 @@ def load_settings(environment: str | None = None) -> AppSettings:
         storage_provider=storage_provider,
         sqlite_path=sqlite_path,
         postgres_url=postgres_url,
+        supabase_url=supabase_url,
+        supabase_db_url=supabase_db_url,
+        supabase_service_role_key=supabase_service_role_key,
+        supabase_anon_key=supabase_anon_key,
+        supabase_schema_raw=supabase_schema_raw,
+        supabase_schema_core=supabase_schema_core,
+        supabase_schema_meta=supabase_schema_meta,
+        supabase_batch_size=supabase_batch_size,
+        supabase_max_retries=supabase_max_retries,
+        supabase_write_mode=supabase_write_mode,
         google_drive_enabled=google_drive_enabled,
         google_sheets_enabled=google_sheets_enabled,
         google_oauth_enabled=google_oauth_enabled,

@@ -2,9 +2,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from connector.google_drive import GoogleDriveConnector
+from config.settings import reset_settings_cache
 from ingestion.google_drive_importer import sync_google_drive_to_storage
 from storage.sqlite import SQLiteRepository
+
+
+@pytest.fixture(autouse=True)
+def _force_mock_google_connector(monkeypatch) -> None:
+    monkeypatch.setenv("GOOGLE_OAUTH_ENABLED", "false")
+    reset_settings_cache()
+    yield
+    reset_settings_cache()
 
 
 def test_google_drive_importer_updates_storage(tmp_path: Path) -> None:

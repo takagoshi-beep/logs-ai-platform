@@ -11,8 +11,12 @@ def test_storage_config_can_be_created() -> None:
     config = StorageConfig(
         provider="sqlite",
         sqlite_path="data/sqlite/logsys.db",
-        postgres_url="",
         environment="dev",
+        supabase_db_url="",
+        supabase_url="",
+        supabase_service_role_key="",
+        supabase_anon_key="",
+        postgres_url="",
     )
     assert config.provider == "sqlite"
     assert config.sqlite_path.endswith("logsys.db")

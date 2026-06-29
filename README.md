@@ -132,6 +132,34 @@ docker compose up --build
 
 The container exposes the FastAPI service on port `8000`.
 
+## Supabase schema-separated configuration
+
+SQLite remains the default provider.
+
+Set the provider and Supabase connection only when enabling cloud storage:
+
+```bash
+STORAGE_PROVIDER=supabase
+SUPABASE_DB_URL=postgresql://...
+SUPABASE_SCHEMA_RAW=ai_os_raw
+SUPABASE_SCHEMA_CORE=ai_os_core
+SUPABASE_SCHEMA_META=ai_os_meta
+```
+
+AI OS uses only these schemas in Supabase and does not depend on existing `public` tables.
+
+Optional bootstrap script (safe create-only):
+
+```bash
+python scripts/bootstrap_supabase_schemas.py
+```
+
+This script only runs `CREATE SCHEMA IF NOT EXISTS` for:
+
+- `ai_os_raw`
+- `ai_os_core`
+- `ai_os_meta`
+
 ## DB schema inspection
 
 Use the schema endpoints to inspect the database structure for AI-friendly metadata.

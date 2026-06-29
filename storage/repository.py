@@ -1,16 +1,28 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from typing import Any
 
 
 class BaseRepository(ABC):
+    def __enter__(self) -> "BaseRepository":
+        self.connect()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
     @abstractmethod
     def connect(self) -> None:
         raise NotImplementedError
 
     @abstractmethod
     def execute_query(self, query: str, params: tuple[Any, ...] | None = None) -> Any:
+        raise NotImplementedError
+
+    @abstractmethod
+    def execute_many(self, query: str, params: list[tuple[Any, ...]]) -> Any:
         raise NotImplementedError
 
     @abstractmethod
@@ -44,6 +56,10 @@ class BaseRepository(ABC):
     @abstractmethod
     def list_columns(self, table_name: str) -> list[str]:
         raise NotImplementedError
+
+    @contextmanager
+    def transaction(self):
+        yield self
 
     @abstractmethod
     def close(self) -> None:
