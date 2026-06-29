@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from storage.sqlite import SQLiteRepository
+from storage.provider import create_storage_repository
+from storage.repository import BaseRepository
 
 
 def _resolve_db_path(db_path: Path | None = None) -> Path:
@@ -14,8 +15,8 @@ def _resolve_db_path(db_path: Path | None = None) -> Path:
     return app_main.DEFAULT_DB_PATH
 
 
-def _open_repository(db_path: Path | None = None) -> SQLiteRepository:
-    return SQLiteRepository(_resolve_db_path(db_path))
+def _open_repository(db_path: Path | None = None) -> BaseRepository:
+    return create_storage_repository(db_path=_resolve_db_path(db_path))
 
 
 def _matches_any(text: str, keywords: list[str]) -> bool:
@@ -23,7 +24,7 @@ def _matches_any(text: str, keywords: list[str]) -> bool:
     return any(keyword in lowered for keyword in keywords)
 
 
-def _safe_get_tables(repository: SQLiteRepository) -> list[str]:
+def _safe_get_tables(repository: BaseRepository) -> list[str]:
     return [item.get("table_name", "") for item in repository.get_tables() if item.get("table_name")]
 
 

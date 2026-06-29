@@ -13,3 +13,79 @@ storage_refresh_started: db_path=C:\Users\takag\Documents\GitHub\logs-ai-platfor
 storage_refresh_completed: catalog_files=3
 excel_download_started: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx file_id=1UL3Rg72K3soFybiu44fUM_kQTjX3ZeN2
 excel_download_completed: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx file_id=1UL3Rg72K3soFybiu44fUM_kQTjX3ZeN2 bytes=123868676
+sheet_write_started: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=売上 row_count=199512
+sheet_write_completed: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=売上 table_name=売上 row_count=199512
+sheet_write_started: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=顧客 row_count=2738
+sheet_write_completed: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=顧客 table_name=顧客 row_count=2738
+sheet_write_started: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=顧客担当者 row_count=3816
+sheet_write_completed: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=顧客担当者 table_name=顧客担当者 row_count=3816
+sheet_write_started: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=商品 row_count=10236
+sheet_write_completed: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=商品 table_name=商品 row_count=10236
+sheet_write_started: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=売上 row_count=199512
+sheet_write_started: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=仕入 row_count=44855
+sheet_write_completed: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=売上 table_name=売上 row_count=199512
+sheet_write_started: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=顧客 row_count=2738
+sheet_write_completed: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=顧客 table_name=顧客 row_count=2738
+sheet_write_started: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=顧客担当者 row_count=3816
+sheet_write_completed: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=顧客担当者 table_name=顧客担当者 row_count=3816
+sheet_write_completed: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=仕入 table_name=仕入 row_count=44855
+sheet_write_started: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=商品 row_count=10236
+sheet_write_completed: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=商品 table_name=商品 row_count=10236
+sheet_write_started: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=仕入 row_count=44855
+sheet_write_completed: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=仕入 table_name=仕入 row_count=44855
+sheet_write_started: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=発注依頼 row_count=34733
+sheet_write_completed: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=発注依頼 table_name=発注依頼 row_count=34733
+sheet_write_started: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=取引先 row_count=2148
+sheet_write_completed: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=取引先 table_name=取引先 row_count=2148
+sheet_write_started: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=仕入諸掛 row_count=21390
+sheet_write_completed: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=仕入諸掛 table_name=仕入諸掛 row_count=21390
+sheet_write_started: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=コード row_count=199
+sheet_write_completed: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=コード table_name=コード row_count=199
+spreadsheet_read_started: file_name=集計 file_id=15zLcbkrwsrqkQumQ9YH9CwZP6DXsdqKZTEyPxbxcgNA
+spreadsheet_read_completed: file_name=集計 file_id=15zLcbkrwsrqkQumQ9YH9CwZP6DXsdqKZTEyPxbxcgNA
+sheet_write_started: file_name=集計 sheet_name=集計 row_count=16705
+sheet_write_completed: file_name=集計 sheet_name=集計 table_name=集計 row_count=16705
+spreadsheet_read_started: file_name=社員マスタ file_id=1Xbxc-Jz6ifcrXZZlpxBFUCoeXrKjy6l9lNbA_GiR4Rs
+sheet_write_started: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=発注依頼 row_count=34733
+spreadsheet_read_completed: file_name=社員マスタ file_id=1Xbxc-Jz6ifcrXZZlpxBFUCoeXrKjy6l9lNbA_GiR4Rs
+sheet_write_started: file_name=社員マスタ sheet_name=imp 社員マスタ row_count=999
+sheet_write_completed: file_name=社員マスタ sheet_name=imp 社員マスタ table_name=imp_社員マスタ row_count=999
+sheet_write_started: file_name=社員マスタ sheet_name=imp マスタ row_count=2740
+sheet_write_completed: file_name=社員マスタ sheet_name=imp マスタ table_name=imp_マスタ row_count=2740
+storage_registry_completed: table_count=0 rows_imported=340071 elapsed_time=301.827474
+sync_result_status=success
+running_validate_synced_storage
+validation_status=ok
+saving_validation_report
+updating_sync_status
+reading_catalog
+catalog_count=12
+reading_sync_status
+done
+sheet_write_completed: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=発注依頼 table_name=発注依頼 row_count=34733
+sheet_write_started: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=取引先 row_count=2148
+sheet_write_completed: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=取引先 table_name=取引先 row_count=2148
+sheet_write_started: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=仕入諸掛 row_count=21390
+sheet_write_completed: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=仕入諸掛 table_name=仕入諸掛 row_count=21390
+sheet_write_started: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=コード row_count=199
+sheet_write_completed: file_name=ログシスExcels連携_v3_0813修正_20260629.xlsx sheet_name=コード table_name=コード row_count=199
+spreadsheet_read_started: file_name=集計 file_id=15zLcbkrwsrqkQumQ9YH9CwZP6DXsdqKZTEyPxbxcgNA
+spreadsheet_read_completed: file_name=集計 file_id=15zLcbkrwsrqkQumQ9YH9CwZP6DXsdqKZTEyPxbxcgNA
+sheet_write_started: file_name=集計 sheet_name=集計 row_count=16705
+sheet_write_completed: file_name=集計 sheet_name=集計 table_name=集計 row_count=16705
+spreadsheet_read_started: file_name=社員マスタ file_id=1Xbxc-Jz6ifcrXZZlpxBFUCoeXrKjy6l9lNbA_GiR4Rs
+spreadsheet_read_completed: file_name=社員マスタ file_id=1Xbxc-Jz6ifcrXZZlpxBFUCoeXrKjy6l9lNbA_GiR4Rs
+sheet_write_started: file_name=社員マスタ sheet_name=imp 社員マスタ row_count=999
+sheet_write_completed: file_name=社員マスタ sheet_name=imp 社員マスタ table_name=imp_社員マスタ row_count=999
+sheet_write_started: file_name=社員マスタ sheet_name=imp マスタ row_count=2740
+sheet_write_completed: file_name=社員マスタ sheet_name=imp マスタ table_name=imp_マスタ row_count=2740
+storage_registry_completed: table_count=20 rows_imported=340071 elapsed_time=260.015452
+sync_result_status=success
+running_validate_synced_storage
+validation_status=ok
+saving_validation_report
+updating_sync_status
+reading_catalog
+catalog_count=12
+reading_sync_status
+done

@@ -15,7 +15,7 @@ from planner.plan import create_plan
 from question.parser import parse_question
 from semantic.layer import analyze_semantics
 from ingestion.google_drive_importer import get_storage_catalog
-from storage.sqlite import SQLiteRepository
+from storage.provider import create_storage_repository
 from workflow.builder import create_workflow
 from workflow.engine import execute_workflow
 
@@ -82,14 +82,15 @@ def explain_question(question: str, user_id: str = "default") -> dict[str, Any]:
         storage_access["row_count"] = business_item["result"].get("row_count") or business_item["result"].get("limit") or 0
         repository["tool_name"] = selected_tool_name
 
-    if db_path.exists():
-        sqlite_repository = SQLiteRepository(db_path)
+    should_probe_storage = settings.storage_provider == "supabase" or db_path.exists()
+    if should_probe_storage:
+        repository_instance = create_storage_repository(db_path=db_path)
         try:
-            storage_access["catalog_count"] = len(sqlite_repository.get_tables())
+            storage_access["catalog_count"] = len(repository_instance.get_tables())
         except Exception:
             storage_access["catalog_count"] = 0
         finally:
-            sqlite_repository.close()
+            repository_instance.close()
 
     try:
         storage_catalog = get_storage_catalog(db_path)
