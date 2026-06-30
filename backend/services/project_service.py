@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -20,6 +21,7 @@ from domain.project import (
     ProjectEventType,
     ProjectEvents,
     ProjectGoal,
+    ProjectHealth,
     ProjectState,
 )
 from storage.provider import create_storage_repository
@@ -47,8 +49,6 @@ class ProjectService:
 
     def _generate_trace_id(self, project_id: str) -> str:
         """Generate deterministic trace ID based on project."""
-        # Generate deterministic trace ID from project_id
-        import hashlib
         project_hash = hashlib.md5(str(project_id).encode()).hexdigest()[:8]
         return f"project-{project_hash}"
 
@@ -489,56 +489,70 @@ class ProjectService:
 
         return actions
 
-    def build_project_aggregate(self, project_id: str) -> ProjectAggregate | None:
-        """Build complete ProjectAggregate for a single project."""
-        data = self._build_project_data(project_id)
-        if not data:
-            return None
-
-        # Generate deterministic trace ID
-        trace_id = self._generate_trace_id(project_id)
-
-        events = self._generate_project_events(data, trace_id)
-        state = self._determine_state(data)
-        goals = self._evaluate_goals(data, state)
-        decisions = self._generate_decisions(data, state, goals)
-        actions = self._generate_actions(data, state, decisions, trace_id)
-
-        # Calculate health score
-        health = self._calculate_health_score(data, state, goals, decisions, actions, trace_id)
-
-        return ProjectAggregate(
-            project_id=project_id,
-            po_number=data.po_number,
-            events=events,
-            data=data,
-            state=state,
-            goal_evaluations=goals,
-            decisions=decisions,
-            actions=actions,
-            trace_id=trace_id,
-            priority="high" if decisions else "medium",
-            health=health,
-        )
-
-    def _calculate_health_score(self, data: ProjectData, state: ProjectState, goals: GoalEvaluations, decisions: list[ProjectDecisionDetail], actions: list[ProjectAction], trace_id: str) -> 'ProjectHealth':
-        """Calculate project health score."""
-        from domain.project import ProjectHealth, GoalStatus
-
+    def _calculate_health_score(self, data: ProjectData, state: ProjectState, goals: GoalEvaluations, decisions: list[ProjectDecisionDetail], actions: list[ProjectAction], trace_id: str) -> ProjectHealth:
+        """Calculate project health score - reflects current operational health."""
         score = 100
         factors = {}
 
-        # Gross profit penalty
-        if data.profit_margin_pct and data.profit_margin_pct < 15:
-            penalty = 25
-            score -= penalty
-            factors["gross_profit_low"] = -penalty
+        # Completed state - high health unless there were margin issues
+        if state == ProjectState.COMPLETED:
+            # Completed projects get 95+ unless there were margin issues
+            if data.profit_margin_pct and data.profit_margin_pct < 10:
+                score = 85
+                factors["completed_low_margin"] = -15
+            return ProjectHealth(
+                health_score=score,
+                health_status="healthy" if score >= 80 else "watch",
+                factors=factors,
+                reason="Completed",
+                trace_id=trace_id,
+            )
 
-        # Delivery risk penalty
-        if data.days_until_delivery < 7 and not data.actual_delivery_date:
-            penalty = 25
+        # Gross profit penalty - most important factor
+        if data.profit_margin_pct is not None:
+            if data.profit_margin_pct < 0:
+                penalty = 70
+                factors["margin_negative"] = -penalty
+            elif data.profit_margin_pct < 5:
+                penalty = 55
+                factors["margin_critical"] = -penalty
+            elif data.profit_margin_pct < 10:
+                penalty = 40
+                factors["margin_low"] = -penalty
+            elif data.profit_margin_pct < 15:
+                penalty = 20
+                factors["margin_below_target"] = -penalty
+            else:
+                penalty = 0
+            if penalty > 0:
+                score -= penalty
+
+        # Delivery risk - aggressive for imminent failures
+        if not data.actual_delivery_date and data.days_until_delivery is not None:
+            if data.days_until_delivery < 0:
+                # Overdue but not delivered yet - severe
+                penalty = 50
+                factors["delivery_overdue"] = -penalty
+            elif data.days_until_delivery < 3:
+                penalty = 35
+                factors["delivery_critical"] = -penalty
+            elif data.days_until_delivery < 7:
+                penalty = 20
+                factors["delivery_risk"] = -penalty
+            elif data.days_until_delivery < 14:
+                penalty = 5
+                factors["delivery_approaching"] = -penalty
+            else:
+                penalty = 0
+            if penalty > 0:
+                score -= penalty
+
+        # Payment/billing pending - cash flow risk
+        if state == ProjectState.DELIVERY_RECEIVED or (state == ProjectState.AWAITING_PAYMENT and data.actual_delivery_date):
+            # Delivered but not paid - cash flow risk
+            penalty = 20
             score -= penalty
-            factors["delivery_risk"] = -penalty
+            factors["cash_flow_pending"] = -penalty
 
         # Cost unconfirmed penalty
         confirm_cost_eval = goals.evaluations.get(ProjectGoal.CONFIRM_COST)
@@ -549,13 +563,16 @@ class ProjectService:
 
         # High priority action penalty
         if len(actions) > 0 and any(a.priority == "high" for a in actions):
-            penalty = 20
+            penalty = 15
             score -= penalty
             factors["high_priority_action"] = -penalty
 
         # Data completeness penalty
-        if data.po_amount == 0 or data.cost_amount == 0:
-            penalty = 10
+        has_missing_data = ((data.sale_amount == 0 or data.sale_amount is None) or
+                           (data.cost_amount == 0 or data.cost_amount is None) or
+                           (data.po_amount == 0 or data.po_amount is None))
+        if has_missing_data and state not in (ProjectState.COMPLETED, ProjectState.DELIVERY_RECEIVED):
+            penalty = 20
             score -= penalty
             factors["data_incomplete"] = -penalty
 
@@ -580,6 +597,153 @@ class ProjectService:
             reason=reason,
             trace_id=trace_id,
         )
+
+    def _calculate_risk_score(self, data: ProjectData, state: ProjectState, goals: GoalEvaluations) -> tuple[int, str]:
+        """Calculate risk score (0-100) reflecting danger if ignored."""
+        risk_components = []
+
+        # Margin risk - financial viability
+        if data.profit_margin_pct is not None:
+            if data.profit_margin_pct < 0:
+                margin_risk = 100
+            elif data.profit_margin_pct < 5:
+                margin_risk = 90
+            elif data.profit_margin_pct < 10:
+                margin_risk = 75
+            elif data.profit_margin_pct < 15:
+                margin_risk = 55
+            else:
+                margin_risk = 20
+            risk_components.append(("margin", margin_risk, 0.40))  # 40% weight
+
+        # Delivery risk - operational execution
+        if not data.actual_delivery_date and data.days_until_delivery is not None:
+            if data.days_until_delivery < 0:
+                delivery_risk = 100
+            elif data.days_until_delivery < 1:
+                delivery_risk = 95
+            elif data.days_until_delivery < 3:
+                delivery_risk = 85
+            elif data.days_until_delivery < 7:
+                delivery_risk = 70
+            elif data.days_until_delivery < 14:
+                delivery_risk = 40
+            else:
+                delivery_risk = 15
+            risk_components.append(("delivery", delivery_risk, 0.35))  # 35% weight
+        else:
+            risk_components.append(("delivery", 0, 0.35))
+
+        # Cash flow / billing risk
+        if data.actual_delivery_date and not data.actual_payment_date:
+            # Delivered but not yet paid = cash flow risk
+            billing_risk = 70
+        elif state == ProjectState.DELIVERY_OVERDUE:
+            billing_risk = 65
+        else:
+            billing_risk = 15
+        risk_components.append(("billing", billing_risk, 0.25))  # 25% weight
+
+        # Calculate weighted risk score
+        risk_score = sum(component[1] * component[2] for component in risk_components)
+        risk_score = min(100, int(risk_score))
+
+        # Determine risk level with stricter thresholds
+        if risk_score >= 80:
+            risk_level = "critical"
+        elif risk_score >= 60:
+            risk_level = "high"
+        elif risk_score >= 40:
+            risk_level = "medium"
+        else:
+            risk_level = "low"
+
+        return risk_score, risk_level
+
+    def _calculate_opportunity_score(self, data: ProjectData, customer_priority: str = "normal") -> tuple[int, str]:
+        """Calculate opportunity score (0-100) from margins and deal size."""
+        opportunity_score = 0
+        vip_multiplier = 1.5 if customer_priority == "vip" else (1.2 if customer_priority == "high" else 1.0)
+
+        # High margin opportunity (strongest signal)
+        if data.profit_margin_pct and data.profit_margin_pct >= 35:
+            margin_score = int(50 * vip_multiplier)
+            opportunity_score += margin_score
+        elif data.profit_margin_pct and data.profit_margin_pct >= 25:
+            margin_score = int(30 * vip_multiplier)
+            opportunity_score += margin_score
+        elif data.profit_margin_pct and data.profit_margin_pct >= 15:
+            margin_score = int(15 * vip_multiplier)
+            opportunity_score += margin_score
+
+        # Large deal opportunity
+        if data.sale_amount and data.sale_amount >= 2000000:
+            deal_score = int(30 * vip_multiplier)
+            opportunity_score += deal_score
+        elif data.sale_amount and data.sale_amount >= 1000000:
+            deal_score = int(15 * vip_multiplier)
+            opportunity_score += deal_score
+
+        # Cap at 100
+        opportunity_score = min(100, opportunity_score)
+
+        # Determine opportunity level
+        if opportunity_score >= 70:
+            opportunity_level = "high"
+        elif opportunity_score >= 40:
+            opportunity_level = "medium"
+        else:
+            opportunity_level = "low"
+
+        return opportunity_score, opportunity_level
+
+    def _recommend_focus(self, health_score: int, risk_score: int, opportunity_score: int) -> str:
+        """Recommend focus based on 3-axis scores."""
+        from business.evaluation_rules import FocusRecommendationRule
+
+        return FocusRecommendationRule.recommend(health_score, risk_score, opportunity_score)
+
+    def build_project_aggregate(self, project_id: str) -> ProjectAggregate | None:
+        """Build complete ProjectAggregate for a single project."""
+        data = self._build_project_data(project_id)
+        if not data:
+            return None
+
+        # Generate deterministic trace ID
+        trace_id = self._generate_trace_id(project_id)
+
+        events = self._generate_project_events(data, trace_id)
+        state = self._determine_state(data)
+        goals = self._evaluate_goals(data, state)
+        decisions = self._generate_decisions(data, state, goals)
+        actions = self._generate_actions(data, state, decisions, trace_id)
+
+        # Calculate 3-axis scores
+        health = self._calculate_health_score(data, state, goals, decisions, actions, trace_id)
+        risk_score, risk_level = self._calculate_risk_score(data, state, goals)
+        opportunity_score, opportunity_level = self._calculate_opportunity_score(data)
+        recommended_focus = self._recommend_focus(health.health_score, risk_score, opportunity_score)
+
+        return ProjectAggregate(
+            project_id=project_id,
+            po_number=data.po_number,
+            events=events,
+            data=data,
+            state=state,
+            goal_evaluations=goals,
+            decisions=decisions,
+            actions=actions,
+            trace_id=trace_id,
+            priority="high" if decisions else "medium",
+            health=health,
+            risk_score=risk_score,
+            risk_level=risk_level,
+            opportunity_score=opportunity_score,
+            opportunity_level=opportunity_level,
+            recommended_focus=recommended_focus,
+        )
+
+    def build_project_aggregates(self, limit: int = 50) -> list[ProjectAggregate]:
         """Build ProjectAggregates for multiple projects."""
         project_ids = self._query_projects_from_db(limit=limit)
         aggregates = []

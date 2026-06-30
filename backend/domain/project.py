@@ -257,6 +257,11 @@ class ProjectAggregate:
     assigned_to: str = "AI"
     priority: str = "medium"
     health: Optional[ProjectHealth] = None
+    risk_score: int = 0
+    risk_level: str = "low"
+    opportunity_score: int = 0
+    opportunity_level: str = "low"
+    recommended_focus: str = "monitor"
 
     def get_at_risk_goals(self) -> list[ProjectGoal]:
         return [goal for goal, eval in self.goal_evaluations.evaluations.items()
@@ -270,6 +275,11 @@ class ProjectAggregate:
             "state": self.state.value,
             "priority": self.priority,
             "health": self.health.to_dict() if self.health else None,
+            "risk_score": self.risk_score,
+            "risk_level": self.risk_level,
+            "opportunity_score": self.opportunity_score,
+            "opportunity_level": self.opportunity_level,
+            "recommended_focus": self.recommended_focus,
             "events": {
                 "count": self.events.event_count,
                 "items": [e.to_dict() for e in self.events.events],
