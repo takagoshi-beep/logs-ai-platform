@@ -32,7 +32,7 @@ async function apiCall<T = any>(
     }
 
     const data = await response.json();
-    return { success: true, data };
+    return data;
   } catch (error) {
     console.error(`API call failed: ${endpoint}`, error);
     return {
