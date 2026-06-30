@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from api.schemas import ChatRequest, DocumentDraftRequest, ProductEvent, ProposalDraftRequest, TasksRecommendRequest
+from business.today_actions import get_home_payload as get_home_payload_business
 from services.mock_store import (
     draft_document,
     draft_proposal,
@@ -12,11 +13,12 @@ from services.mock_store import (
     get_execution,
     get_health,
     get_history,
-    get_home_payload,
     get_trace,
     recommend_tasks,
     store_event,
 )
+from services.project_service import ProjectService
+from pathlib import Path
 
 router = APIRouter(prefix="/api", tags=["v0.1"])
 
@@ -24,6 +26,12 @@ router = APIRouter(prefix="/api", tags=["v0.1"])
 @router.get("/health")
 def health() -> dict:
     return get_health()
+
+
+@router.get("/home")
+def home() -> dict:
+    """Get home page payload with today's actions and KPIs."""
+    return get_home_payload_business()
 
 
 @router.post("/chat")
@@ -47,7 +55,7 @@ def chat(req: ChatRequest) -> dict:
 def tasks_recommend(_: TasksRecommendRequest) -> dict:
     return {
         "items": recommend_tasks(),
-        "home": get_home_payload(),
+        "home": get_home_payload_business(),
     }
 
 
@@ -91,3 +99,188 @@ def debug_trace(trace_id: str) -> dict:
 def events(event: ProductEvent) -> dict:
     payload = event.model_dump(mode="json")
     return store_event(payload)
+
+
+# ===== NEW: Project Aggregate Endpoints =====
+
+@router.get("/projects")
+def list_projects(limit: int = 10) -> dict:
+    """Get list of project candidates with summary info."""
+    try:
+        service = ProjectService()
+        project_ids = service._query_projects_from_db(limit=limit)
+
+        projects = []
+        for proj_record in project_ids[:limit]:
+            proj_id = proj_record.get("id")
+            if proj_id:
+                agg = service.build_project_aggregate(proj_id)
+                if agg:
+                    projects.append({
+                        "project_id": agg.project_id,
+                        "project_name": agg.po_number,
+                        "customer": agg.data.customer_name,
+                        "state": agg.state.value,
+                        "priority": agg.priority,
+                        "actions_count": len(agg.actions),
+                        "events_count": agg.events.event_count,
+                        "trace_id": agg.trace_id,
+                    })
+
+        return {
+            "success": True,
+            "projects": projects,
+            "count": len(projects),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/projects/{project_id}")
+def get_project(project_id: str) -> dict:
+    """Get complete ProjectAggregate for a single project."""
+    try:
+        service = ProjectService()
+        agg = service.build_project_aggregate(project_id)
+
+        if not agg:
+            raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+
+        return {
+            "success": True,
+            "project": agg.to_dict(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/projects/{project_id}/trace")
+def get_project_trace(project_id: str) -> dict:
+    """Get decision trace for a project (Event→State→Goal→Decision→Action)."""
+    try:
+        service = ProjectService()
+        agg = service.build_project_aggregate(project_id)
+
+        if not agg:
+            raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+
+        # Build trace document
+        trace = {
+            "trace_id": agg.trace_id,
+            "project_id": agg.project_id,
+            "po_number": agg.po_number,
+
+            "events": {
+                "count": agg.events.event_count,
+                "items": [e.to_dict() for e in agg.events.events],
+            },
+
+            "state_determination": {
+                "current_state": agg.state.value,
+                "logic": f"Determined from {agg.events.event_count} events and current data",
+            },
+
+            "goal_evaluations": {
+                goal.value: {
+                    "status": eval.status.value,
+                    "reason": eval.reason,
+                    "confidence": eval.confidence,
+                }
+                for goal, eval in agg.goal_evaluations.evaluations.items()
+            },
+
+            "decisions": [
+                {
+                    "decision": d.decision.value,
+                    "priority": d.priority,
+                    "reason": d.reason,
+                    "triggered_by_goals": [g.value for g in d.triggered_by_goals],
+                    "business_rule": d.business_rule,
+                    "confidence": d.confidence,
+                }
+                for d in agg.decisions
+            ],
+
+            "actions": [
+                {
+                    "action_id": a.action_id,
+                    "title": a.title,
+                    "description": a.description,
+                    "priority": a.priority,
+                    "decision_source": a.decision_source.value,
+                    "related_state": a.related_state.value,
+                    "related_goal": a.related_goal.value if a.related_goal else None,
+                    "confidence": a.confidence,
+                    "due_date": a.due_date.isoformat() if a.due_date else None,
+                }
+                for a in agg.actions
+            ],
+
+            "data_sources": {
+                "tables": agg.data.data_source_tables,
+                "record_count": 1,
+            },
+        }
+
+        return {
+            "success": True,
+            "trace": trace,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/today-actions")
+def get_today_actions(limit: int = 20) -> dict:
+    """Get today's actions from all projects, sorted by priority."""
+    try:
+        service = ProjectService()
+
+        # Get multiple projects
+        project_ids = service._query_projects_from_db(limit=50)
+
+        all_actions = []
+        for proj_record in project_ids:
+            proj_id = proj_record.get("id")
+            if proj_id:
+                agg = service.build_project_aggregate(proj_id)
+                if agg:
+                    for action in agg.actions:
+                        all_actions.append({
+                            "action_id": action.action_id,
+                            "project_id": agg.project_id,
+                            "project_name": agg.po_number,
+                            "customer": agg.data.customer_name,
+                            "title": action.title,
+                            "description": action.description,
+                            "priority": action.priority,
+                            "reason": action.condition,
+                            "related_event": [e.event_type.value for e in agg.events.events if e.after_state == action.related_state][-1:] if agg.events.events else None,
+                            "related_state": action.related_state.value,
+                            "related_goal": action.related_goal.value if action.related_goal else None,
+                            "trace_id": agg.trace_id,
+                            "due_date": action.due_date.isoformat() if action.due_date else None,
+                            "confidence": action.confidence,
+                        })
+
+        # Sort by priority (high first) then confidence
+        priority_order = {"high": 0, "medium": 1, "low": 2}
+        all_actions.sort(
+            key=lambda a: (priority_order.get(a["priority"], 3), -a["confidence"])
+        )
+
+        # Take top N
+        actions = all_actions[:limit]
+
+        return {
+            "success": True,
+            "actions": actions,
+            "count": len(actions),
+            "total": len(all_actions),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
