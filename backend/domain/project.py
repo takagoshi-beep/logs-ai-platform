@@ -219,6 +219,8 @@ class ProjectAction:
     executed_sql: Optional[str] = None
     business_rule_applied: Optional[str] = None
     confidence: float = 0.8
+    required_capability: Optional[str] = None  # capability_id for AI OS execution
+    capability_execution_id: Optional[str] = None  # execution_id from CapabilityRegistry
 
 
 @dataclass
