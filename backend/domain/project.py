@@ -81,11 +81,14 @@ class ProjectEvent:
     business_meaning: str
     impact_summary: str
     trace_id: str
+    event_source_type: str = "actual"  # actual | derived
+    derivation_rule: Optional[str] = None
     before_state: Optional[ProjectState] = None
     after_state: Optional[ProjectState] = None
     changed_fields: Optional[dict[str, Any]] = None
     executed_sql: Optional[str] = None
     source_rule: Optional[str] = None
+    confidence: float = 1.0
 
     def to_dict(self) -> dict:
         return {
@@ -93,12 +96,14 @@ class ProjectEvent:
             "project_id": self.project_id,
             "event_type": self.event_type.value,
             "event_time": self.event_time.isoformat(),
+            "event_source_type": self.event_source_type,
             "source_table": self.source_table,
             "business_meaning": self.business_meaning,
             "impact_summary": self.impact_summary,
             "before_state": self.before_state.value if self.before_state else None,
             "after_state": self.after_state.value if self.after_state else None,
             "trace_id": self.trace_id,
+            "confidence": self.confidence,
         }
 
 
@@ -217,6 +222,25 @@ class ProjectAction:
 
 
 @dataclass
+class ProjectHealth:
+    """Project health assessment."""
+    health_score: int
+    health_status: str
+    factors: dict[str, int]
+    reason: str
+    trace_id: str
+
+    def to_dict(self) -> dict:
+        return {
+            "health_score": self.health_score,
+            "health_status": self.health_status,
+            "factors": self.factors,
+            "reason": self.reason,
+            "trace_id": self.trace_id,
+        }
+
+
+@dataclass
 class ProjectAggregate:
     """Complete project understanding with 8 elements."""
     project_id: str
@@ -232,6 +256,7 @@ class ProjectAggregate:
     updated_at: datetime = field(default_factory=datetime.now)
     assigned_to: str = "AI"
     priority: str = "medium"
+    health: Optional[ProjectHealth] = None
 
     def get_at_risk_goals(self) -> list[ProjectGoal]:
         return [goal for goal, eval in self.goal_evaluations.evaluations.items()
@@ -244,6 +269,7 @@ class ProjectAggregate:
             "trace_id": self.trace_id,
             "state": self.state.value,
             "priority": self.priority,
+            "health": self.health.to_dict() if self.health else None,
             "events": {
                 "count": self.events.event_count,
                 "items": [e.to_dict() for e in self.events.events],

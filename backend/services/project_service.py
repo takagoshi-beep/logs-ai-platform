@@ -33,19 +33,24 @@ class ProjectService:
         """Initialize service with database connection."""
         if db_path is None:
             try:
-                from app import main as app_main
-                db_path = app_main.DEFAULT_DB_PATH
+                from config.settings import get_settings
+                settings = get_settings()
+                db_path = settings.db_path
             except (ImportError, ModuleNotFoundError, AttributeError):
-                db_path = Path("data/sqlite/logsys.db")
+                # Fallback to relative path - resolves from repo root
+                db_path = Path(__file__).resolve().parents[2] / "data/sqlite/logsys.db"
         self.db_path = db_path
 
     def _open_repo(self) -> BaseRepository:
         """Open repository connection."""
         return create_storage_repository(db_path=self.db_path)
 
-    def _generate_trace_id(self, prefix: str = "project") -> str:
-        """Generate unique trace ID for this analysis."""
-        return f"{prefix}-{uuid.uuid4().hex[:8]}"
+    def _generate_trace_id(self, project_id: str) -> str:
+        """Generate deterministic trace ID based on project."""
+        # Generate deterministic trace ID from project_id
+        import hashlib
+        project_hash = hashlib.md5(str(project_id).encode()).hexdigest()[:8]
+        return f"project-{project_hash}"
 
     def _query_projects_from_db(self, limit: int = 50) -> list[dict[str, Any]]:
         """Query database to find all project candidates (Purchase Orders with related data)."""
@@ -136,6 +141,7 @@ class ProjectService:
         event_id = 1
         now = datetime.now()
 
+        # Actual Event: project_created (derived from po_created_date)
         events.add_event(ProjectEvent(
             event_id=f"evt-{event_id}",
             project_id=data.project_id,
@@ -145,7 +151,9 @@ class ProjectService:
             business_meaning="PO作成 - 新規案件始動",
             impact_summary="プロジェクト開始、納期管理開始",
             trace_id=trace_id,
+            event_source_type="actual",
             after_state=ProjectState.INITIATED,
+            confidence=1.0,
         ))
         event_id += 1
 
@@ -159,8 +167,10 @@ class ProjectService:
                 business_meaning="売上登録 - 収入確定",
                 impact_summary="売上が確定し、粗利を計算可能に",
                 trace_id=trace_id,
+                event_source_type="actual",
                 before_state=ProjectState.INITIATED,
                 after_state=ProjectState.AWAITING_PAYMENT,
+                confidence=1.0,
             ))
             event_id += 1
 
@@ -174,8 +184,10 @@ class ProjectService:
                 business_meaning="仕入登録 - 原価確定",
                 impact_summary="原価が確定し、粗利を計算可能に",
                 trace_id=trace_id,
+                event_source_type="actual",
                 before_state=ProjectState.INITIATED,
                 after_state=ProjectState.COST_UNCONFIRMED,
+                confidence=1.0,
             ))
             event_id += 1
 
@@ -189,8 +201,10 @@ class ProjectService:
                 business_meaning="納品完了 - 納期達成",
                 impact_summary="納期目標達成",
                 trace_id=trace_id,
+                event_source_type="actual",
                 before_state=ProjectState.INITIATED,
                 after_state=ProjectState.DELIVERY_RECEIVED,
+                confidence=1.0,
             ))
             event_id += 1
 
@@ -204,10 +218,14 @@ class ProjectService:
                 business_meaning="支払完了 - 現金化",
                 impact_summary="全資金回収完了",
                 trace_id=trace_id,
+                event_source_type="actual",
                 before_state=ProjectState.AWAITING_PAYMENT,
                 after_state=ProjectState.COMPLETED,
+                confidence=1.0,
             ))
             event_id += 1
+
+        # Derived Events: AI-generated from current data state
 
         if data.gross_profit_margin and data.gross_profit_margin >= 15:
             events.add_event(ProjectEvent(
@@ -219,6 +237,9 @@ class ProjectService:
                 business_meaning="粗利再計算 - 目標達成",
                 impact_summary="粗利15%以上確保",
                 trace_id=trace_id,
+                event_source_type="derived",
+                derivation_rule="MARGIN_CALCULATION",
+                confidence=0.95,
             ))
             event_id += 1
         elif data.gross_profit_margin and data.gross_profit_margin < 15:
@@ -231,7 +252,10 @@ class ProjectService:
                 business_meaning="粗利低下 - リスク検知",
                 impact_summary="粗利が15%未満に低下",
                 trace_id=trace_id,
+                event_source_type="derived",
+                derivation_rule="MARGIN_THRESHOLD",
                 after_state=ProjectState.GROSS_PROFIT_DEGRADED,
+                confidence=0.95,
             ))
             event_id += 1
 
@@ -245,7 +269,10 @@ class ProjectService:
                 business_meaning="納期リスク検知 - 7日以内",
                 impact_summary="納期まで時間が少ない - 急ぎ対応必要",
                 trace_id=trace_id,
+                event_source_type="derived",
+                derivation_rule="DELIVERY_SLA_7DAYS",
                 after_state=ProjectState.INITIATED,
+                confidence=0.9,
             ))
             event_id += 1
 
@@ -468,12 +495,17 @@ class ProjectService:
         if not data:
             return None
 
-        trace_id = self._generate_trace_id()
+        # Generate deterministic trace ID
+        trace_id = self._generate_trace_id(project_id)
+
         events = self._generate_project_events(data, trace_id)
         state = self._determine_state(data)
         goals = self._evaluate_goals(data, state)
         decisions = self._generate_decisions(data, state, goals)
         actions = self._generate_actions(data, state, decisions, trace_id)
+
+        # Calculate health score
+        health = self._calculate_health_score(data, state, goals, decisions, actions, trace_id)
 
         return ProjectAggregate(
             project_id=project_id,
@@ -486,9 +518,68 @@ class ProjectService:
             actions=actions,
             trace_id=trace_id,
             priority="high" if decisions else "medium",
+            health=health,
         )
 
-    def build_multiple_projects(self, limit: int = 10) -> list[ProjectAggregate]:
+    def _calculate_health_score(self, data: ProjectData, state: ProjectState, goals: GoalEvaluations, decisions: list[ProjectDecisionDetail], actions: list[ProjectAction], trace_id: str) -> 'ProjectHealth':
+        """Calculate project health score."""
+        from domain.project import ProjectHealth, GoalStatus
+
+        score = 100
+        factors = {}
+
+        # Gross profit penalty
+        if data.profit_margin_pct and data.profit_margin_pct < 15:
+            penalty = 25
+            score -= penalty
+            factors["gross_profit_low"] = -penalty
+
+        # Delivery risk penalty
+        if data.days_until_delivery < 7 and not data.actual_delivery_date:
+            penalty = 25
+            score -= penalty
+            factors["delivery_risk"] = -penalty
+
+        # Cost unconfirmed penalty
+        confirm_cost_eval = goals.evaluations.get(ProjectGoal.CONFIRM_COST)
+        if confirm_cost_eval and confirm_cost_eval.status == GoalStatus.AT_RISK:
+            penalty = 15
+            score -= penalty
+            factors["cost_unconfirmed"] = -penalty
+
+        # High priority action penalty
+        if len(actions) > 0 and any(a.priority == "high" for a in actions):
+            penalty = 20
+            score -= penalty
+            factors["high_priority_action"] = -penalty
+
+        # Data completeness penalty
+        if data.po_amount == 0 or data.cost_amount == 0:
+            penalty = 10
+            score -= penalty
+            factors["data_incomplete"] = -penalty
+
+        score = max(0, min(100, score))
+
+        # Determine status
+        if score >= 80:
+            status = "healthy"
+        elif score >= 60:
+            status = "watch"
+        elif score >= 40:
+            status = "risk"
+        else:
+            status = "critical"
+
+        reason = f"Score {score}: {', '.join([f'{k}({v})' for k, v in factors.items()])}" if factors else "All metrics optimal"
+
+        return ProjectHealth(
+            health_score=score,
+            health_status=status,
+            factors=factors,
+            reason=reason,
+            trace_id=trace_id,
+        )
         """Build ProjectAggregates for multiple projects."""
         project_ids = self._query_projects_from_db(limit=limit)
         aggregates = []
