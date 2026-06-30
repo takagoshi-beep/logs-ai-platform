@@ -1,0 +1,54 @@
+schema_version: 1
+required_fields:
+  - test_id
+  - category
+  - user_input
+  - expected_intent
+  - expected_entities
+  - expected_kpi
+  - expected_time
+  - expected_grain
+  - expected_analysis_purpose
+  - expected_task
+  - expected_capabilities
+  - expected_execution_mode
+  - expected_validation_status
+  - expected_clarification_required
+  - expected_should_generate_sql
+  - expected_should_execute
+  - expected_output_type
+  - risk_level
+  - notes
+
+runtime_output_contract:
+  - interpreted_intent
+  - resolved_meaning
+  - knowledge_plan
+  - memory_plan
+  - knowledge_memory_merge
+  - task_plan
+  - selected_capabilities
+  - execution_plan
+  - validation_result
+  - presentation_summary
+
+validation_principles:
+  - no_sql_when_entity_unresolved
+  - no_sql_when_kpi_unresolved
+  - no_sql_when_time_unresolved
+  - canonical_key_required_for_sql
+  - no_display_name_in_where
+  - no_auto_adopt_low_confidence_entity
+  - no_auto_execute_high_or_critical
+  - no_forced_sql_for_non_analysis_intent
+
+optional_fields:
+  - expected_knowledge_scope
+  - expected_internal_sources
+  - expected_external_sources
+  - expected_citation_required
+  - expected_required_memory
+  - expected_memory_permission_required
+  - expected_memory_citation_required
+  - expected_knowledge_memory_merge_required
+  - expected_memory_trace_required

@@ -319,6 +319,128 @@ An admin dashboard layer was added so administrators can inspect usage, improvem
 
 A change-management layer was added to track improvement requests through a lightweight lifecycle from draft to release.
 
+## LOGS AI OS V0.1 Product Skeleton
+
+### Project overview
+
+- LOGS AI OS V0.1 Product Skeleton is the first production-oriented UI foundation.
+- This is a work-entry product skeleton for end users, not a Streamlit prototype.
+- Current implementation is a mock-based skeleton before full AI Runtime integration.
+
+### Directory structure (V0.1 focus)
+
+- `frontend`
+- `backend`
+- `knowledge`
+- `memory`
+- `capability`
+- `tests/evaluation`
+- `docs`
+
+### Backend startup
+
+```bash
+cd backend
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+```
+
+Health check URL:
+
+```text
+http://localhost:8000/api/health
+```
+
+### Frontend startup
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Access URL:
+
+```text
+http://localhost:3000
+```
+
+For screenshot-friendly preview, use a desktop browser width around `1440px` and keep the left navigation visible.
+
+### Environment variable
+
+- `NEXT_PUBLIC_API_BASE=http://localhost:8000`
+- If not set, frontend defaults to `http://localhost:8000`.
+
+### Preview readiness: URL list
+
+- `http://localhost:3000/` (Home)
+- `http://localhost:3000/tasks` (Task Center)
+- `http://localhost:3000/proposals` (Proposal Builder)
+- `http://localhost:3000/workspace/fanatics-oem` (Workspace)
+- `http://localhost:3000/chat` (Chat)
+- `http://localhost:3000/history` (History)
+- `http://localhost:3000/debug` (Debug Trace)
+- `http://localhost:8000/api/health` (Backend Health)
+
+### Preview readiness: check order for screenshots
+
+1. Home
+2. Task Center
+3. Proposal Builder
+4. Workspace
+5. Chat
+6. History
+7. Debug
+
+### V0.1 runtime check list
+
+- [ ] Backend health (`GET /api/health`) returns success.
+- [ ] Home shows urgent cases, alerts, KPI cards, recommended actions, in-progress work, and AI proposals.
+- [ ] Task Center shows priority, due, project, status, reason, AI consult, complete/hold/detail actions.
+- [ ] Proposal Builder shows customer, purpose, reference data, AI structure, PowerPoint generation, review state, next action.
+- [ ] Workspace shows project summary, related tasks, artifacts, AI conversation, history, next actions.
+- [ ] Chat shows only concise work guidance (`Used Data`, `Confirmation`, `Next Action`) in normal view.
+- [ ] History screen is displayed and records are visible.
+- [ ] Debug Trace Panel is displayed for admin/developer detailed trace only.
+- [ ] `POST /api/events` is accepted.
+- [ ] `backend/data/events.jsonl` appends event logs.
+
+### Preview readiness: quick verification command
+
+```bash
+curl -X GET http://localhost:8000/api/health
+curl -X POST http://localhost:8000/api/events -H "Content-Type: application/json" -d "{\"event_id\":\"ev-preview-001\",\"user_id\":\"u-demo\",\"role\":\"sales\",\"screen\":\"home\",\"action\":\"view\",\"target_type\":\"screen\",\"target_id\":\"home\",\"timestamp\":\"2026-06-30T10:00:00Z\"}"
+```
+
+### Current limitations
+
+- Real AI Runtime is not connected yet.
+- Database persistence is not connected yet.
+- Authentication is not implemented yet.
+- PPTX file generation is not implemented yet.
+- Fine-grained permission control is not implemented yet.
+- Most user data is mock data.
+
+### Next implementation steps
+
+1. Auth and Permission
+2. Runtime integration
+3. Product Analytics persistence
+4. Proposal Builder real artifact generation
+5. Workspace real execution linkage
+6. Evaluation Event conversion pipeline
+
+### Development policy
+
+- Keep Frontend, Backend, and Runtime loosely coupled.
+- Build UI with production assumptions from the beginning.
+- Do not use Streamlit as production end-user UI.
+- Always capture Product Analytics events.
+- Start user-facing real tests early.
+
 - `change_management/models.py` defines the `ChangeRequest` model.
 - `change_management/repository.py` manages create/list/get/update operations.
 - `change_management/lifecycle.py` manages approve/reject/implement/validate/release transitions.

@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  @apply bg-bg text-ink antialiased;
+  margin: 0;
+  font-family: "IBM Plex Sans", "Noto Sans JP", "Segoe UI", sans-serif;
+  background-image: radial-gradient(circle at 0% 0%, #e2e8f0 0, transparent 35%), radial-gradient(circle at 100% 100%, #dbeafe 0, transparent 35%);
+}
+
+.card {
+  @apply rounded-xl bg-panel p-4 shadow-sm border border-slate-200;
+}
+
+.page-title {
+  @apply text-2xl font-semibold tracking-tight;
+}
+
+.page-subtitle {
+  @apply text-sm text-sub;
+}
+
+.surface-soft {
+  @apply rounded-xl border border-slate-200 bg-white/80;
+}

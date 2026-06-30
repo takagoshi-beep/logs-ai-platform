@@ -259,6 +259,62 @@ Scope constraints in this sprint:
 
 ## 9) Source Registry Expansion (Sprint 30)
 
+## 10) Theme 24 Production UI Target
+
+### Product Direction
+
+- End user UI target is Next.js and React.
+- Streamlit is debug-only for developers/operators.
+- Runtime and domain layers remain UI-independent.
+- Frontend and backend APIs are separated.
+
+### Target Screen Set
+
+- Home: today actions, alerts, project summary, recommended actions.
+- Chat: response, references, generated outputs, next actions.
+- Tasks: recommendation, due date, priority, status.
+- Proposal Builder: customer selection, objective, internal/external references, structure, PPTX draft.
+- Documents: draft and approval-oriented transaction UI.
+- History: execution, generated output, approvals, feedback.
+- Admin/Debug: intent/meaning/knowledge/memory/capability/validation traces and runtime logs.
+
+### MVP Scope
+
+- Home
+- Chat
+- Tasks
+- Proposal Builder
+- History
+- Debug Trace Panel
+- Documents is design-first (draft contract prepared, full UX later)
+
+### API Surface for Frontend
+
+- POST /api/chat
+- POST /api/tasks/recommend
+- POST /api/proposals/draft
+- POST /api/documents/draft
+- GET /api/history
+- GET /api/executions/{id}
+- GET /api/evaluation/summary
+- GET /api/debug/trace/{id}
+
+### Evaluation Connection from UI
+
+Persist each UI operation as an evaluation event:
+
+- user_input
+- ai_response
+- intent
+- task
+- capability
+- validation
+- user_feedback
+- accepted_or_rejected
+- corrected_output
+
+This enables automatic transformation from production behavior logs into future regression suites.
+
 The ingestion layer now includes explicit source definitions for Google Drive preparation.
 
 - `ingestion/source_registry.py` manages source metadata contracts.

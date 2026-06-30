@@ -36,6 +36,11 @@ entity:
       - 売上
       - 売上高
       - 売上金額
+      - 標準売上集計
+      - 一般的な売上分析
+      - 月次売上
+      - 担当別売上
+      - 顧客別売上
       - revenue
       - sales
   customer:
@@ -63,6 +68,42 @@ entity:
       - 注文
       - オーダー
       - order
+  master_data:
+    canonical: master_data
+    label: マスターデータ
+    synonyms:
+      - マスター
+      - マスターデータ
+      - 基本マスター
+      - マスタ情報
+  supplier:
+    canonical: supplier
+    label: 仕入先
+    synonyms:
+      - 仕入先
+      - サプライヤー
+      - 取引先
+  staff:
+    canonical: staff
+    label: 担当者
+    synonyms:
+      - 担当者
+      - 社員
+      - 営業担当
+  brand:
+    canonical: brand
+    label: ブランド
+    synonyms:
+      - ブランド
+      - brand
+      - 銘柄
+  factory:
+    canonical: factory
+    label: 工場
+    synonyms:
+      - 工場
+      - 工場コード
+      - 工場名
 
 operation:
   ranking:
@@ -79,6 +120,11 @@ operation:
     synonyms:
       - 要約
       - サマリー
+      - 標準売上集計
+      - 一般的な売上分析
+      - 月次売上
+      - 担当別売上
+      - 顧客別売上
       - summary
   schema:
     canonical: schema
@@ -109,6 +155,1591 @@ operation:
       - compare
       - 比較
       - 違い
+
+intent:
+  analysis:
+    canonical: analysis
+    label: Analysis
+    synonyms:
+      - analysis
+      - 分析
+  proposal:
+    canonical: proposal
+    label: Proposal
+    synonyms:
+      - proposal
+      - 提案
+  document:
+    canonical: document
+    label: Document
+    synonyms:
+      - document
+      - 伝票
+      - 帳票
+  monitoring:
+    canonical: monitoring
+    label: Monitoring
+    synonyms:
+      - monitoring
+      - 監視
+      - アラート
+  workflow:
+    canonical: workflow
+    label: Workflow
+    synonyms:
+      - workflow
+      - 業務フロー
+      - 承認
+  search:
+    canonical: search
+    label: Search
+    synonyms:
+      - search
+      - 検索
+  explanation:
+    canonical: explanation
+    label: Explanation
+    synonyms:
+      - explanation
+      - 説明
+
+capability_category:
+  data_query:
+    canonical: data_query
+    label: Data Query
+    synonyms:
+      - data query
+      - sql実行
+      - データ抽出
+      - 集計
+      - グラフ生成
+      - dataframe生成
+  document_generation:
+    canonical: document_generation
+    label: Document Generation
+    synonyms:
+      - document generation
+      - powerpoint作成
+      - excel作成
+      - pdf作成
+      - word作成
+      - markdown作成
+      - 提案書ドラフト
+  transaction:
+    canonical: transaction
+    label: Transaction
+    synonyms:
+      - transaction
+      - 見積作成
+      - 発注書作成
+      - 売上伝票作成
+      - 仕入伝票作成
+      - 請求関連作成
+  communication:
+    canonical: communication
+    label: Communication
+    synonyms:
+      - communication
+      - メール下書き
+      - メール送信
+      - slack通知
+      - 社内共有文
+      - 顧客向け文面
+  monitoring_alert:
+    canonical: monitoring_alert
+    label: Monitoring Alert
+    synonyms:
+      - monitoring
+      - alert
+      - 未発注検出
+      - 納期遅延検出
+      - 粗利悪化検出
+      - 未仕入検出
+      - 請求漏れ検出
+      - 対応漏れ検出
+  workflow:
+    canonical: workflow
+    label: Workflow
+    synonyms:
+      - workflow
+      - タスク作成
+      - 担当者アサイン
+      - 承認依頼
+      - ステータス変更
+      - リマインド
+      - カレンダー登録
+  knowledge_retrieval:
+    canonical: knowledge_retrieval
+    label: Knowledge Retrieval
+    synonyms:
+      - knowledge retrieval
+      - gmail検索
+      - slack検索
+      - google drive検索
+      - 議事録検索
+      - 過去提案書検索
+      - 商品仕様書検索
+
+capability_field:
+  capability_id:
+    canonical: capability_id
+    label: Capability ID
+    synonyms:
+      - capability_id
+  capability_name:
+    canonical: capability_name
+    label: Capability Name
+    synonyms:
+      - capability_name
+  category:
+    canonical: category
+    label: Category
+    synonyms:
+      - category
+  description:
+    canonical: description
+    label: Description
+    synonyms:
+      - description
+  required_inputs:
+    canonical: required_inputs
+    label: Required Inputs
+    synonyms:
+      - required_inputs
+      - 必須入力
+  optional_inputs:
+    canonical: optional_inputs
+    label: Optional Inputs
+    synonyms:
+      - optional_inputs
+      - 任意入力
+  output_type:
+    canonical: output_type
+    label: Output Type
+    synonyms:
+      - output_type
+      - 出力形式
+  required_permission:
+    canonical: required_permission
+    label: Required Permission
+    synonyms:
+      - required_permission
+      - 実行権限
+  risk_level:
+    canonical: risk_level
+    label: Risk Level
+    synonyms:
+      - risk_level
+      - リスクレベル
+  confirmation_required:
+    canonical: confirmation_required
+    label: Confirmation Required
+    synonyms:
+      - confirmation_required
+      - 実行前確認
+  validation_required:
+    canonical: validation_required
+    label: Validation Required
+    synonyms:
+      - validation_required
+      - 検証必須
+  related_intents:
+    canonical: related_intents
+    label: Related Intents
+    synonyms:
+      - related_intents
+      - 関連intent
+  related_tasks:
+    canonical: related_tasks
+    label: Related Tasks
+    synonyms:
+      - related_tasks
+      - 関連task
+  execution_mode:
+    canonical: execution_mode
+    label: Execution Mode
+    synonyms:
+      - execution_mode
+      - 実行モード
+
+execution_mode:
+  read_only:
+    canonical: read_only
+    label: Read Only
+    synonyms:
+      - read_only
+      - 参照のみ
+  draft:
+    canonical: draft
+    label: Draft
+    synonyms:
+      - draft
+      - 下書き
+  approval_required:
+    canonical: approval_required
+    label: Approval Required
+    synonyms:
+      - approval_required
+      - 承認後実行
+  direct_execute:
+    canonical: direct_execute
+    label: Direct Execute
+    synonyms:
+      - direct_execute
+      - 即時実行
+
+risk_level:
+  low:
+    canonical: low
+    label: Low
+    synonyms:
+      - low
+      - 読み取り
+      - 集計
+      - 社内確認用資料
+  medium:
+    canonical: medium
+    label: Medium
+    synonyms:
+      - medium
+      - 社内共有
+      - 下書き作成
+      - タスク作成
+  high:
+    canonical: high
+    label: High
+    synonyms:
+      - high
+      - 顧客送信
+      - 伝票作成
+      - ステータス変更
+  critical:
+    canonical: critical
+    label: Critical
+    synonyms:
+      - critical
+      - 会計連携
+      - 請求確定
+      - 外部送信
+      - 削除操作
+
+capability_runtime:
+  capability_registry:
+    canonical: capability_registry
+    label: Capability Registry
+    synonyms:
+      - capability_registry
+  capability_router:
+    canonical: capability_router
+    label: Capability Router
+    synonyms:
+      - capability_router
+  executor:
+    canonical: executor
+    label: Executor
+    synonyms:
+      - executor
+  validator:
+    canonical: validator
+    label: Validator
+    synonyms:
+      - validator
+  presenter:
+    canonical: presenter
+    label: Presenter
+    synonyms:
+      - presenter
+
+capability_guardrail:
+  no_auto_confirm_high_critical:
+    canonical: no_auto_confirm_high_critical
+    label: high/critical自動確定禁止
+    synonyms:
+      - high自動確定禁止
+      - critical自動確定禁止
+  pre_execution_confirmation:
+    canonical: pre_execution_confirmation
+    label: 実行前確認
+    synonyms:
+      - 実行前確認
+  validation_first:
+    canonical: validation_first
+    label: Validation First
+    synonyms:
+      - validation first
+  user_approval:
+    canonical: user_approval
+    label: ユーザー承認
+    synonyms:
+      - ユーザー承認
+  execution_log_required:
+    canonical: execution_log_required
+    label: 実行ログ必須
+    synonyms:
+      - 実行ログ
+      - 監査ログ
+
+capability_validation:
+  required_inputs_ready:
+    canonical: required_inputs_ready
+    label: 必須入力充足
+    synonyms:
+      - 必須入力が揃っている
+  permission_granted:
+    canonical: permission_granted
+    label: 権限確認
+    synonyms:
+      - 権限がある
+  risk_confirmation_ready:
+    canonical: risk_confirmation_ready
+    label: リスク確認経路
+    synonyms:
+      - risk_levelに応じた確認
+  meaning_resolution_completed:
+    canonical: meaning_resolution_completed
+    label: Meaning Resolution済み
+    synonyms:
+      - meaning resolution済み
+  canonical_key_verified:
+    canonical: canonical_key_verified
+    label: Canonical Key確認
+    synonyms:
+      - canonical keyを使っている
+  target_uniqueness_verified:
+    canonical: target_uniqueness_verified
+    label: 対象一意確定
+    synonyms:
+      - 実行対象が一意
+  no_auto_execute_high_critical:
+    canonical: no_auto_execute_high_critical
+    label: high/critical自動実行禁止
+    synonyms:
+      - high critical自動実行しない
+
+capability_presentation:
+  selected_capabilities:
+    canonical: selected_capabilities
+    label: 使用Capability
+    synonyms:
+      - 使用capability
+  execution_content:
+    canonical: execution_content
+    label: 実行内容
+    synonyms:
+      - 実行内容
+  input_information:
+    canonical: input_information
+    label: 入力情報
+    synonyms:
+      - 入力情報
+  planned_output:
+    canonical: planned_output
+    label: 出力予定
+    synonyms:
+      - 出力予定
+  risk_level:
+    canonical: risk_level
+    label: リスクレベル
+    synonyms:
+      - risk_level
+  confirmation_required:
+    canonical: confirmation_required
+    label: 確認要否
+    synonyms:
+      - confirmation_required
+  validation_result:
+    canonical: validation_result
+    label: Validation結果
+    synonyms:
+      - validation結果
+  next_user_confirmation:
+    canonical: next_user_confirmation
+    label: 次のユーザー確認
+    synonyms:
+      - 次に必要な確認
+
+aggregation_basis:
+  detail_line:
+    canonical: detail_line
+    label: 明細基準
+    synonyms:
+      - 明細基準
+      - 明細データ基準
+      - 明細集計
+      - 明細ベース
+      - 行明細ベース
+  header_reference:
+    canonical: header_reference
+    label: ヘッダー参照
+    synonyms:
+      - 伝票ヘッダー
+      - ヘッダー値
+      - 表示用
+      - 参照用
+
+interpretation_policy:
+  primary_source_preferred:
+    canonical: primary_source_preferred
+    label: Primary Source優先
+    synonyms:
+      - primary source
+      - 優先参照先
+      - マスター優先
+      - primary source優先
+  multi_signal_inference:
+    canonical: multi_signal_inference
+    label: 複数シグナル推定
+    synonyms:
+      - 総合推定
+      - 複数情報で推定
+      - 商品名キーワードで補完
+      - 単一カラム非依存
+  conflict_resolution:
+    canonical: conflict_resolution
+    label: 矛盾解決
+    synonyms:
+      - 矛盾時ルール
+      - 判定不能
+      - ユーザー確認
+      - open question
+  name_resolution_hierarchy:
+    canonical: name_resolution_hierarchy
+    label: 名称解決優先順位
+    synonyms:
+      - 名称検索優先順位
+      - 名寄せ優先順位
+      - コード優先
+      - 柔軟解釈
+  soft_matching:
+    canonical: soft_matching
+    label: 柔軟一致
+    synonyms:
+      - 完全一致以外
+      - 略称一致
+      - 部分一致
+      - 旧社名
+      - 通称
+      - 表記ゆれ
+  time_ruleset_priority:
+    canonical: time_ruleset_priority
+    label: 期間解釈優先順位
+    synonyms:
+      - 期間ルールセット
+      - 期間解釈優先順位
+      - 基準日付き期間解釈
+      - 文脈補完期間
+  purpose_first_planning:
+    canonical: purpose_first_planning
+    label: 目的先行プランニング
+    synonyms:
+      - 分析目的から選択
+      - purpose first
+      - query planning rule
+      - query architecture
+  purpose_based_cost_allocation:
+    canonical: purpose_based_cost_allocation
+    label: 目的別費用配賦
+    synonyms:
+      - 費用配賦ルール
+      - 目的別配賦
+      - 分析目的別配賦
+      - 配賦優先順位
+  storage_meaning_split:
+    canonical: storage_meaning_split
+    label: 保存形式と意味の分離
+    synonyms:
+      - 保存形式
+      - business meaning
+      - 符号解釈
+      - マイナス保存
+      - 費用は正の概念
+  actual_is_purpose_dependent:
+    canonical: actual_is_purpose_dependent
+    label: 実績の目的依存解釈
+    synonyms:
+      - 実績は目的依存
+      - 実績の定義
+      - analysis purpose依存実績
+  factory_code_canonical:
+    canonical: factory_code_canonical
+    label: 工場コード正規
+    synonyms:
+      - 工場コードを正とする
+      - 工場コード正規化
+      - 工場名正規化表示
+  canonical_key_first:
+    canonical: canonical_key_first
+    label: Canonical Key優先
+    synonyms:
+      - canonical key優先
+      - コードを正とする
+      - 表示名は正規化対象
+  no_guess_entity_resolution:
+    canonical: no_guess_entity_resolution
+    label: 非推測Entity解決
+    synonyms:
+      - 推測確定しない
+      - 一意確定のみ採用
+      - 複数候補は確認
+  meaning_resolution_integrated:
+    canonical: meaning_resolution_integrated
+    label: Meaning Resolution統合
+    synonyms:
+      - business context resolution
+      - 統合意味解決
+      - 単一runtime責務
+  unresolved_context_block:
+    canonical: unresolved_context_block
+    label: 未解決Context停止
+    synonyms:
+      - 未解決context
+      - sql生成停止
+      - query planning遷移停止
+
+name_signal:
+  code:
+    canonical: code
+    label: コード
+    synonyms:
+      - コード
+      - 顧客コード
+      - 商品コード
+      - 仕入先コード
+  official_name:
+    canonical: official_name
+    label: 正式名称
+    synonyms:
+      - 正式名称
+      - 正式名
+  alias:
+    canonical: alias
+    label: 略称
+    synonyms:
+      - 略称
+      - 別名
+  partial_match:
+    canonical: partial_match
+    label: 部分一致
+    synonyms:
+      - 部分一致
+      - 部分検索
+  historical_name:
+    canonical: historical_name
+    label: 旧称
+    synonyms:
+      - 旧社名
+      - 通称
+      - 表記ゆれ
+  semantic_inference:
+    canonical: semantic_inference
+    label: AI意味推定
+    synonyms:
+      - ai意味推定
+      - 意味推定
+      - 文脈推定
+
+date_basis:
+  business_day:
+    canonical: business_day
+    label: 営業日基準
+    synonyms:
+      - 営業日基準
+      - 営業日
+  order_date:
+    canonical: order_date
+    label: 受注日基準
+    synonyms:
+      - 受注日基準
+      - 受注日
+  sales_date:
+    canonical: sales_date
+    label: 売上日基準
+    synonyms:
+      - 売上日基準
+      - 売上日
+      - 納品日基準
+  shipment_date:
+    canonical: shipment_date
+    label: 出荷日基準
+    synonyms:
+      - 出荷日基準
+      - 出荷日
+  billing_date:
+    canonical: billing_date
+    label: 請求日基準
+    synonyms:
+      - 請求日基準
+      - 請求日
+
+analysis_purpose:
+  staff_evaluation:
+    canonical: staff_evaluation
+    label: 担当者評価
+    synonyms:
+      - 担当者評価
+      - 営業担当評価
+  product_analysis:
+    canonical: product_analysis
+    label: 商品分析
+    synonyms:
+      - 商品分析
+  brand_analysis:
+    canonical: brand_analysis
+    label: ブランド分析
+    synonyms:
+      - ブランド分析
+  customer_analysis:
+    canonical: customer_analysis
+    label: 顧客分析
+    synonyms:
+      - 顧客分析
+  factory_analysis:
+    canonical: factory_analysis
+    label: 工場分析
+    synonyms:
+      - 工場分析
+  sales_analysis:
+    canonical: sales_analysis
+    label: 売上分析
+    synonyms:
+      - 売上分析
+  gross_profit_analysis:
+    canonical: gross_profit_analysis
+    label: 粗利分析
+    synonyms:
+      - 粗利分析
+      - 採算分析
+      - 営業担当別採算
+  staff_profit_analysis:
+    canonical: staff_profit_analysis
+    label: 担当者別利益分析
+    synonyms:
+      - 担当者別利益分析
+      - 営業担当別利益分析
+  product_profit_analysis:
+    canonical: product_profit_analysis
+    label: 商品別利益分析
+    synonyms:
+      - 商品別利益分析
+  customer_profit_analysis:
+    canonical: customer_profit_analysis
+    label: 顧客別利益分析
+    synonyms:
+      - 顧客別利益分析
+  department_analysis:
+    canonical: department_analysis
+    label: 部門分析
+    synonyms:
+      - 部門分析
+  company_profit_analysis:
+    canonical: company_profit_analysis
+    label: 会社全体利益分析
+    synonyms:
+      - 会社全体利益分析
+      - 全社利益分析
+  purchase_order_analysis:
+    canonical: purchase_order_analysis
+    label: 発注分析
+    synonyms:
+      - 発注分析
+  budget_vs_actual_analysis:
+    canonical: budget_vs_actual_analysis
+    label: 予実分析
+    synonyms:
+      - 予実分析
+      - 予算実績比較
+  plan_vs_actual_analysis:
+    canonical: plan_vs_actual_analysis
+    label: 予定実績比較
+    synonyms:
+      - 予定実績比較
+      - 予定対実績
+  inventory_analysis:
+    canonical: inventory_analysis
+    label: 在庫分析
+    synonyms:
+      - 在庫分析
+  procurement_analysis:
+    canonical: procurement_analysis
+    label: 仕入分析
+    synonyms:
+      - 仕入分析
+      - 仕入実績分析
+  expense_analysis:
+    canonical: expense_analysis
+    label: 費用分析
+    synonyms:
+      - 費用分析
+      - 営業担当別費用実績
+      - 検査費
+      - 検品費
+      - 検針費
+      - 二次加工費
+  order_progress_analysis:
+    canonical: order_progress_analysis
+    label: 発注進捗分析
+    synonyms:
+      - 発注進捗分析
+      - 予定発注比較
+  business_performance_actual:
+    canonical: business_performance_actual
+    label: 業績実績分析
+    synonyms:
+      - 業績実績
+      - 業績実績分析
+
+dataset_role:
+  primary_dataset:
+    canonical: primary_dataset
+    label: Primary Dataset
+    synonyms:
+      - primary dataset
+      - 主参照データセット
+      - 優先参照データセット
+  optional_dataset:
+    canonical: optional_dataset
+    label: Optional Dataset
+    synonyms:
+      - optional dataset
+      - 補助データセット
+      - 任意参照データセット
+
+entity_resolution:
+  canonical_key:
+    canonical: canonical_key
+    label: Canonical Key
+    synonyms:
+      - canonical key
+      - 正式コード
+      - 正規キー
+  normalized_display_name:
+    canonical: normalized_display_name
+    label: 正規化表示名
+    synonyms:
+      - 正規化表示名
+      - 表示名正規化
+  unresolved_multiple_candidates:
+    canonical: unresolved_multiple_candidates
+    label: 複数候補未確定
+    synonyms:
+      - 複数候補
+      - 一意未確定
+      - ユーザー確認
+  entity_not_found:
+    canonical: ENTITY_NOT_FOUND
+    label: 候補なし
+    synonyms:
+      - entity_not_found
+      - 該当候補なし
+      - 見つからない
+  entity_ambiguous:
+    canonical: ENTITY_AMBIGUOUS
+    label: 候補複数
+    synonyms:
+      - entity_ambiguous
+      - 複数候補
+      - 一意確定不可
+  entity_type_ambiguous:
+    canonical: ENTITY_TYPE_AMBIGUOUS
+    label: Entity Type不明
+    synonyms:
+      - entity_type_ambiguous
+      - 種別不明
+      - 顧客かブランドか不明
+  canonical_key_missing:
+    canonical: CANONICAL_KEY_MISSING
+    label: Canonical Key未設定
+    synonyms:
+      - canonical_key_missing
+      - コード未設定
+      - 正規キー欠落
+  low_confidence_match:
+    canonical: LOW_CONFIDENCE_MATCH
+    label: 低信頼候補
+    synonyms:
+      - low_confidence_match
+      - 信頼度不足
+      - 低確信度
+  display_name_only:
+    canonical: DISPLAY_NAME_ONLY
+    label: 表示名のみ
+    synonyms:
+      - display_name_only
+      - 表示名のみ
+      - コード未確定
+  resolution_success:
+    canonical: resolution_success
+    label: 解決成功
+    synonyms:
+      - entity resolution成功
+      - 一意確定
+  resolution_failed:
+    canonical: resolution_failed
+    label: 解決失敗
+    synonyms:
+      - entity resolution失敗
+      - 確認待ち
+
+entity_resolution_response:
+  unresolved_reason:
+    canonical: unresolved_reason
+    label: 未確定理由
+    synonyms:
+      - 未確定理由
+      - 何が確定できないか
+  candidate_list:
+    canonical: candidate_list
+    label: 候補一覧
+    synonyms:
+      - 候補一覧
+      - 候補提示
+  candidate_entity_type:
+    canonical: candidate.entity_type
+    label: 候補Entity Type
+    synonyms:
+      - entity type
+      - 候補種別
+  candidate_canonical_key:
+    canonical: candidate.canonical_key
+    label: 候補Canonical Key
+    synonyms:
+      - candidate canonical key
+      - 候補コード
+  candidate_canonical_name:
+    canonical: candidate.canonical_name
+    label: 候補正規表示名
+    synonyms:
+      - candidate canonical name
+      - 候補正規名
+  followup_question:
+    canonical: followup_question
+    label: 追加確認質問
+    synonyms:
+      - 確認質問
+      - 追加質問
+  sql_generation_status_pending:
+    canonical: sql_generation_status_pending
+    label: SQL生成保留
+    synonyms:
+      - sql生成保留
+      - 保留
+
+business_context_resolution:
+  gross_profit_term:
+    canonical: gross_profit_term
+    label: 粗利語彙
+    synonyms:
+      - 粗利
+      - 概算粗利
+      - 実際粗利
+      - 担当者粗利
+  sales_term:
+    canonical: sales_term
+    label: 売上語彙
+    synonyms:
+      - 売上
+      - 売上高
+  profit_term:
+    canonical: profit_term
+    label: 利益語彙
+    synonyms:
+      - 利益
+      - 利益額
+  actual_term:
+    canonical: actual_term
+    label: 実績語彙
+    synonyms:
+      - 実績
+  plan_term:
+    canonical: plan_term
+    label: 予定語彙
+    synonyms:
+      - 予定
+  budget_term:
+    canonical: budget_term
+    label: 予算語彙
+    synonyms:
+      - 予算
+  this_year_term:
+    canonical: this_year_term
+    label: 今年語彙
+    synonyms:
+      - 今年
+  this_month_term:
+    canonical: this_month_term
+    label: 今月語彙
+    synonyms:
+      - 今月
+  this_period_term:
+    canonical: this_period_term
+    label: 今期語彙
+    synonyms:
+      - 今期
+  last_month_term:
+    canonical: last_month_term
+    label: 先月語彙
+    synonyms:
+      - 先月
+      - 前月
+  year_over_year_term:
+    canonical: year_over_year_term
+    label: 前年比語彙
+    synonyms:
+      - 前年比
+      - yoy
+  by_staff_term:
+    canonical: by_staff_term
+    label: 担当者別語彙
+    synonyms:
+      - 担当者別
+  by_customer_term:
+    canonical: by_customer_term
+    label: 顧客別語彙
+    synonyms:
+      - 顧客別
+  by_brand_term:
+    canonical: by_brand_term
+    label: ブランド別語彙
+    synonyms:
+      - ブランド別
+
+meaning_resolution:
+  entity_resolution:
+    canonical: entity_resolution
+    label: Entity Resolution
+    synonyms:
+      - entity resolution
+  kpi_resolution:
+    canonical: kpi_resolution
+    label: KPI Resolution
+    synonyms:
+      - kpi resolution
+      - kpi解決
+  time_resolution:
+    canonical: time_resolution
+    label: Time Resolution
+    synonyms:
+      - time resolution
+      - 期間解決
+  grain_resolution:
+    canonical: grain_resolution
+    label: Grain Resolution
+    synonyms:
+      - grain resolution
+      - 粒度解決
+  analysis_purpose_resolution:
+    canonical: analysis_purpose_resolution
+    label: Analysis Purpose Resolution
+    synonyms:
+      - analysis purpose resolution
+      - 分析目的解決
+  unresolved_contexts:
+    canonical: unresolved_contexts
+    label: 未解決Context
+    synonyms:
+      - unresolved_contexts
+      - 未解決コンテキスト
+  meaning_resolution_completed:
+    canonical: meaning_resolution_completed
+    label: Meaning Resolution完了
+    synonyms:
+      - meaning resolution完了
+      - 解決完了
+
+task_planning:
+  analysis_task:
+    canonical: analysis_task
+    label: 分析計画
+    synonyms:
+      - 分析計画
+  proposal_task:
+    canonical: proposal_task
+    label: 提案計画
+    synonyms:
+      - 提案資料構成
+      - powerpoint draft
+  document_task:
+    canonical: document_task
+    label: 伝票計画
+    synonyms:
+      - 見積
+      - 売上伝票
+      - 仕入伝票
+      - 発注伝票
+      - 請求伝票
+  monitoring_task:
+    canonical: monitoring_task
+    label: 監視計画
+    synonyms:
+      - 未発注
+      - 納期遅延
+      - 粗利悪化
+      - タスク抽出
+  workflow_task:
+    canonical: workflow_task
+    label: ワークフロー計画
+    synonyms:
+      - 案件進行
+      - 担当者確認
+      - ステータス変更
+      - 承認
+  search_task:
+    canonical: search_task
+    label: 検索計画
+    synonyms:
+      - 検索対象
+      - 検索条件
+  explanation_task:
+    canonical: explanation_task
+    label: 説明計画
+    synonyms:
+      - 説明対象
+      - 説明粒度
+  missing_inputs:
+    canonical: missing_inputs
+    label: 不足入力
+    synonyms:
+      - missing_inputs
+      - 不足情報
+
+execution_planning:
+  sql_plan:
+    canonical: sql_plan
+    label: SQL Plan
+    synonyms:
+      - sql plan
+      - sql生成計画
+  proposal_plan:
+    canonical: proposal_plan
+    label: Proposal Plan
+    synonyms:
+      - proposal plan
+      - powerpoint構成
+  document_plan:
+    canonical: document_plan
+    label: Document Plan
+    synonyms:
+      - document plan
+      - 伝票生成
+  monitoring_plan:
+    canonical: monitoring_plan
+    label: Monitoring Plan
+    synonyms:
+      - monitoring plan
+      - alert生成
+  workflow_plan:
+    canonical: workflow_plan
+    label: Workflow Plan
+    synonyms:
+      - workflow plan
+      - 業務処理
+  search_plan:
+    canonical: search_plan
+    label: Search Plan
+    synonyms:
+      - search plan
+      - 検索実行
+  explanation_plan:
+    canonical: explanation_plan
+    label: Explanation Plan
+    synonyms:
+      - explanation plan
+      - 説明生成
+  plan_unavailable:
+    canonical: plan_unavailable
+    label: Plan生成不可
+    synonyms:
+      - plan生成不可
+      - 実行計画失敗
+
+query_planning_handoff:
+  entity_type:
+    canonical: entity_type
+    label: Entity Type
+    synonyms:
+      - entity_type
+      - 対象種別
+  canonical_key:
+    canonical: canonical_key
+    label: Canonical Key
+    synonyms:
+      - canonical_key
+      - 正式コード
+  canonical_name:
+    canonical: canonical_name
+    label: Canonical Name
+    synonyms:
+      - canonical_name
+      - 正規表示名
+  original_user_input:
+    canonical: original_user_input
+    label: 元入力語
+    synonyms:
+      - original_user_input
+      - 元の入力語
+  confidence:
+    canonical: confidence
+    label: 信頼度
+    synonyms:
+      - confidence
+      - 確信度
+  resolution_method:
+    canonical: resolution_method
+    label: 解決手段
+    synonyms:
+      - resolution_method
+      - 解決方法
+  analysis_purpose:
+    canonical: analysis_purpose
+    label: Analysis Purpose
+    synonyms:
+      - analysis_purpose
+      - 分析目的
+  kpi_id:
+    canonical: kpi_id
+    label: KPI ID
+    synonyms:
+      - kpi_id
+      - kpi識別子
+  kpi_variant:
+    canonical: kpi_variant
+    label: KPI Variant
+    synonyms:
+      - kpi_variant
+      - 粗利種別
+  time_range:
+    canonical: time_range
+    label: 期間範囲
+    synonyms:
+      - time_range
+      - 期間
+  time_basis:
+    canonical: time_basis
+    label: 期間基準
+    synonyms:
+      - time_basis
+      - 基準日種別
+  grain:
+    canonical: grain
+    label: 粒度
+    synonyms:
+      - grain
+      - 粒度
+  unresolved_contexts:
+    canonical: unresolved_contexts
+    label: 未解決Context
+    synonyms:
+      - unresolved_contexts
+      - 未解決
+
+presentation_trace:
+  used_kpi:
+    canonical: used_kpi
+    label: 使用KPI
+    synonyms:
+      - 使用kpi
+  used_time_range:
+    canonical: used_time_range
+    label: 使用期間
+    synonyms:
+      - 使用期間
+  used_time_basis:
+    canonical: used_time_basis
+    label: 使用期間基準
+    synonyms:
+      - 使用期間基準
+  used_grain:
+    canonical: used_grain
+    label: 使用粒度
+    synonyms:
+      - 使用粒度
+  used_entity:
+    canonical: used_entity
+    label: 使用Entity
+    synonyms:
+      - 使用entity
+
+presentation_mode:
+  analysis_chart:
+    canonical: analysis_chart
+    label: Analysisグラフ
+    synonyms:
+      - グラフ
+      - chart
+  proposal_powerpoint:
+    canonical: proposal_powerpoint
+    label: Proposal PowerPoint
+    synonyms:
+      - powerpoint
+      - 提案資料
+  document_form:
+    canonical: document_form
+    label: Document帳票
+    synonyms:
+      - 帳票
+      - 伝票
+  monitoring_dashboard:
+    canonical: monitoring_dashboard
+    label: Monitoringダッシュボード
+    synonyms:
+      - ダッシュボード
+      - dashboard
+  workflow_task_list:
+    canonical: workflow_task_list
+    label: Workflowタスク一覧
+    synonyms:
+      - タスク一覧
+  search_result_list:
+    canonical: search_result_list
+    label: Search結果一覧
+    synonyms:
+      - 検索結果一覧
+  explanation_structured:
+    canonical: explanation_structured
+    label: Explanation構造化説明
+    synonyms:
+      - 構造化説明
+
+entity_key:
+  customer_code:
+    canonical: customer_code
+    label: 顧客コード
+    synonyms:
+      - 顧客コード
+  product_code:
+    canonical: product_code
+    label: 商品コード
+    synonyms:
+      - 商品コード
+  brand_code:
+    canonical: brand_code
+    label: ブランドコード
+    synonyms:
+      - ブランドコード
+  staff_code:
+    canonical: staff_code
+    label: 担当者コード
+    synonyms:
+      - 担当者コード
+      - 社員コード
+  factory_code:
+    canonical: factory_code
+    label: 工場コード
+    synonyms:
+      - 工場コード
+  supplier_code:
+    canonical: supplier_code
+    label: 仕入先コード
+    synonyms:
+      - 仕入先コード
+
+budget_forecast_category:
+  budget:
+    canonical: "01"
+    label: 予算
+    synonyms:
+      - 予算
+      - budget
+      - 01_予算
+      - "01"
+  plan:
+    canonical: "02"
+    label: 予定
+    synonyms:
+      - 予定
+      - plan
+      - 02_予定
+      - "02"
+  expense:
+    canonical: "05"
+    label: 費用
+    synonyms:
+      - 費用
+      - expense
+      - 05_費用
+      - 会計連携費用
+      - "05"
+
+business_concept:
+  budget:
+    canonical: budget
+    label: 予算
+    synonyms:
+      - 予算
+      - budget
+  plan:
+    canonical: plan
+    label: 予定
+    synonyms:
+      - 予定
+      - plan
+  order:
+    canonical: order
+    label: 発注
+    synonyms:
+      - 発注
+      - order
+      - purchase order
+  actual:
+    canonical: actual
+    label: 実績
+    synonyms:
+      - 実績
+      - actual
+      - 売上実績
+      - 仕入実績
+      - 業績実績
+  sales_actual:
+    canonical: sales_actual
+    label: 売上実績
+    synonyms:
+      - 売上実績
+  procurement_actual:
+    canonical: procurement_actual
+    label: 仕入実績
+    synonyms:
+      - 仕入実績
+      - 売上原価
+      - 仕入
+      - 輸入諸掛込仕入
+  expense_actual:
+    canonical: expense_actual
+    label: 費用実績
+    synonyms:
+      - 費用実績
+      - 営業担当費用
+      - budget_forecast 05
+  gross_profit:
+    canonical: gross_profit
+    label: 概算粗利
+    synonyms:
+      - 概算粗利
+      - sales粗利
+      - 速報粗利
+  actual_gross_profit:
+    canonical: actual_gross_profit
+    label: 実際粗利
+    synonyms:
+      - 実際粗利
+      - 売上-仕入粗利
+  staff_profit:
+    canonical: staff_gross_profit
+    label: 担当者粗利
+    synonyms:
+      - 担当者粗利
+      - 担当者業績
+  factory_code:
+    canonical: factory_code
+    label: 工場コード
+    synonyms:
+      - 工場コード
+  factory_display_name:
+    canonical: factory_display_name
+    label: 工場表示名
+    synonyms:
+      - 工場表示名
+      - 正規化工場名
+  cost:
+    canonical: cost
+    label: 費用
+    synonyms:
+      - 費用
+      - cost
+      - 実績費用
+
+procurement_component:
+  purchase_detail:
+    canonical: purchase_detail
+    label: 仕入明細
+    synonyms:
+      - 仕入明細
+      - 仕入実績合計
+      - 輸入経費込み仕入金額
+  import_surcharge_detail:
+    canonical: import_surcharge_detail
+    label: 輸入諸掛明細
+    synonyms:
+      - 輸入諸掛明細
+      - 輸入経費内訳
+      - 諸掛内訳
+  double_count_risk:
+    canonical: double_count_risk
+    label: 二重計上リスク
+    synonyms:
+      - 二重計上
+      - 重複計上
+      - 二重加算
+
+allocation_target:
+  staff:
+    canonical: staff
+    label: 担当者配賦
+    synonyms:
+      - 担当者に配賦
+      - 担当者配賦
+  product:
+    canonical: product
+    label: 商品配賦
+    synonyms:
+      - 商品に配賦
+      - 商品配賦
+  customer:
+    canonical: customer
+    label: 顧客配賦
+    synonyms:
+      - 顧客に配賦
+      - 顧客配賦
+  brand:
+    canonical: brand
+    label: ブランド配賦
+    synonyms:
+      - ブランドへ配賦
+      - ブランド配賦
+  department:
+    canonical: department
+    label: 部門配賦
+    synonyms:
+      - 部門へ配賦
+      - 部門配賦
+  none:
+    canonical: none
+    label: 配賦なし
+    synonyms:
+      - 配賦しない
+      - 実績費用として扱う
+
+storage_rule:
+  negative_cost_storage:
+    canonical: negative_cost_storage
+    label: 費用負値保存
+    synonyms:
+      - 費用はマイナス保存
+      - 負値保存
+      - 保存形式
+
+presentation_rule:
+  abs_display_default:
+    canonical: abs_display_default
+    label: 絶対値表示標準
+    synonyms:
+      - abs表示
+      - 絶対値表示
+      - 表示は正値
+      - マイナス表示切替
+  gross_profit_label_required:
+    canonical: gross_profit_label_required
+    label: 粗利種別明示
+    synonyms:
+      - 概算粗利明示
+      - 実際粗利明示
+      - 担当者粗利明示
+      - 粗利注記
+
+calculation_rule:
+  profit_deduction:
+    canonical: profit_deduction
+    label: 利益控除計算
+    synonyms:
+      - 利益は売上から費用を引く
+      - 利益計算
+      - 費用控除
+      - 符号整合
+
+business_kpi:
+  sales:
+    canonical: sales
+    label: 売上
+    synonyms:
+      - 売上
+      - sales
+  product_cost:
+    canonical: product_cost
+    label: 商品原価
+    synonyms:
+      - 商品原価
+      - 売上原価
+  import_surcharge:
+    canonical: import_surcharge
+    label: 輸入諸掛
+    synonyms:
+      - 輸入諸掛
+      - 輸入経費
+  estimated_gross_profit:
+    canonical: estimated_gross_profit
+    label: 概算粗利
+    synonyms:
+      - 概算粗利
+      - sales粗利
+  actual_gross_profit:
+    canonical: actual_gross_profit
+    label: 実際粗利
+    synonyms:
+      - 実際粗利
+      - 売上-仕入粗利
+  staff_expense:
+    canonical: staff_expense
+    label: 営業担当費用
+    synonyms:
+      - 営業担当費用
+      - 費用実績
+  staff_gross_profit:
+    canonical: staff_gross_profit
+    label: 担当者粗利
+    synonyms:
+      - 担当者粗利
+      - 担当者業績
+
+business_grain:
+  staff_period:
+    canonical: staff_period
+    label: 担当者×期間
+    synonyms:
+      - 担当者粒度
+      - 担当者と期間
+  product_period:
+    canonical: product_period
+    label: 商品×期間
+    synonyms:
+      - 商品粒度
+      - 商品と期間
+  customer_period:
+    canonical: customer_period
+    label: 顧客×期間
+    synonyms:
+      - 顧客粒度
+      - 顧客と期間
+  brand_period:
+    canonical: brand_period
+    label: ブランド×期間
+    synonyms:
+      - ブランド粒度
+      - ブランドと期間
+  factory_period:
+    canonical: factory_period
+    label: 工場×期間
+    synonyms:
+      - 工場粒度
+      - 工場と期間
+  company_period:
+    canonical: company_period
+    label: 会社×期間
+    synonyms:
+      - 会社粒度
+      - 会社と期間
+
+kpi_requirement:
+  required_grain:
+    canonical: required_grain
+    label: Required Grain
+    synonyms:
+      - 必須粒度
+      - required grain
+  required_dataset:
+    canonical: required_dataset
+    label: Required Dataset
+    synonyms:
+      - 必須データセット
+      - required dataset
 
 product_category:
   hat:
@@ -154,15 +1785,860 @@ period:
     synonyms:
       - last_month
       - 先月
+      - 前月
+  same_month_last_year:
+    canonical: same_month_last_year
+    label: 前年同月
+    synonyms:
+      - 前年同月
+      - 去年同月
+      - 昨年同月
+  last_3_months:
+    canonical: last_3_months
+    label: 直近3か月
+    synonyms:
+      - 直近3か月
+      - 直近3ヶ月
+      - 最近
+      - 直近
+  last_12_months:
+    canonical: last_12_months
+    label: 直近12か月
+    synonyms:
+      - 直近12か月
+      - 直近12ヶ月
+      - 過去12か月
+      - 過去12ヶ月
   this_year:
     canonical: this_year
     label: 今年
     synonyms:
       - this_year
       - 今年
+      - 当年
   last_year:
     canonical: last_year
     label: 去年
     synonyms:
       - last_year
       - 去年
+      - 昨年
+      - 前年
+  fiscal_year:
+    canonical: fiscal_year
+    label: 年度
+    synonyms:
+      - 年度
+      - 期
+      - 会計年度
+  quarter:
+    canonical: quarter
+    label: 四半期
+    synonyms:
+      - 四半期
+      - q1
+      - q2
+      - q3
+      - q4
+
+evaluation_category:
+  knowledge:
+    canonical: knowledge
+    label: Knowledge Understanding
+    synonyms:
+      - knowledge
+      - knowledge understanding
+  meaning:
+    canonical: meaning
+    label: Meaning Resolution
+    synonyms:
+      - meaning
+      - meaning resolution
+  intent:
+    canonical: intent
+    label: Intent Resolution
+    synonyms:
+      - intent
+      - intent resolution
+  task_planning:
+    canonical: task_planning
+    label: Task Planning
+    synonyms:
+      - task planning
+  capability_selection:
+    canonical: capability_selection
+    label: Capability Selection
+    synonyms:
+      - capability selection
+  execution_planning:
+    canonical: execution_planning
+    label: Execution Planning
+    synonyms:
+      - execution planning
+  validation:
+    canonical: validation
+    label: Validation
+    synonyms:
+      - validation
+  presentation:
+    canonical: presentation
+    label: Presentation
+    synonyms:
+      - presentation
+  regression:
+    canonical: regression
+    label: Regression
+    synonyms:
+      - regression
+
+evaluation_case_field:
+  test_id:
+    canonical: test_id
+    label: Test ID
+    synonyms:
+      - test_id
+  category:
+    canonical: category
+    label: Category
+    synonyms:
+      - category
+  user_input:
+    canonical: user_input
+    label: User Input
+    synonyms:
+      - user_input
+  expected_intent:
+    canonical: expected_intent
+    label: Expected Intent
+    synonyms:
+      - expected_intent
+  expected_entities:
+    canonical: expected_entities
+    label: Expected Entities
+    synonyms:
+      - expected_entities
+  expected_kpi:
+    canonical: expected_kpi
+    label: Expected KPI
+    synonyms:
+      - expected_kpi
+  expected_time:
+    canonical: expected_time
+    label: Expected Time
+    synonyms:
+      - expected_time
+  expected_grain:
+    canonical: expected_grain
+    label: Expected Grain
+    synonyms:
+      - expected_grain
+  expected_analysis_purpose:
+    canonical: expected_analysis_purpose
+    label: Expected Analysis Purpose
+    synonyms:
+      - expected_analysis_purpose
+  expected_task:
+    canonical: expected_task
+    label: Expected Task
+    synonyms:
+      - expected_task
+  expected_capabilities:
+    canonical: expected_capabilities
+    label: Expected Capabilities
+    synonyms:
+      - expected_capabilities
+  expected_execution_mode:
+    canonical: expected_execution_mode
+    label: Expected Execution Mode
+    synonyms:
+      - expected_execution_mode
+  expected_validation_status:
+    canonical: expected_validation_status
+    label: Expected Validation Status
+    synonyms:
+      - expected_validation_status
+  expected_clarification_required:
+    canonical: expected_clarification_required
+    label: Expected Clarification Required
+    synonyms:
+      - expected_clarification_required
+  expected_should_generate_sql:
+    canonical: expected_should_generate_sql
+    label: Expected Should Generate SQL
+    synonyms:
+      - expected_should_generate_sql
+  expected_should_execute:
+    canonical: expected_should_execute
+    label: Expected Should Execute
+    synonyms:
+      - expected_should_execute
+  expected_output_type:
+    canonical: expected_output_type
+    label: Expected Output Type
+    synonyms:
+      - expected_output_type
+  notes:
+    canonical: notes
+    label: Notes
+    synonyms:
+      - notes
+
+evaluation_output_contract:
+  interpreted_intent:
+    canonical: interpreted_intent
+    label: Interpreted Intent
+    synonyms:
+      - interpreted_intent
+  resolved_meaning:
+    canonical: resolved_meaning
+    label: Resolved Meaning
+    synonyms:
+      - resolved_meaning
+  task_plan:
+    canonical: task_plan
+    label: Task Plan
+    synonyms:
+      - task_plan
+  selected_capabilities:
+    canonical: selected_capabilities
+    label: Selected Capabilities
+    synonyms:
+      - selected_capabilities
+  execution_plan:
+    canonical: execution_plan
+    label: Execution Plan
+    synonyms:
+      - execution_plan
+  validation_result:
+    canonical: validation_result
+    label: Validation Result
+    synonyms:
+      - validation_result
+  presentation_summary:
+    canonical: presentation_summary
+    label: Presentation Summary
+    synonyms:
+      - presentation_summary
+
+evaluation_status:
+  pass:
+    canonical: pass
+    label: Pass
+    synonyms:
+      - pass
+  fail:
+    canonical: fail
+    label: Fail
+    synonyms:
+      - fail
+  warning:
+    canonical: warning
+    label: Warning
+    synonyms:
+      - warning
+  needs_clarification:
+    canonical: needs_clarification
+    label: Needs Clarification
+    synonyms:
+      - needs_clarification
+  blocked_by_validation:
+    canonical: blocked_by_validation
+    label: Blocked By Validation
+    synonyms:
+      - blocked_by_validation
+
+evaluation_score_dimension:
+  intent_accuracy:
+    canonical: intent_accuracy
+    label: Intent Accuracy
+    synonyms:
+      - intent_accuracy
+  meaning_accuracy:
+    canonical: meaning_accuracy
+    label: Meaning Accuracy
+    synonyms:
+      - meaning_accuracy
+  entity_resolution_accuracy:
+    canonical: entity_resolution_accuracy
+    label: Entity Resolution Accuracy
+    synonyms:
+      - entity_resolution_accuracy
+  kpi_resolution_accuracy:
+    canonical: kpi_resolution_accuracy
+    label: KPI Resolution Accuracy
+    synonyms:
+      - kpi_resolution_accuracy
+  planning_accuracy:
+    canonical: planning_accuracy
+    label: Planning Accuracy
+    synonyms:
+      - planning_accuracy
+  capability_selection_accuracy:
+    canonical: capability_selection_accuracy
+    label: Capability Selection Accuracy
+    synonyms:
+      - capability_selection_accuracy
+  validation_accuracy:
+    canonical: validation_accuracy
+    label: Validation Accuracy
+    synonyms:
+      - validation_accuracy
+  presentation_quality:
+    canonical: presentation_quality
+    label: Presentation Quality
+    synonyms:
+      - presentation_quality
+
+evaluation_regression_target:
+  gross_profit_definition:
+    canonical: gross_profit_definition
+    label: 粗利定義
+    synonyms:
+      - 粗利定義
+  staff_expense_restriction:
+    canonical: staff_expense_restriction
+    label: 営業担当費用利用制限
+    synonyms:
+      - 営業担当費用利用制限
+  entity_resolution_gate:
+    canonical: entity_resolution_gate
+    label: Entity Resolution Gate
+    synonyms:
+      - entity resolution gate
+  canonical_key_priority:
+    canonical: canonical_key_priority
+    label: Canonical Key優先
+    synonyms:
+      - canonical key優先
+  meaning_resolution_required:
+    canonical: meaning_resolution_required
+    label: Meaning Resolution必須
+    synonyms:
+      - meaning resolution必須
+  capability_risk_guardrail:
+    canonical: capability_risk_guardrail
+    label: Capability Risk Guardrail
+    synonyms:
+      - capability risk guardrail
+  no_auto_execute_high_critical:
+    canonical: no_auto_execute_high_critical
+    label: high critical自動実行禁止
+    synonyms:
+      - high critical自動実行禁止
+
+knowledge_source_type:
+  internal:
+    canonical: internal
+    label: Internal
+    synonyms:
+      - internal
+      - 社内知識
+  external:
+    canonical: external
+    label: External
+    synonyms:
+      - external
+      - 社外知識
+
+knowledge_source_name:
+  internal_database:
+    canonical: Internal Database
+    label: Internal Database
+    synonyms:
+      - logisys
+      - internal database
+  business_dictionary:
+    canonical: Business Dictionary
+    label: Business Dictionary
+    synonyms:
+      - business dictionary
+  business_rules:
+    canonical: Business Rules
+    label: Business Rules
+    synonyms:
+      - business rules
+  documents:
+    canonical: Documents
+    label: Documents
+    synonyms:
+      - documents
+      - 文書
+  email:
+    canonical: Email
+    label: Email
+    synonyms:
+      - email
+      - mail
+  slack:
+    canonical: Slack
+    label: Slack
+    synonyms:
+      - slack
+  calendar:
+    canonical: Calendar
+    label: Calendar
+    synonyms:
+      - calendar
+  crm:
+    canonical: CRM
+    label: CRM
+    synonyms:
+      - crm
+  web_search:
+    canonical: Web Search
+    label: Web Search
+    synonyms:
+      - web search
+  official_company_website:
+    canonical: Official Company Website
+    label: Official Company Website
+    synonyms:
+      - official website
+      - company website
+  press_release:
+    canonical: Press Release
+    label: Press Release
+    synonyms:
+      - press release
+      - pr
+  news:
+    canonical: News
+    label: News
+    synonyms:
+      - news
+      - ニュース
+  industry_report:
+    canonical: Industry Report
+    label: Industry Report
+    synonyms:
+      - industry report
+      - 業界レポート
+  regulation:
+    canonical: Regulation
+    label: Regulation
+    synonyms:
+      - regulation
+      - 規制
+  market_trend:
+    canonical: Market Trend
+    label: Market Trend
+    synonyms:
+      - market trend
+      - 市場動向
+  social_trend:
+    canonical: Social Trend
+    label: Social Trend
+    synonyms:
+      - social trend
+      - 社会トレンド
+  weather:
+    canonical: Weather
+    label: Weather
+    synonyms:
+      - weather
+      - 天候
+  exchange_rate:
+    canonical: Exchange Rate
+    label: Exchange Rate
+    synonyms:
+      - exchange rate
+      - 為替
+
+knowledge_metadata_field:
+  source_type:
+    canonical: source_type
+    label: Source Type
+    synonyms:
+      - source_type
+  source_name:
+    canonical: source_name
+    label: Source Name
+    synonyms:
+      - source_name
+  trust_level:
+    canonical: trust_level
+    label: Trust Level
+    synonyms:
+      - trust_level
+  freshness:
+    canonical: freshness
+    label: Freshness
+    synonyms:
+      - freshness
+  updated_at:
+    canonical: updated_at
+    label: Updated At
+    synonyms:
+      - updated_at
+  retrieval_method:
+    canonical: retrieval_method
+    label: Retrieval Method
+    synonyms:
+      - retrieval_method
+  cost:
+    canonical: cost
+    label: Cost
+    synonyms:
+      - cost
+  permission:
+    canonical: permission
+    label: Permission
+    synonyms:
+      - permission
+  citation_required:
+    canonical: citation_required
+    label: Citation Required
+    synonyms:
+      - citation_required
+
+required_knowledge_scope:
+  internal_only:
+    canonical: internal_only
+    label: Internal Only
+    synonyms:
+      - internal only
+  hybrid:
+    canonical: hybrid
+    label: Hybrid
+    synonyms:
+      - internal + external
+      - hybrid
+  external_primary:
+    canonical: external_primary
+    label: External Primary
+    synonyms:
+      - external primary
+      - external中心
+
+knowledge_retrieval_interface:
+  retrieve_internal:
+    canonical: retrieve_internal
+    label: Retrieve Internal
+    synonyms:
+      - retrieve_internal
+  retrieve_external:
+    canonical: retrieve_external
+    label: Retrieve External
+    synonyms:
+      - retrieve_external
+  merge_context:
+    canonical: merge_context
+    label: Merge Context
+    synonyms:
+      - merge_context
+  prioritize_sources:
+    canonical: prioritize_sources
+    label: Prioritize Sources
+    synonyms:
+      - prioritize_sources
+
+knowledge_trace_field:
+  knowledge_used_internal:
+    canonical: knowledge_used_internal
+    label: Knowledge Used Internal
+    synonyms:
+      - knowledge_used_internal
+  knowledge_used_external:
+    canonical: knowledge_used_external
+    label: Knowledge Used External
+    synonyms:
+      - knowledge_used_external
+  source_confidence:
+    canonical: source_confidence
+    label: Source Confidence
+    synonyms:
+      - source_confidence
+      - confidence
+  source_freshness:
+    canonical: source_freshness
+    label: Source Freshness
+    synonyms:
+      - source_freshness
+      - freshness
+  citation:
+    canonical: citation
+    label: Citation
+    synonyms:
+      - citation
+
+memory_type:
+  meeting_memory:
+    canonical: meeting_memory
+    label: Meeting Memory
+    synonyms:
+      - meeting memory
+      - 議事録履歴
+  decision_memory:
+    canonical: decision_memory
+    label: Decision Memory
+    synonyms:
+      - decision memory
+      - 意思決定履歴
+  customer_memory:
+    canonical: customer_memory
+    label: Customer Memory
+    synonyms:
+      - customer memory
+      - 顧客履歴
+  project_memory:
+    canonical: project_memory
+    label: Project Memory
+    synonyms:
+      - project memory
+      - 案件履歴
+  proposal_memory:
+    canonical: proposal_memory
+    label: Proposal Memory
+    synonyms:
+      - proposal memory
+      - 提案履歴
+  task_memory:
+    canonical: task_memory
+    label: Task Memory
+    synonyms:
+      - task memory
+      - タスク履歴
+  communication_memory:
+    canonical: communication_memory
+    label: Communication Memory
+    synonyms:
+      - communication memory
+      - 会話履歴
+      - 連絡履歴
+  issue_memory:
+    canonical: issue_memory
+    label: Issue Memory
+    synonyms:
+      - issue memory
+      - 課題履歴
+  feedback_memory:
+    canonical: feedback_memory
+    label: Feedback Memory
+    synonyms:
+      - feedback memory
+      - フィードバック履歴
+  learning_memory:
+    canonical: learning_memory
+    label: Learning Memory
+    synonyms:
+      - learning memory
+      - 学習履歴
+  exception_memory:
+    canonical: exception_memory
+    label: Exception Memory
+    synonyms:
+      - exception memory
+      - 例外履歴
+
+memory_metadata_field:
+  memory_id:
+    canonical: memory_id
+    label: Memory ID
+    synonyms:
+      - memory_id
+  memory_type:
+    canonical: memory_type
+    label: Memory Type
+    synonyms:
+      - memory_type
+  title:
+    canonical: title
+    label: Title
+    synonyms:
+      - title
+  summary:
+    canonical: summary
+    label: Summary
+    synonyms:
+      - summary
+  related_entities:
+    canonical: related_entities
+    label: Related Entities
+    synonyms:
+      - related_entities
+  related_customers:
+    canonical: related_customers
+    label: Related Customers
+    synonyms:
+      - related_customers
+  related_projects:
+    canonical: related_projects
+    label: Related Projects
+    synonyms:
+      - related_projects
+  related_staff:
+    canonical: related_staff
+    label: Related Staff
+    synonyms:
+      - related_staff
+  related_dates:
+    canonical: related_dates
+    label: Related Dates
+    synonyms:
+      - related_dates
+  source_type:
+    canonical: source_type
+    label: Source Type
+    synonyms:
+      - source_type
+  source_name:
+    canonical: source_name
+    label: Source Name
+    synonyms:
+      - source_name
+  occurred_at:
+    canonical: occurred_at
+    label: Occurred At
+    synonyms:
+      - occurred_at
+  recorded_at:
+    canonical: recorded_at
+    label: Recorded At
+    synonyms:
+      - recorded_at
+  confidence:
+    canonical: confidence
+    label: Confidence
+    synonyms:
+      - confidence
+  importance:
+    canonical: importance
+    label: Importance
+    synonyms:
+      - importance
+  sensitivity:
+    canonical: sensitivity
+    label: Sensitivity
+    synonyms:
+      - sensitivity
+  permission_scope:
+    canonical: permission_scope
+    label: Permission Scope
+    synonyms:
+      - permission_scope
+  retention_policy:
+    canonical: retention_policy
+    label: Retention Policy
+    synonyms:
+      - retention_policy
+  citation_required:
+    canonical: citation_required
+    label: Citation Required
+    synonyms:
+      - citation_required
+  linked_documents:
+    canonical: linked_documents
+    label: Linked Documents
+    synonyms:
+      - linked_documents
+  linked_messages:
+    canonical: linked_messages
+    label: Linked Messages
+    synonyms:
+      - linked_messages
+  linked_tasks:
+    canonical: linked_tasks
+    label: Linked Tasks
+    synonyms:
+      - linked_tasks
+  tags:
+    canonical: tags
+    label: Tags
+    synonyms:
+      - tags
+
+required_memory_type:
+  proposal_basic:
+    canonical: proposal_basic
+    label: Proposal Basic
+    synonyms:
+      - customer_memory + proposal_memory + project_memory
+  project_status_basic:
+    canonical: project_status_basic
+    label: Project Status Basic
+    synonyms:
+      - project_memory + issue_memory + communication_memory + task_memory
+  today_action_basic:
+    canonical: today_action_basic
+    label: Today Action Basic
+    synonyms:
+      - task_memory + project_memory + communication_memory
+
+memory_retrieval_interface:
+  retrieve_memory:
+    canonical: retrieve_memory
+    label: Retrieve Memory
+    synonyms:
+      - retrieve_memory
+  retrieve_customer_memory:
+    canonical: retrieve_customer_memory
+    label: Retrieve Customer Memory
+    synonyms:
+      - retrieve_customer_memory
+  retrieve_project_memory:
+    canonical: retrieve_project_memory
+    label: Retrieve Project Memory
+    synonyms:
+      - retrieve_project_memory
+  retrieve_proposal_memory:
+    canonical: retrieve_proposal_memory
+    label: Retrieve Proposal Memory
+    synonyms:
+      - retrieve_proposal_memory
+  retrieve_task_memory:
+    canonical: retrieve_task_memory
+    label: Retrieve Task Memory
+    synonyms:
+      - retrieve_task_memory
+  merge_knowledge_and_memory:
+    canonical: merge_knowledge_and_memory
+    label: Merge Knowledge And Memory
+    synonyms:
+      - merge_knowledge_and_memory
+  prioritize_memory:
+    canonical: prioritize_memory
+    label: Prioritize Memory
+    synonyms:
+      - prioritize_memory
+  filter_memory_by_permission:
+    canonical: filter_memory_by_permission
+    label: Filter Memory By Permission
+    synonyms:
+      - filter_memory_by_permission
+
+memory_trace_field:
+  memory_type:
+    canonical: memory_type
+    label: Memory Type
+    synonyms:
+      - memory_type
+  title:
+    canonical: title
+    label: Title
+    synonyms:
+      - title
+  occurred_at:
+    canonical: occurred_at
+    label: Occurred At
+    synonyms:
+      - occurred_at
+  confidence:
+    canonical: confidence
+    label: Confidence
+    synonyms:
+      - confidence
+  permission_scope:
+    canonical: permission_scope
+    label: Permission Scope
+    synonyms:
+      - permission_scope
+  citation:
+    canonical: citation
+    label: Citation
+    synonyms:
+      - citation
+  usage_in_answer:
+    canonical: usage_in_answer
+    label: Usage In Answer
+    synonyms:
+      - usage_in_answer

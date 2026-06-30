@@ -1,0 +1,620 @@
+suite_id: logs_aios_phase1_knowledge_source_extension
+version: 1
+cases:
+  - test_id: EV-KSRC-001
+    category: Analysis / BI
+    user_input: BEAMSの粗利を教えて
+    expected_intent: Analysis
+    expected_entities:
+      - customer_or_brand_resolved_by_context
+    expected_kpi:
+      - unresolved_gross_profit_variant
+    expected_time: unresolved
+    expected_grain: optional
+    expected_analysis_purpose: customer_analysis
+    expected_task: EntityとKPIと期間の確認
+    expected_capabilities:
+      - Meaning Resolution
+      - Validation
+      - Presentation
+    expected_execution_mode: read_only
+    expected_validation_status: needs_clarification
+    expected_clarification_required: true
+    expected_should_generate_sql: false
+    expected_should_execute: false
+    expected_output_type: clarification_question
+    risk_level: low
+    expected_knowledge_scope: internal_only
+    expected_internal_sources:
+      - Internal Database
+      - Business Dictionary
+      - Business Rules
+    expected_external_sources: []
+    expected_citation_required: false
+    notes: Internal knowledge only. External source should not be required.
+
+  - test_id: EV-KSRC-002
+    category: Proposal
+    user_input: GOLDWIN向け提案書を作りたい
+    expected_intent: Proposal
+    expected_entities:
+      - goldwin
+    expected_kpi: []
+    expected_time: optional
+    expected_grain: optional
+    expected_analysis_purpose: proposal_preparation
+    expected_task: 提案書ドラフト作成
+    expected_capabilities:
+      - Knowledge Retrieval
+      - Data Query
+      - Document Generation
+    expected_execution_mode: draft
+    expected_validation_status: pass
+    expected_clarification_required: false
+    expected_should_generate_sql: false
+    expected_should_execute: true
+    expected_output_type: powerpoint_draft
+    risk_level: medium
+    expected_knowledge_scope: hybrid
+    expected_internal_sources:
+      - Internal Database
+      - Documents
+      - CRM
+    expected_external_sources:
+      - Official Company Website
+      - Press Release
+      - News
+    expected_citation_required: true
+    notes: Proposal should combine internal performance and external context.
+
+  - test_id: EV-KSRC-003
+    category: Analysis / BI
+    user_input: 今年のOEM市場動向を教えて
+    expected_intent: Analysis
+    expected_entities:
+      - oem_business
+    expected_kpi: []
+    expected_time: this_year
+    expected_grain: optional
+    expected_analysis_purpose: analysis
+    expected_task: 分析計画
+    expected_capabilities:
+      - Knowledge Retrieval
+      - Presentation
+    expected_execution_mode: read_only
+    expected_validation_status: pass
+    expected_clarification_required: false
+    expected_should_generate_sql: false
+    expected_should_execute: true
+    expected_output_type: structured_explanation
+    risk_level: medium
+    expected_knowledge_scope: external_primary
+    expected_internal_sources:
+      - Business Dictionary
+      - Business Rules
+    expected_external_sources:
+      - Industry Report
+      - Market Trend
+      - News
+    expected_citation_required: true
+    notes: Market trend question should be external-primary.
+
+  - test_id: EV-KSRC-004
+    category: Monitoring / Alert
+    user_input: 今週対応が必要な案件を教えて
+    expected_intent: Monitoring
+    expected_entities:
+      - current_user
+    expected_kpi: []
+    expected_time: this_week
+    expected_grain: task
+    expected_analysis_purpose: monitoring_task_extraction
+    expected_task: 当日対応タスク抽出
+    expected_capabilities:
+      - Monitoring Alert
+      - Workflow
+      - Presentation
+    expected_execution_mode: read_only
+    expected_validation_status: pass
+    expected_clarification_required: false
+    expected_should_generate_sql: false
+    expected_should_execute: true
+    expected_output_type: task_list
+    risk_level: medium
+    expected_knowledge_scope: internal_only
+    expected_internal_sources:
+      - Internal Database
+      - Documents
+      - Calendar
+    expected_external_sources: []
+    expected_citation_required: false
+    notes: Monitoring task extraction should remain internal-only.
+
+  - test_id: EV-KSRC-005
+    category: Analysis / BI
+    user_input: 来月の為替リスクを見たい
+    expected_intent: Analysis
+    expected_entities: []
+    expected_kpi: []
+    expected_time: unresolved
+    expected_grain: optional
+    expected_analysis_purpose: analysis
+    expected_task: 分析計画
+    expected_capabilities:
+      - Knowledge Retrieval
+      - Presentation
+    expected_execution_mode: read_only
+    expected_validation_status: needs_clarification
+    expected_clarification_required: true
+    expected_should_generate_sql: false
+    expected_should_execute: false
+    expected_output_type: clarification_question
+    risk_level: medium
+    expected_knowledge_scope: external_primary
+    expected_internal_sources:
+      - Business Rules
+    expected_external_sources:
+      - Exchange Rate
+      - Market Trend
+      - News
+    expected_citation_required: true
+    notes: External source required. Time boundary likely needs clarification.
+
+  - test_id: EV-KSRC-006
+    category: Search / Knowledge Retrieval
+    user_input: BEAMSの公式サイト情報を探して
+    expected_intent: Search
+    expected_entities:
+      - customer_or_brand_resolved_by_context
+    expected_kpi: []
+    expected_time: optional
+    expected_grain: project
+    expected_analysis_purpose: case_status_lookup
+    expected_task: 案件状況検索と監視情報要約
+    expected_capabilities:
+      - Knowledge Retrieval
+      - Presentation
+    expected_execution_mode: read_only
+    expected_validation_status: needs_clarification
+    expected_clarification_required: true
+    expected_should_generate_sql: false
+    expected_should_execute: false
+    expected_output_type: clarification_question
+    risk_level: low
+    expected_knowledge_scope: hybrid
+    expected_internal_sources:
+      - Documents
+      - CRM
+    expected_external_sources:
+      - Official Company Website
+    expected_citation_required: true
+    notes: External info retrieval requires citation trace and entity clarification.
+
+  - test_id: EV-KSRC-007
+    category: Proposal
+    user_input: Fanatics向け提案に市場ニュースを入れて
+    expected_intent: Proposal
+    expected_entities:
+      - fanatics_project
+    expected_kpi: []
+    expected_time: optional
+    expected_grain: optional
+    expected_analysis_purpose: proposal_preparation
+    expected_task: 提案書ドラフト作成
+    expected_capabilities:
+      - Knowledge Retrieval
+      - Data Query
+      - Document Generation
+    expected_execution_mode: draft
+    expected_validation_status: pass
+    expected_clarification_required: false
+    expected_should_generate_sql: false
+    expected_should_execute: true
+    expected_output_type: powerpoint_draft
+    risk_level: medium
+    expected_knowledge_scope: hybrid
+    expected_internal_sources:
+      - Internal Database
+      - Documents
+      - CRM
+    expected_external_sources:
+      - News
+      - Industry Report
+    expected_citation_required: true
+    notes: Proposal should merge internal and external context.
+
+  - test_id: EV-KSRC-008
+    category: Communication
+    user_input: 顧客向けに市場動向を含めたメールを今すぐ送って
+    expected_intent: Communication
+    expected_entities: []
+    expected_kpi: []
+    expected_time: optional
+    expected_grain: message
+    expected_analysis_purpose: communication_drafting
+    expected_task: 連絡文ドラフト作成
+    expected_capabilities:
+      - Communication
+      - Validation
+      - Presentation
+    expected_execution_mode: approval_required
+    expected_validation_status: blocked_by_validation
+    expected_clarification_required: false
+    expected_should_generate_sql: false
+    expected_should_execute: false
+    expected_output_type: message_draft
+    risk_level: high
+    expected_knowledge_scope: hybrid
+    expected_internal_sources:
+      - Documents
+      - CRM
+    expected_external_sources:
+      - News
+      - Market Trend
+    expected_citation_required: true
+    notes: External-informed customer communication cannot auto-send.
+
+  - test_id: EV-KSRC-009
+    category: Validation / Guardrail
+    user_input: 社内限定タスクだけどWeb検索して補完して
+    expected_intent: Workflow
+    expected_entities: []
+    expected_kpi: []
+    expected_time: optional
+    expected_grain: optional
+    expected_analysis_purpose: null
+    expected_task: 業務質問への対応
+    expected_capabilities:
+      - Validation
+      - Presentation
+    expected_execution_mode: read_only
+    expected_validation_status: blocked_by_validation
+    expected_clarification_required: false
+    expected_should_generate_sql: false
+    expected_should_execute: false
+    expected_output_type: clarification_question
+    risk_level: medium
+    expected_knowledge_scope: internal_only
+    expected_internal_sources:
+      - Internal Database
+      - Documents
+    expected_external_sources: []
+    expected_citation_required: false
+    notes: Internal-only task should block external retrieval request.
+
+  - test_id: EV-KSRC-010
+    category: Analysis / BI
+    user_input: 今年のバッグ市場と社内実績を合わせて提案観点で整理して
+    expected_intent: Proposal
+    expected_entities: []
+    expected_kpi: []
+    expected_time: this_year
+    expected_grain: optional
+    expected_analysis_purpose: proposal_preparation
+    expected_task: 提案書ドラフト作成
+    expected_capabilities:
+      - Knowledge Retrieval
+      - Data Query
+      - Document Generation
+    expected_execution_mode: draft
+    expected_validation_status: pass
+    expected_clarification_required: false
+    expected_should_generate_sql: false
+    expected_should_execute: true
+    expected_output_type: powerpoint_draft
+    risk_level: medium
+    expected_knowledge_scope: hybrid
+    expected_internal_sources:
+      - Internal Database
+      - Documents
+    expected_external_sources:
+      - Market Trend
+      - Industry Report
+    expected_citation_required: true
+    notes: Mixed internal-external proposal context.
+
+  - test_id: EV-KSRC-011
+    category: Search / Knowledge Retrieval
+    user_input: OEM規制の最新情報を確認したい
+    expected_intent: Search
+    expected_entities:
+      - oem_business
+    expected_kpi: []
+    expected_time: optional
+    expected_grain: project
+    expected_analysis_purpose: case_status_lookup
+    expected_task: 案件状況検索と監視情報要約
+    expected_capabilities:
+      - Knowledge Retrieval
+      - Presentation
+    expected_execution_mode: read_only
+    expected_validation_status: pass
+    expected_clarification_required: false
+    expected_should_generate_sql: false
+    expected_should_execute: true
+    expected_output_type: status_summary
+    risk_level: low
+    expected_knowledge_scope: external_primary
+    expected_internal_sources:
+      - Business Rules
+    expected_external_sources:
+      - Regulation
+      - News
+    expected_citation_required: true
+    notes: Regulation retrieval should be external-primary.
+
+  - test_id: EV-KSRC-012
+    category: Monitoring / Alert
+    user_input: 為替と天候を加味して遅延リスク案件を確認したい
+    expected_intent: Monitoring
+    expected_entities:
+      - project
+    expected_kpi:
+      - delay_count
+    expected_time: current
+    expected_grain: project
+    expected_analysis_purpose: delay_monitoring
+    expected_task: 納期遅延検出
+    expected_capabilities:
+      - Monitoring Alert
+      - Data Query
+      - Presentation
+    expected_execution_mode: read_only
+    expected_validation_status: pass
+    expected_clarification_required: false
+    expected_should_generate_sql: false
+    expected_should_execute: true
+    expected_output_type: dashboard
+    risk_level: medium
+    expected_knowledge_scope: hybrid
+    expected_internal_sources:
+      - Internal Database
+      - Documents
+    expected_external_sources:
+      - Exchange Rate
+      - Weather
+    expected_citation_required: true
+    notes: Monitoring can be hybrid when external risk factors are requested.
+
+  - test_id: EV-KSRC-013
+    category: Workflow
+    user_input: 社内案件の優先度を市場ニュースで調整して
+    expected_intent: Workflow
+    expected_entities:
+      - project
+    expected_kpi: []
+    expected_time: optional
+    expected_grain: task
+    expected_analysis_purpose: null
+    expected_task: 案件進行タスク整理
+    expected_capabilities:
+      - Workflow
+      - Presentation
+    expected_execution_mode: read_only
+    expected_validation_status: blocked_by_validation
+    expected_clarification_required: false
+    expected_should_generate_sql: false
+    expected_should_execute: false
+    expected_output_type: clarification_question
+    risk_level: medium
+    expected_knowledge_scope: internal_only
+    expected_internal_sources:
+      - Internal Database
+      - Documents
+      - Calendar
+    expected_external_sources: []
+    expected_citation_required: false
+    notes: Internal-only workflow should reject external prioritization unless task explicitly allows it.
+
+  - test_id: EV-KSRC-014
+    category: Analysis / BI
+    user_input: 今年の業界レポートを踏まえてOEM売上の示唆を出して
+    expected_intent: Analysis
+    expected_entities:
+      - oem_business
+    expected_kpi:
+      - sales_amount
+    expected_time: this_year
+    expected_grain: optional
+    expected_analysis_purpose: analysis
+    expected_task: 分析計画
+    expected_capabilities:
+      - Knowledge Retrieval
+      - Data Query
+      - Presentation
+    expected_execution_mode: read_only
+    expected_validation_status: pass
+    expected_clarification_required: false
+    expected_should_generate_sql: false
+    expected_should_execute: true
+    expected_output_type: structured_explanation
+    risk_level: low
+    expected_knowledge_scope: hybrid
+    expected_internal_sources:
+      - Internal Database
+      - Business Rules
+    expected_external_sources:
+      - Industry Report
+      - Market Trend
+    expected_citation_required: true
+    notes: Insight request should combine internal KPI and external report.
+
+  - test_id: EV-KSRC-015
+    category: Validation / Guardrail
+    user_input: 外部情報だけでBEAMSの粗利を確定して
+    expected_intent: Analysis
+    expected_entities:
+      - unresolved
+    expected_kpi:
+      - unresolved_gross_profit_variant
+    expected_time: unresolved
+    expected_grain: optional
+    expected_analysis_purpose: customer_analysis
+    expected_task: EntityとKPIと期間の確認
+    expected_capabilities:
+      - Meaning Resolution
+      - Validation
+      - Presentation
+    expected_execution_mode: read_only
+    expected_validation_status: blocked_by_validation
+    expected_clarification_required: false
+    expected_should_generate_sql: false
+    expected_should_execute: false
+    expected_output_type: clarification_question
+    risk_level: high
+    expected_knowledge_scope: internal_only
+    expected_internal_sources:
+      - Internal Database
+      - Business Dictionary
+    expected_external_sources: []
+    expected_citation_required: false
+    notes: Gross profit for a customer must not be derived from external-only data.
+
+  - test_id: EV-KSRC-016
+    category: Search / Knowledge Retrieval
+    user_input: 公式IRと社内実績でGOLDWINの状況をまとめて
+    expected_intent: Search
+    expected_entities:
+      - goldwin
+    expected_kpi: []
+    expected_time: optional
+    expected_grain: project
+    expected_analysis_purpose: case_status_lookup
+    expected_task: 案件状況検索と監視情報要約
+    expected_capabilities:
+      - Knowledge Retrieval
+      - Presentation
+    expected_execution_mode: read_only
+    expected_validation_status: pass
+    expected_clarification_required: false
+    expected_should_generate_sql: false
+    expected_should_execute: true
+    expected_output_type: status_summary
+    risk_level: low
+    expected_knowledge_scope: hybrid
+    expected_internal_sources:
+      - Internal Database
+      - Documents
+      - CRM
+    expected_external_sources:
+      - Official Company Website
+      - Press Release
+    expected_citation_required: true
+    notes: Hybrid source retrieval with citations.
+
+  - test_id: EV-KSRC-017
+    category: Proposal
+    user_input: 社内データだけでnewhattan提案を作って
+    expected_intent: Proposal
+    expected_entities:
+      - newhattan
+    expected_kpi: []
+    expected_time: optional
+    expected_grain: optional
+    expected_analysis_purpose: proposal_preparation
+    expected_task: 提案書ドラフト作成
+    expected_capabilities:
+      - Knowledge Retrieval
+      - Data Query
+      - Document Generation
+    expected_execution_mode: draft
+    expected_validation_status: pass
+    expected_clarification_required: false
+    expected_should_generate_sql: false
+    expected_should_execute: true
+    expected_output_type: powerpoint_draft
+    risk_level: medium
+    expected_knowledge_scope: internal_only
+    expected_internal_sources:
+      - Internal Database
+      - Documents
+      - CRM
+    expected_external_sources: []
+    expected_citation_required: false
+    notes: Internal-only proposal path should remain valid.
+
+  - test_id: EV-KSRC-018
+    category: Communication
+    user_input: 社内向けに市場ニュース要約を共有文で作って
+    expected_intent: Communication
+    expected_entities: []
+    expected_kpi: []
+    expected_time: optional
+    expected_grain: message
+    expected_analysis_purpose: communication_drafting
+    expected_task: 連絡文ドラフト作成
+    expected_capabilities:
+      - Communication
+      - Validation
+      - Presentation
+    expected_execution_mode: approval_required
+    expected_validation_status: needs_clarification
+    expected_clarification_required: true
+    expected_should_generate_sql: false
+    expected_should_execute: false
+    expected_output_type: message_draft
+    risk_level: medium
+    expected_knowledge_scope: hybrid
+    expected_internal_sources:
+      - Documents
+      - Slack
+    expected_external_sources:
+      - News
+    expected_citation_required: true
+    notes: Communication remains draft/approval path with source trace.
+
+  - test_id: EV-KSRC-019
+    category: Analysis / BI
+    user_input: 明日の天候を踏まえた出荷リスクを見たい
+    expected_intent: Analysis
+    expected_entities: []
+    expected_kpi: []
+    expected_time: unresolved
+    expected_grain: optional
+    expected_analysis_purpose: analysis
+    expected_task: 分析計画
+    expected_capabilities:
+      - Knowledge Retrieval
+      - Presentation
+    expected_execution_mode: read_only
+    expected_validation_status: needs_clarification
+    expected_clarification_required: true
+    expected_should_generate_sql: false
+    expected_should_execute: false
+    expected_output_type: clarification_question
+    risk_level: medium
+    expected_knowledge_scope: external_primary
+    expected_internal_sources:
+      - Internal Database
+    expected_external_sources:
+      - Weather
+    expected_citation_required: true
+    notes: External weather knowledge with freshness requirement.
+
+  - test_id: EV-KSRC-020
+    category: Validation / Guardrail
+    user_input: Internal限定タスクなのにWeb検索結果を必須にして進めて
+    expected_intent: Workflow
+    expected_entities: []
+    expected_kpi: []
+    expected_time: optional
+    expected_grain: optional
+    expected_analysis_purpose: null
+    expected_task: 業務質問への対応
+    expected_capabilities:
+      - Validation
+      - Presentation
+    expected_execution_mode: read_only
+    expected_validation_status: blocked_by_validation
+    expected_clarification_required: false
+    expected_should_generate_sql: false
+    expected_should_execute: false
+    expected_output_type: clarification_question
+    risk_level: high
+    expected_knowledge_scope: internal_only
+    expected_internal_sources:
+      - Internal Database
+      - Business Rules
+    expected_external_sources: []
+    expected_citation_required: false
+    notes: Internal-only tasks must block forced external dependency.

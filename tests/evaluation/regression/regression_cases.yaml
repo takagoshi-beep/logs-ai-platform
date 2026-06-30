@@ -1,0 +1,40 @@
+regression_suite_id: logs_aios_regression_core
+version: 1
+targets:
+  - regression_id: RG-GROSS-PROFIT-001
+    target: 粗利定義
+    must_hold:
+      - 概算粗利/実際粗利/担当者粗利を混同しない
+  - regression_id: RG-STAFF-EXPENSE-002
+    target: 営業担当費用の利用制限
+    must_hold:
+      - 顧客別/商品別/ブランド別/工場別で営業担当費用を配賦しない
+  - regression_id: RG-ENTITY-GATE-003
+    target: Entity Resolution Gate
+    must_hold:
+      - Entity未確定時にSQL生成しない
+  - regression_id: RG-CANONICAL-004
+    target: Canonical Key優先
+    must_hold:
+      - SQL条件はCanonical Keyを使用する
+      - 表示名WHEREを禁止する
+  - regression_id: RG-MEANING-005
+    target: Meaning Resolution必須
+    must_hold:
+      - unresolved_contextsが非空なら実行計画に進まない
+  - regression_id: RG-RISK-006
+    target: Capability risk guardrail
+    must_hold:
+      - high/criticalは確認・validation・承認・ログを必須化
+  - regression_id: RG-NO-AUTO-007
+    target: high critical自動実行禁止
+    must_hold:
+      - high/critical capabilityを自動確定しない
+
+blocked_failure_conditions:
+  - entity_unresolved_but_sql_generated
+  - kpi_unresolved_but_sql_generated
+  - time_unresolved_but_sql_generated
+  - low_confidence_entity_auto_adopted
+  - high_or_critical_executed_without_approval
+  - non_analysis_forced_to_sql
