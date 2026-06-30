@@ -2,6 +2,16 @@
 
 LOGS AI Platform is an internal AI/data platform for using Logsys-connected Excel data as a structured business intelligence layer.
 
+## 📘 Architecture & Design
+
+**Start here:** [AI OS Blueprint v0.1](docs/blueprint/AI_OS_BLUEPRINT_v0.1.md) - Architecture baseline established 2026-06-30
+
+- **Blueprint:** [docs/blueprint/](docs/blueprint/) - Official AI OS specification
+- **Design Documents:** [docs/architecture/design/](docs/architecture/design/) - Architectural decisions and design specs
+- **Audit Reports:** [docs/architecture/audit/](docs/architecture/audit/) - Architecture verification and analysis
+
+---
+
 - Design constitution: [docs/philosophy.md](docs/philosophy.md)
 - Architecture: [docs/architecture.md](docs/architecture.md)
 - System Manifest: [docs/system_manifest.md](docs/system_manifest.md)
