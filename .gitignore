@@ -25,3 +25,18 @@ data/sqlite/*
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Frontend generated files
+frontend/node_modules/
+frontend/.next/
+frontend/*.tsbuildinfo
+frontend/trace
+
+# Backend local files
+backend/.venv/
+backend/data/events.jsonl
+
+frontend/node_modules/
+frontend/.next/
+frontend/*.tsbuildinfo
+frontend/trace
