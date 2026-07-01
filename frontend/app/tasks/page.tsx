@@ -150,20 +150,3 @@ export default function TaskCenterPage() {
     </div>
   );
 }
-
-                  </Button>
-                  <Button tone="ghost" size="sm">
-                    保留
-                  </Button>
-                  <Button tone="neutral" size="sm">
-                    詳細確認
-                  </Button>
-                </>
-              }
-            />
-          ))}
-        </div>
-      </Card>
-    </div>
-  );
-}

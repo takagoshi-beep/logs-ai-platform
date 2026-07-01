@@ -40,6 +40,24 @@ from learning.improvements import (
 )
 from learning.insights import get_learning_summary, suggest_improvements
 from learning.query_log import get_query_log, list_query_logs, save_query_log
+from learning import service as learning_service
+from learning import lifecycle as lifecycle_module
+from learning.repository import (
+    get_activity_feed as get_learning_activity_feed,
+    get_approval_queue as get_learning_approval_queue,
+    get_candidate_repository as get_learning_candidate_repository,
+    get_policy_memory as get_learning_policy_memory,
+)
+from learning.schemas import (
+    LearningValidationError,
+    candidate_to_response,
+    validate_create_payload,
+    validate_scope_payload,
+)
+from services.project_service import ProjectService
+from domain.project import ProjectData
+from learning.models import LearningSourceType, LearningScopeType
+from observability.models import TraceSession, TraceRecord
 from memory.store import get_memory, list_memories, search_memories
 from authorization.layer import check_authorization
 from observability.tracer import add_trace_record, get_trace_session, start_trace_session
@@ -1083,3 +1101,311 @@ def knowledge_category(category: str) -> list[dict[str, Any]]:
     if category == "brand":
         return get_brand_info()
     raise HTTPException(status_code=404, detail="Knowledge category not found")
+
+
+# --- Learning Domain (Blueprint v0.2 Draft, Chapter 8) ---
+
+
+def _get_candidate_or_404(candidate_id: str):
+    candidate = get_learning_candidate_repository().get(candidate_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="Learning candidate not found")
+    return candidate
+
+
+@app.post("/api/learning/candidates")
+def create_learning_candidate(payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        normalized = validate_create_payload(payload)
+    except LearningValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    candidate = learning_service.create_candidate(**normalized)
+    return candidate_to_response(candidate)
+
+
+@app.post("/api/learning/candidates/{candidate_id}/classify")
+def classify_learning_candidate(candidate_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    candidate = _get_candidate_or_404(candidate_id)
+    try:
+        normalized = validate_scope_payload(payload)
+    except LearningValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    candidate = learning_service.classify_and_scope(candidate, **normalized)
+    return candidate_to_response(candidate)
+
+
+@app.post("/api/learning/candidates/{candidate_id}/apply")
+def apply_learning_candidate(candidate_id: str) -> dict[str, Any]:
+    candidate = _get_candidate_or_404(candidate_id)
+    try:
+        candidate = learning_service.apply_candidate(candidate)
+    except (learning_service.GovernanceRoutingError, lifecycle_module.InvalidLearningTransition) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return candidate_to_response(candidate)
+
+
+@app.get("/api/learning/operational")
+def list_operational_learning() -> list[dict[str, Any]]:
+    return [c.to_dict() for c in get_learning_candidate_repository().list(learning_type="operational")]
+
+
+@app.get("/api/learning/governed")
+def list_governed_learning() -> list[dict[str, Any]]:
+    return [c.to_dict() for c in get_learning_candidate_repository().list(learning_type="governed")]
+
+
+@app.get("/api/learning/approval-queue")
+def list_learning_approval_queue() -> list[dict[str, Any]]:
+    return [e.to_dict() for e in get_learning_approval_queue().list_all()]
+
+
+@app.post("/api/learning/approval-queue/{approval_id}/review")
+def review_learning_approval(approval_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    entry = get_learning_approval_queue().get(approval_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Approval queue entry not found")
+    candidate = _get_candidate_or_404(entry.candidate_id)
+    try:
+        candidate = learning_service.review_governed_candidate(
+            candidate,
+            approval_id=approval_id,
+            decision=str(payload.get("decision", "")),
+            approver_id=str(payload.get("approver_id", "")),
+            reason=str(payload.get("reason", "")),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return candidate_to_response(candidate)
+
+
+@app.get("/api/learning/policy-memory")
+def list_learning_policy_memory() -> list[dict[str, Any]]:
+    return [p.to_dict() for p in get_learning_policy_memory().list_all()]
+
+
+@app.get("/api/learning/activity")
+def list_learning_activity(limit: int = 50) -> list[dict[str, Any]]:
+    return [e.to_dict() for e in get_learning_activity_feed().list(limit=limit)]
+
+
+@app.get("/api/learning/center")
+def get_learning_center() -> dict[str, Any]:
+    """Aggregate payload backing the Learning Center UI's five tabs (Blueprint v0.2 §8.11)."""
+    repo = get_learning_candidate_repository()
+    return {
+        "operational": [c.to_dict() for c in repo.list(learning_type="operational")],
+        "governed": [c.to_dict() for c in repo.list(learning_type="governed")],
+        "approval_queue": [e.to_dict() for e in get_learning_approval_queue().list_all()],
+        "policy_memory": [p.to_dict() for p in get_learning_policy_memory().list_all()],
+        "activity": [e.to_dict() for e in get_learning_activity_feed().list(limit=50)],
+    }
+
+
+# --- Walking Skeleton: Project Domain (Blueprint v0.2 §1 - Responsibility-Based Architecture) ---
+
+# In-memory project storage (Walking Skeleton MVP - no database needed)
+_projects_store: dict[str, Any] = {}
+
+
+def save_project(project_id: str, aggregate: dict[str, Any]) -> None:
+    """Save project aggregate to in-memory store."""
+    _projects_store[project_id] = aggregate
+
+
+def get_project_or_none(project_id: str) -> dict[str, Any] | None:
+    """Retrieve project aggregate from store."""
+    return _projects_store.get(project_id)
+
+
+def list_projects() -> list[dict[str, Any]]:
+    """List all projects."""
+    return list(_projects_store.values())
+
+
+@app.post("/api/projects")
+def create_project(payload: dict[str, Any]) -> dict[str, Any]:
+    """
+    Create a new OEM project for Walking Skeleton.
+
+    Input: { customer_name, project_title, po_number, po_amount, required_delivery_date }
+    Output: { project_id, status, trace_id, message, aggregate }
+    """
+    try:
+        # Validate input
+        required_fields = ["customer_name", "project_title", "po_number", "po_amount", "required_delivery_date"]
+        for field in required_fields:
+            if field not in payload:
+                raise ValueError(f"Missing required field: {field}")
+
+        # Create ProjectData (frozen dataclass)
+        from datetime import datetime
+        import uuid
+        project_id = f"proj-{uuid.uuid4().hex[:8]}"
+        trace_id = f"walk-{uuid.uuid4().hex[:8]}"
+
+        project_data = ProjectData(
+            project_id=project_id,
+            po_number=payload["po_number"],
+            customer_id="CUST-001",
+            customer_name=payload["customer_name"],
+            supplier_id="SUPP-001",
+            supplier_name="OEM Supplier",
+            po_amount=float(payload["po_amount"]),
+            po_created_date=datetime.now(),
+            po_required_delivery_date=datetime.fromisoformat(payload["required_delivery_date"]) if isinstance(payload["required_delivery_date"], str) else payload["required_delivery_date"],
+            actual_delivery_date=None,
+            invoice_date=None,
+            payment_due_date=None,
+            actual_payment_date=None,
+            supplier_invoice_amount=0.0,
+            cost_amount=0.0,
+            sale_amount=float(payload["po_amount"]),
+            gross_profit=0.0,
+            gross_profit_margin=0.0,
+            cost_confirmed=False,
+            profit_confirmed=False,
+        )
+
+        # Build analysis using existing ProjectService
+        service = ProjectService(db_path=":memory:")
+
+        # Manually build aggregate using service methods
+        events = service._generate_project_events(project_data, trace_id)
+        state = service._determine_state(project_data)
+        goals = service._evaluate_goals(project_data, state)
+        decisions = service._generate_decisions(project_data, state, goals)
+        actions = service._generate_actions(project_data, state, decisions, trace_id)
+
+        # Create aggregate
+        from domain.project import ProjectAggregate
+        aggregate = ProjectAggregate(
+            project_id=project_id,
+            po_number=project_data.po_number,
+            trace_id=trace_id,
+            events=events,
+            data=project_data,
+            state=state,
+            goal_evaluations=goals,
+            decisions=decisions,
+            actions=actions,
+        )
+
+        # Save to in-memory store
+        save_project(project_id, aggregate.to_dict())
+
+        # Record trace
+        trace = start_trace_session(f"Project created: {project_id}", user_id="system")
+        add_trace_record(
+            trace,
+            layer="project_understanding",
+            input={"project_id": project_id},
+            output={"state": aggregate.state.value, "actions": len(aggregate.actions)},
+            elapsed_ms=5.0,
+            success=True
+        )
+
+        return {
+            "success": True,
+            "project_id": project_id,
+            "trace_id": trace_id,
+            "status": aggregate.state.value,
+            "message": f"Project '{project_id}' created successfully",
+            "aggregate": aggregate.to_dict(),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.get("/api/projects/{project_id}")
+def get_project(project_id: str) -> dict[str, Any]:
+    """
+    Get project understanding snapshot.
+
+    Returns: Full ProjectAggregate with state, goals, decisions, actions
+    """
+    aggregate_dict = get_project_or_none(project_id)
+    if not aggregate_dict:
+        raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+
+    return {
+        "success": True,
+        "project_id": project_id,
+        "aggregate": aggregate_dict,
+        "state": aggregate_dict.get("state"),
+        "goals": aggregate_dict.get("goal_evaluations", {}).get("evaluations", []),
+        "actions": aggregate_dict.get("actions", []),
+        "events": [e for e in aggregate_dict.get("events", {}).get("events", [])],
+    }
+
+
+@app.get("/api/projects")
+def list_all_projects(limit: int = 50) -> dict[str, Any]:
+    """List all projects."""
+    projects = list_projects()
+    return {
+        "success": True,
+        "count": len(projects),
+        "projects": [
+            {
+                "project_id": p.get("project_id"),
+                "title": p.get("data", {}).get("project_title", "Untitled"),
+                "customer": p.get("data", {}).get("customer_name", "Unknown"),
+                "state": p.get("state"),
+                "trace_id": p.get("trace_id"),
+            }
+            for p in projects[:limit]
+        ],
+    }
+
+
+@app.post("/api/projects/{project_id}/feedback")
+def submit_project_feedback(project_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """
+    Submit user feedback on project actions → create Learning Candidate.
+
+    Input: { action_id, feedback_text, helpful: bool }
+    Output: { candidate_id, classification, status, message }
+
+    This endpoint wires Business Execution → Learning responsibility.
+    """
+    try:
+        aggregate_dict = get_project_or_none(project_id)
+        if not aggregate_dict:
+            raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+
+        # Extract feedback
+        action_id = payload.get("action_id", "unknown")
+        feedback_text = payload.get("feedback_text", "User feedback")
+        helpful = payload.get("helpful", True)
+
+        # Create Learning Candidate from feedback
+        candidate = learning_service.create_candidate(
+            title=f"User marked action {'helpful' if helpful else 'not helpful'}: {action_id}",
+            description=feedback_text,
+            source_type=LearningSourceType.USER_FEEDBACK,
+            created_by="user",
+            confidence=0.8 if helpful else 0.3,
+            suggested_application=f"Adjust recommendation scoring for project {project_id}",
+        )
+
+        # Classify and scope
+        classified = learning_service.classify_and_scope(
+            candidate,
+            requested_scope=LearningScopeType.PROJECT,
+            scope_id=project_id,
+            affects_business_rule=False,
+        )
+
+        # Apply (OPERATIONAL goes to memory, GOVERNED goes to queue)
+        applied = learning_service.apply_candidate(classified)
+
+        return {
+            "success": True,
+            "candidate_id": applied.id,
+            "classification": applied.learning_type.value,
+            "status": applied.status.value,
+            "message": f"Feedback recorded and routed to {'OperationalMemory' if applied.learning_type.value == 'operational' else 'ApprovalQueue'}",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+

@@ -116,3 +116,59 @@ export async function getProjectTrace(projectId: string) {
 export async function getTodayActions(limit: number = 20) {
   return apiCall(`/api/today-actions?limit=${limit}`);
 }
+
+/**
+ * Get the Learning Center aggregate payload (Operational, Governed,
+ * Approval Queue, Policy Memory, Activity) — Blueprint v0.2 §8.11
+ */
+export async function getLearningCenter() {
+  return apiCall("/api/learning/center");
+}
+
+/**
+ * Submit a Governance decision (approve/reject) on a queued Learning Candidate
+ */
+export async function reviewLearningApproval(
+  approvalId: string,
+  decision: "APPROVED" | "REJECTED",
+  approverId: string,
+  reason: string
+) {
+  return apiCall(`/api/learning/approval-queue/${approvalId}/review`, {
+    method: "POST",
+    body: JSON.stringify({ decision, approver_id: approverId, reason }),
+  });
+}
+
+/**
+ * Create a new OEM project
+ */
+export async function createProject(project: {
+  customer_name: string;
+  project_title: string;
+  po_number: string;
+  po_amount: string | number;
+  required_delivery_date: string;
+}) {
+  return apiCall("/api/projects", {
+    method: "POST",
+    body: JSON.stringify(project),
+  });
+}
+
+/**
+ * Submit feedback on a suggested action for a project
+ */
+export async function projectFeedback(
+  projectId: string,
+  feedback: {
+    action_id: string;
+    feedback_text: string;
+    helpful: boolean;
+  }
+) {
+  return apiCall(`/api/projects/${projectId}/feedback`, {
+    method: "POST",
+    body: JSON.stringify(feedback),
+  });
+}

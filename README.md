@@ -2,13 +2,51 @@
 
 LOGS AI Platform is an internal AI/data platform for using Logsys-connected Excel data as a structured business intelligence layer.
 
+## 🚀 Quick Start — Walking Skeleton Demo (5 min)
+
+**Want to see the AI OS in action?** Check out the [Walking Skeleton Review Guide](docs/review/FIRST_USER_REVIEW.md).
+
+### Try the Live Demo
+
+1. **Start Backend:**
+   ```bash
+   python -m uvicorn app.main:app --reload
+   ```
+
+2. **Start Frontend:**
+   ```bash
+   cd frontend && npm run dev
+   ```
+
+3. **Open Demo:**
+   Navigate to: **http://localhost:3000/walking-skeleton**
+
+**What you'll see:**
+- Create an OEM project with AI analysis
+- View project understanding (state, goals, events)
+- Get AI suggestions for next actions
+- Mark actions as helpful/not helpful
+- Watch the Learning system create candidates
+- See Activity Feed record all events
+- Inspect Debug Trace for reasoning
+
+**Time:** 10-15 minutes  
+**Learn:** How AI OS understands projects, executes decisions, learns from feedback, and maintains governance
+
+**Full guide:** [docs/review/FIRST_USER_REVIEW.md](docs/review/FIRST_USER_REVIEW.md)  
+**Known issues:** [docs/review/KNOWN_ISSUES.md](docs/review/KNOWN_ISSUES.md)  
+**Feedback:** [docs/review/FEEDBACK_TEMPLATE.md](docs/review/FEEDBACK_TEMPLATE.md)
+
+---
+
 ## 📘 Architecture & Design
 
-**Start here:** [AI OS Blueprint v0.1](docs/blueprint/AI_OS_BLUEPRINT_v0.1.md) - Architecture baseline established 2026-06-30
+**Start here:** [AI OS Blueprint v0.2 (Draft)](docs/blueprint/AI_OS_BLUEPRINT_v0.2_DRAFT.md) - Responsibility-Based Architecture
 
 - **Blueprint:** [docs/blueprint/](docs/blueprint/) - Official AI OS specification
 - **Design Documents:** [docs/architecture/design/](docs/architecture/design/) - Architectural decisions and design specs
 - **Audit Reports:** [docs/architecture/audit/](docs/architecture/audit/) - Architecture verification and analysis
+- **Implementation Report:** [Walking Skeleton Implementation Report](docs/blueprint/WALKING_SKELETON_IMPLEMENTATION_REPORT.md)
 
 ---
 

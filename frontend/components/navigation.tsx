@@ -10,7 +10,9 @@ const navItems = [
   { href: "/chat", label: "Chat" },
   { href: "/proposals", label: "Proposal Builder" },
   { href: "/history", label: "History" },
+  { href: "/learning", label: "Learning Center" },
   { href: "/debug", label: "Debug Trace" },
+  { href: "/walking-skeleton", label: "Walking Skeleton" },
 ];
 
 export function Navigation() {
