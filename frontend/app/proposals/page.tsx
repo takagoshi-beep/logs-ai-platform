@@ -1,82 +1,70 @@
-import { ActionPanel, Badge, Button, Card, SectionHeader, StatusBadge, Timeline } from "@/components/design-system";
-import { proposalDraft } from "@/lib/mock-data";
+"use client";
+
+import { useState } from "react";
+import { Button, Card } from "@/components/design-system";
+import { pastProposals } from "@/lib/mock-data";
+
+const suggestions = [
+  "BEAMS向けOEM提案書を作りたい",
+  "社内会議用の売上報告資料を作りたい",
+  "GOLDWIN向け企画書を作りたい",
+  "既存資料をもとに提案書を作り直したい",
+];
 
 export default function ProposalBuilderPage() {
+  const [input, setInput] = useState("");
+
   return (
     <div className="space-y-5">
       <header className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h1 className="page-title">Proposal Builder</h1>
-        <p className="page-subtitle">Sales-ready flow from customer context to PowerPoint generation and review.</p>
+        <h1 className="page-title">何を作りたいですか？</h1>
       </header>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <SectionHeader title="Customer and Proposal Goal" subtitle="Start with target customer and objective." />
-          <div className="mt-4 space-y-3 text-sm">
-            <div className="surface-soft p-3">Customer: {proposalDraft.customer}</div>
-            <div className="surface-soft p-3">Purpose: {proposalDraft.purpose}</div>
-            <div className="flex flex-wrap gap-2">
-              <Button>Generate AI Structure</Button>
-              <Button tone="ghost">Load Past Proposal</Button>
-            </div>
-          </div>
-        </Card>
-
-        <Card>
-          <SectionHeader title="Reference Data" subtitle="Data sources used for narrative and proof." />
-          <ul className="mt-4 space-y-2 text-sm">
-            {proposalDraft.referenceData.map((item) => (
-              <li key={item} className="surface-soft flex items-center justify-between p-3">
-                <span>{item}</span>
-                <Badge label="Included" tone="success" />
-              </li>
-            ))}
-          </ul>
-        </Card>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
-        <Card>
-          <SectionHeader title="AI Structure Draft" subtitle="Draft sections for proposal story construction." />
-          <ol className="mt-4 list-decimal space-y-2 pl-5 text-sm">
-            {proposalDraft.outline.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ol>
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <StatusBadge status={proposalDraft.reviewStatus} />
-            <Badge label="PowerPoint ready" tone="medium" />
-          </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button>PowerPoint Generate</Button>
-            <Button tone="ghost">Mark Review Complete</Button>
-            <Button tone="neutral">Share to Workspace</Button>
-          </div>
-        </Card>
-
-        <div className="space-y-4">
-          <ActionPanel
-            title="Next Action"
-            items={[
-              { label: "Review State", value: proposalDraft.reviewStatus },
-              { label: "Next", value: proposalDraft.nextAction },
-              { label: "Output", value: "PPTX draft + review notes" },
-            ]}
-          />
-          <Card>
-            <SectionHeader title="Review Timeline" />
-            <div className="mt-3">
-              <Timeline
-                items={[
-                  { id: "pt1", title: "Draft generated", time: "09:20", detail: "Outline from AI proposal planner." },
-                  { id: "pt2", title: "Manager pre-check", time: "10:10", detail: "Margin section revision requested." },
-                  { id: "pt3", title: "Ready for review", time: "11:05", detail: "Pending pptx export and send." },
-                ]}
-              />
-            </div>
-          </Card>
+      <Card>
+        <textarea
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="例: BEAMS向けOEM提案資料"
+          rows={4}
+          className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+        />
+        <div className="mt-3 flex flex-wrap gap-2">
+          {suggestions.map((s) => (
+            <button
+              key={s}
+              onClick={() => setInput(s)}
+              className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs text-ink hover:bg-slate-50"
+            >
+              {s}
+            </button>
+          ))}
         </div>
-      </div>
+        <div className="mt-4">
+          <Button>AIで資料作成</Button>
+        </div>
+      </Card>
+
+      <Card>
+        <p className="text-sm font-semibold text-ink">過去に作成した資料</p>
+        <ul className="mt-3 space-y-2">
+          {pastProposals.map((doc) => (
+            <li key={doc.id} className="surface-soft flex flex-wrap items-center justify-between gap-2 p-3">
+              <div>
+                <p className="text-sm font-medium text-ink">{doc.title}</p>
+                <p className="text-xs text-sub">{doc.date}</p>
+              </div>
+              <div className="flex gap-2">
+                <Button tone="ghost" size="sm">
+                  ダウンロード
+                </Button>
+                <Button tone="ghost" size="sm">
+                  複製して編集
+                </Button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </Card>
     </div>
   );
 }

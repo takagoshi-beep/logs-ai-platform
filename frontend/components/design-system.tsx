@@ -70,10 +70,10 @@ export function Badge({ label, tone = "default" }: { label: string; tone?: Badge
 export function StatusBadge({ status }: { status: string }) {
   const normalized = status.toLowerCase();
   let tone: BadgeTone = "default";
-  if (normalized.includes("open")) tone = "medium";
-  if (normalized.includes("progress")) tone = "high";
-  if (normalized.includes("ready") || normalized.includes("done") || normalized.includes("accepted")) tone = "success";
-  if (normalized.includes("hold") || normalized.includes("pending")) tone = "default";
+  if (normalized.includes("open") || status.includes("未着手") || status.includes("未対応")) tone = "medium";
+  if (normalized.includes("progress") || status.includes("対応中")) tone = "high";
+  if (normalized.includes("ready") || normalized.includes("done") || normalized.includes("accepted") || status.includes("完了") || status.includes("承認")) tone = "success";
+  if (normalized.includes("hold") || normalized.includes("pending") || status.includes("保留") || status.includes("待ち")) tone = "default";
   return <Badge label={status} tone={tone} />;
 }
 
@@ -81,7 +81,7 @@ export function Alert({ title, message, level = "medium" }: { title: string; mes
   return (
     <Card className={level === "high" ? "border-red-200 bg-red-50/50" : "border-amber-200 bg-amber-50/50"}>
       <div className="mb-1 flex items-center gap-2">
-        <Badge label={level === "high" ? "High Alert" : "Attention"} tone={level === "high" ? "high" : "medium"} />
+        <Badge label={level === "high" ? "要注意" : "確認"} tone={level === "high" ? "high" : "medium"} />
         <p className="text-sm font-semibold text-ink">{title}</p>
       </div>
       <p className="text-sm text-sub">{message}</p>
@@ -117,9 +117,9 @@ export function TaskCard({ title, project, due, priority, status, reason, action
         <StatusBadge status={status} />
       </div>
       <h3 className="text-sm font-semibold text-ink">{title}</h3>
-      <p className="mt-1 text-xs text-sub">Project: {project}</p>
-      <p className="text-xs text-sub">Due: {due}</p>
-      <p className="mt-2 text-xs text-sub">Reason: {reason}</p>
+      <p className="mt-1 text-xs text-sub">案件: {project}</p>
+      <p className="text-xs text-sub">期限: {due}</p>
+      <p className="mt-2 text-xs text-sub">理由: {reason}</p>
       {actions ? <div className="mt-3 flex flex-wrap gap-2">{actions}</div> : null}
     </Card>
   );
@@ -133,11 +133,11 @@ export function ProjectCard({ name, summary, owner, status, href }: { name: stri
         <StatusBadge status={status} />
       </div>
       <p className="text-sm text-sub">{summary}</p>
-      <p className="mt-2 text-xs text-sub">Owner: {owner}</p>
+      <p className="mt-2 text-xs text-sub">担当: {owner}</p>
       {href ? (
         <div className="mt-3">
           <Button href={href} tone="ghost" size="sm">
-            Open Workspace
+            案件を開く
           </Button>
         </div>
       ) : null}

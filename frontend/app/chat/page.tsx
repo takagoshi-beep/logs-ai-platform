@@ -1,58 +1,44 @@
 "use client";
 
 import { useState } from "react";
-import { ActionPanel, Button, Card, SectionHeader } from "@/components/design-system";
+import { Button, Card } from "@/components/design-system";
+import { pastConsultations } from "@/lib/mock-data";
 
 export default function ChatPage() {
-  const [showTrace, setShowTrace] = useState(false);
+  const [input, setInput] = useState("");
 
   return (
     <div className="space-y-5">
-      <header className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div>
-          <h1 className="page-title">Chat</h1>
-          <p className="page-subtitle">Chat is a feature for getting work done, not the starting point.</p>
-        </div>
-        <Button tone="ghost" size="sm" onClick={() => setShowTrace((v) => !v)}>
-          Admin Trace Toggle
-        </Button>
+      <header className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h1 className="page-title">何でも相談してください</h1>
       </header>
 
       <Card>
-        <SectionHeader title="Business AI Chat" subtitle="Use chat to decide concrete next steps." />
-        <div className="space-y-3 text-sm">
-          <div className="surface-soft p-3">User: Draft next actions for Fanatics delay risk.</div>
-          <div className="rounded border border-teal-200 bg-teal-50 p-3">
-            AI Response: 1) Confirm supplier ETA, 2) Reserve logistics slot, 3) Send stakeholder update.
-          </div>
+        <textarea
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="例: Fanaticsの納期リスクについて次の対応を相談したい"
+          rows={4}
+          className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+        />
+        <div className="mt-3">
+          <Button>送信</Button>
         </div>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <ActionPanel
-          title="Work Guidance"
-          items={[
-            { label: "Used Data", value: "Project FAN-204 history, communication memory, delay trend" },
-            { label: "Confirmation", value: "Operations lead approval needed before send" },
-            { label: "Next Action", value: "Create task batch and open workspace execution" },
-          ]}
-        />
-        <Card>
-          <SectionHeader title="Suggested Next Steps" />
-          <ul className="mt-3 list-disc pl-5 text-sm">
-            <li>Create task batch for owner assignment.</li>
-            <li>Generate message draft for operations team.</li>
-            <li>Open Workspace for execution details.</li>
-          </ul>
-        </Card>
-      </div>
-
-      {showTrace ? (
-        <Card>
-          <SectionHeader title="Trace (Developer/Admin)" subtitle="Only for admin/debug confirmation." />
-          <pre className="overflow-auto text-xs">{JSON.stringify({ intent: "Monitoring", task: "required_action_check", validation: "pass" }, null, 2)}</pre>
-        </Card>
-      ) : null}
+      <Card>
+        <p className="text-sm font-semibold text-ink">過去の相談履歴</p>
+        <ul className="mt-3 space-y-2">
+          {pastConsultations.map((chat) => (
+            <li key={chat.id} className="surface-soft flex items-center justify-between p-3">
+              <span className="text-sm text-ink">{chat.title}</span>
+              <Button tone="ghost" size="sm">
+                続きを開く
+              </Button>
+            </li>
+          ))}
+        </ul>
+      </Card>
     </div>
   );
 }

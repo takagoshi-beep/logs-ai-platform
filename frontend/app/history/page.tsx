@@ -5,7 +5,7 @@ export default function HistoryPage() {
   return (
     <div className="space-y-5">
       <header className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h1 className="page-title">History</h1>
+        <h1 className="page-title">履歴</h1>
         <p className="page-subtitle">Execution, generated artifacts, approval, and feedback records.</p>
       </header>
 

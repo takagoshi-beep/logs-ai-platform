@@ -119,7 +119,7 @@ export default function WalkingSkeletonPage() {
   return (
     <div className="space-y-5">
       <header className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h1 className="page-title">Walking Skeleton Demo</h1>
+        <h1 className="page-title">デモ</h1>
         <p className="page-subtitle">
           End-to-end flow: Project → Understanding → Execution → Learning → Governance → Activity → Trace
         </p>

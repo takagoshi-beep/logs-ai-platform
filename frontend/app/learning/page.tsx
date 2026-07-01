@@ -113,7 +113,7 @@ export default function LearningCenterPage() {
   return (
     <div className="space-y-5">
       <header className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h1 className="page-title">Learning Center</h1>
+        <h1 className="page-title">AIの学習</h1>
         <p className="page-subtitle">
           Operational and Governed Learning, Governance Approval Queue, Policy Memory, and Activity — Blueprint v0.2 Ch.8.
         </p>

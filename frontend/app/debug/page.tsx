@@ -72,7 +72,7 @@ export default function DebugPage() {
       <header className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex items-start justify-between">
           <div>
-            <h1 className="page-title">Debug Trace Panel</h1>
+            <h1 className="page-title">判断理由</h1>
             <p className="page-subtitle">Developer/Admin only detailed runtime visibility.</p>
             {traceId && <p className="text-xs text-blue-600 mt-2">Trace ID: {traceId}</p>}
             {projectId && <p className="text-xs text-blue-600 mt-2">Project ID: {projectId}</p>}

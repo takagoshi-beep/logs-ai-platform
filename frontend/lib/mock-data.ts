@@ -1,14 +1,14 @@
 export const kpis = [
-  { id: "k1", label: "Today Open Actions", value: "9", trend: "-2 vs yesterday" },
-  { id: "k2", label: "High Risk Projects", value: "2", trend: "No change" },
-  { id: "k3", label: "Proposal Review Ready", value: "4", trend: "+1 this morning" },
-  { id: "k4", label: "AI Suggestion Accepted", value: "59%", trend: "+4pt this week" },
+  { id: "k1", label: "今日の対応件数", value: "9", trend: "-2 vs yesterday" },
+  { id: "k2", label: "注意が必要な案件", value: "2", trend: "No change" },
+  { id: "k3", label: "確認待ちの提案資料", value: "4", trend: "+1 this morning" },
+  { id: "k4", label: "AI提案の採用率", value: "59%", trend: "+4pt this week" },
 ];
 
 export const todayUrgentCases = [
-  { id: "u1", project: "Fanatics OEM", title: "Delivery confirmation by 16:00", due: "Today 16:00", owner: "Sato", status: "In Progress" },
-  { id: "u2", project: "BEAMS Retail", title: "Proposal storyline sign-off", due: "Today 18:00", owner: "Takagi", status: "Open" },
-  { id: "u3", project: "GOLDWIN Campaign", title: "Quote revision approval", due: "Tomorrow 10:00", owner: "Kato", status: "Open" },
+  { id: "u1", project: "Fanatics OEM", title: "Delivery confirmation by 16:00", due: "Today 16:00", owner: "Sato", status: "対応中" },
+  { id: "u2", project: "BEAMS Retail", title: "Proposal storyline sign-off", due: "Today 18:00", owner: "Takagi", status: "未着手" },
+  { id: "u3", project: "GOLDWIN Campaign", title: "Quote revision approval", due: "Tomorrow 10:00", owner: "Kato", status: "未着手" },
 ];
 
 export const alerts = [
@@ -90,38 +90,42 @@ export const taskRecommendations = [
   {
     id: "t1",
     project: "Fanatics OEM",
-    title: "Confirm delivery risk root cause",
-    due: "Today 15:30",
+    title: "納期リスクの原因を確認する",
+    due: "本日15:30",
     priority: "High",
-    status: "In Progress",
-    reason: "Shipping slot lock expires today.",
+    status: "対応中",
+    reason: "出荷枠の確保期限が本日中のため。",
+    owner: "佐藤",
   },
   {
     id: "t2",
     project: "BEAMS Retail",
-    title: "Finalize proposal storyline",
-    due: "Today 18:00",
+    title: "提案資料のストーリーラインを確定する",
+    due: "本日18:00",
     priority: "High",
-    status: "Open",
-    reason: "Reviewer requested cost narrative update.",
+    status: "未着手",
+    reason: "レビュー担当からコスト説明の更新依頼があったため。",
+    owner: "高越",
   },
   {
     id: "t3",
     project: "GOLDWIN Campaign",
-    title: "Prepare quote draft package",
-    due: "Tomorrow 10:00",
+    title: "見積ドラフト一式を準備する",
+    due: "明日10:00",
     priority: "Medium",
-    status: "Open",
-    reason: "Customer requested revised conditions.",
+    status: "未着手",
+    reason: "顧客から条件変更の依頼があったため。",
+    owner: "加藤",
   },
   {
     id: "t4",
     project: "newhattan sales kit",
-    title: "Hold launch copy until legal review",
-    due: "This Week",
+    title: "法務確認が終わるまでローンチ文言を保留する",
+    due: "今週中",
     priority: "Low",
-    status: "On Hold",
-    reason: "Trademark statement is pending confirmation.",
+    status: "保留",
+    reason: "商標に関する確認待ちのため。",
+    owner: "-",
   },
 ];
 
@@ -130,22 +134,41 @@ export const projects = [
     id: "fanatics-oem",
     name: "Fanatics OEM",
     summary: "Delivery risk monitoring and cost control",
-    owner: "Sato",
-    status: "In Progress",
+    customer: "Fanatics",
+    owner: "佐藤",
+    status: "対応中",
+    updatedAt: "今日",
+    nextAction: "納期確認",
   },
   {
     id: "beams-retail",
     name: "BEAMS Retail",
     summary: "Proposal and assortment optimization",
-    owner: "Takagi",
-    status: "Open",
+    customer: "BEAMS",
+    owner: "高越",
+    status: "未着手",
+    updatedAt: "昨日",
+    nextAction: "提案資料確認",
   },
   {
     id: "goldwin-campaign",
     name: "GOLDWIN Campaign",
     summary: "Quote and production planning support",
-    owner: "Kato",
-    status: "Open",
+    customer: "GOLDWIN",
+    owner: "加藤",
+    status: "保留",
+    updatedAt: "7/1",
+    nextAction: "見積作成",
+  },
+  {
+    id: "newhattan-sales-kit",
+    name: "newhattan sales kit",
+    summary: "Launch copy and sales kit preparation",
+    customer: "newhattan",
+    owner: "-",
+    status: "保留",
+    updatedAt: "6/28",
+    nextAction: "商標確認",
   },
 ];
 
@@ -164,9 +187,21 @@ export const proposalDraft = {
     "Recommended action plan",
     "Expected impact, risk, and governance",
   ],
-  reviewStatus: "Ready for internal review",
+  reviewStatus: "社内確認待ち",
   nextAction: "Generate PowerPoint and request manager approval",
 };
+
+export const pastProposals = [
+  { id: "doc1", title: "BEAMS提案資料", date: "2026/06/20" },
+  { id: "doc2", title: "Fanatics提案資料", date: "2026/06/15" },
+  { id: "doc3", title: "GOLDWIN企画書", date: "2026/06/10" },
+];
+
+export const pastConsultations = [
+  { id: "chat1", title: "Fanatics納期相談" },
+  { id: "chat2", title: "BEAMS提案相談" },
+  { id: "chat3", title: "GOLDWIN見積相談" },
+];
 
 export const workspaceHistory = [
   { id: "wh1", title: "Owner assignment completed", time: "09:10", detail: "2 tasks assigned to operations." },
