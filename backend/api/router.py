@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from api.schemas import ChatRequest, DocumentDraftRequest, ProductEvent, ProposalDraftRequest, TasksRecommendRequest
 from business.today_actions import get_home_payload as get_home_payload_business
 from services.mock_store import (
+    consult,
     draft_document,
     draft_proposal,
     get_evaluation_summary,
@@ -17,7 +18,10 @@ from services.mock_store import (
     recommend_tasks,
     store_event,
 )
+from services.knowledge_loader import load_documents
+from services.knowledge_registry import get_registry
 from services.project_service import ProjectService
+from services.reasoning_pipeline import reason as run_reasoning
 from pathlib import Path
 
 router = APIRouter(prefix="/api", tags=["v0.1"])
@@ -37,18 +41,40 @@ def home() -> dict:
 @router.post("/chat")
 def chat(req: ChatRequest) -> dict:
     execution_id = f"ex-chat-{datetime.now(timezone.utc).strftime('%H%M%S')}"
-    trace_id = "trace-1001"
+    result = consult(req.message)
     return {
         "execution_id": execution_id,
-        "trace_id": trace_id,
-        "intent": "Monitoring",
-        "task": "required_action_check",
-        "capability": ["Data Query", "Monitoring Alert", "Presentation"],
-        "validation": "pass",
-        "ai_response": f"Recommended next actions for: {req.message}",
-        "references": ["Fanatics task history", "Unpurchased sales alert"],
-        "next_actions": ["Open workspace", "Create task batch", "Send follow-up draft"],
+        "trace_id": result["trace_id"],
+        "matched_project_id": result["matched_project_id"],
+        "ai_response": result["ai_response"],
+        "data_sources": result["data_sources"],
+        "judgment_reasoning": result["judgment_reasoning"],
+        "related_projects": result["related_projects"],
+        "open_questions": result["open_questions"],
     }
+
+
+@router.post("/reasoning")
+def reasoning(req: ChatRequest) -> dict:
+    return run_reasoning(req.message)
+
+
+@router.get("/knowledge/documents")
+def knowledge_documents() -> dict:
+    docs = load_documents()
+    return {
+        "count": len(docs),
+        "documents": [
+            {"path": d["path"], "category": d["category"], "title": d["title"], "tags": d["tags"]}
+            for d in docs
+        ],
+    }
+
+
+@router.get("/knowledge/registry")
+def knowledge_registry() -> dict:
+    entries = get_registry()
+    return {"count": len(entries), "entries": entries}
 
 
 @router.post("/tasks/recommend")

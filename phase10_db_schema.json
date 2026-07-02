@@ -1,0 +1,3913 @@
+{
+  "total_tables": 21,
+  "business_tables": 11,
+  "metadata_tables": 11,
+  "business_table_list": [
+    "sqlite_sequence",
+    "コード",
+    "仕入",
+    "仕入諸掛",
+    "取引先",
+    "商品",
+    "売上",
+    "発注依頼",
+    "集計",
+    "顧客",
+    "顧客担当者"
+  ],
+  "metadata_table_list": [
+    "gdrive_excel_files",
+    "gdrive_source_catalog",
+    "gdrive_spreadsheet_files",
+    "gdrive_sync_registry",
+    "gdrive_sync_status",
+    "imp_マスタ",
+    "imp_社員マスタ",
+    "import_registry",
+    "sqlite_sequence",
+    "table_schema_registry",
+    "validation_report"
+  ],
+  "schema": {
+    "gdrive_excel_files": {
+      "columns": [
+        {
+          "name": "file_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 1
+        },
+        {
+          "name": "name",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "mime_type",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "modified_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "path",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "folder_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "metadata_json",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        }
+      ],
+      "record_count": 1,
+      "primary_keys": [
+        "file_id"
+      ],
+      "timestamp_columns": [],
+      "column_count": 7
+    },
+    "gdrive_source_catalog": {
+      "columns": [
+        {
+          "name": "table_name",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "sheet_name",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "row_count",
+          "type": "INTEGER",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "source_file",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "source_type",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "source_file_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "synced_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        }
+      ],
+      "record_count": 12,
+      "primary_keys": [],
+      "timestamp_columns": [
+        "synced_at"
+      ],
+      "column_count": 7
+    },
+    "gdrive_spreadsheet_files": {
+      "columns": [
+        {
+          "name": "file_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 1
+        },
+        {
+          "name": "name",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "mime_type",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "modified_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "path",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "folder_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "metadata_json",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        }
+      ],
+      "record_count": 2,
+      "primary_keys": [
+        "file_id"
+      ],
+      "timestamp_columns": [],
+      "column_count": 7
+    },
+    "gdrive_sync_registry": {
+      "columns": [
+        {
+          "name": "sync_time",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "folder_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "files",
+          "type": "INTEGER",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "table_count",
+          "type": "INTEGER",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "rows_imported",
+          "type": "INTEGER",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "elapsed_time",
+          "type": "REAL",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "errors",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        }
+      ],
+      "record_count": 1,
+      "primary_keys": [],
+      "timestamp_columns": [],
+      "column_count": 7
+    },
+    "gdrive_sync_status": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "INTEGER",
+          "notnull": 0,
+          "pk": 1
+        },
+        {
+          "name": "last_synced_at",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "files_processed",
+          "type": "INTEGER",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "rows_imported",
+          "type": "INTEGER",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "validation_status",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "errors",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        }
+      ],
+      "record_count": 1,
+      "primary_keys": [
+        "id"
+      ],
+      "timestamp_columns": [],
+      "column_count": 6
+    },
+    "imp_マスタ": {
+      "columns": [
+        {
+          "name": "期",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_2",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_3",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "リスト",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_5",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "logsys事業分類",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "logsys商品分類",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_8",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_9",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "休日チェッカー",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_11",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_12",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_13",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "社員マスタ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_15",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_16",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_17",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_18",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "顧客マスタ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_20",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_21",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_22",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_23",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_24",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_25",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_26",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_27",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_28",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_29",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "商品マスタ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_31",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_32",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "入力データ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_34",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_35",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "標準経費率",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_37",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "column_38",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        }
+      ],
+      "record_count": 2740,
+      "primary_keys": [],
+      "timestamp_columns": [],
+      "column_count": 38
+    },
+    "imp_社員マスタ": {
+      "columns": [
+        {
+          "name": "id_編集禁止",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "社員氏名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "社員カナ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "社員ローマ字",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "権限id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "権限名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "事業部門id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "事業部門名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "所属部署id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "所属部署名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "電話番号",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "メールアドレス",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "slack_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "経理担当者フラグ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "退職者フラグ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "チーム",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        }
+      ],
+      "record_count": 999,
+      "primary_keys": [],
+      "timestamp_columns": [],
+      "column_count": 16
+    },
+    "import_registry": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "INTEGER",
+          "notnull": 0,
+          "pk": 1
+        },
+        {
+          "name": "excel_filename",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "excel_updated_at",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "imported_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "sheet_count",
+          "type": "INTEGER",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "total_rows",
+          "type": "INTEGER",
+          "notnull": 1,
+          "pk": 0
+        }
+      ],
+      "record_count": 19,
+      "primary_keys": [
+        "id"
+      ],
+      "timestamp_columns": [],
+      "column_count": 6
+    },
+    "sqlite_sequence": {
+      "columns": [
+        {
+          "name": "name",
+          "type": "",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "seq",
+          "type": "",
+          "notnull": 0,
+          "pk": 0
+        }
+      ],
+      "record_count": 3,
+      "primary_keys": [],
+      "timestamp_columns": [],
+      "column_count": 2
+    },
+    "table_schema_registry": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "INTEGER",
+          "notnull": 0,
+          "pk": 1
+        },
+        {
+          "name": "import_id",
+          "type": "INTEGER",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "sheet_name",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "table_name",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "column_names",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "column_count",
+          "type": "INTEGER",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "schema_hash",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        }
+      ],
+      "record_count": 199,
+      "primary_keys": [
+        "id"
+      ],
+      "timestamp_columns": [
+        "created_at"
+      ],
+      "column_count": 8
+    },
+    "validation_report": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "INTEGER",
+          "notnull": 0,
+          "pk": 1
+        },
+        {
+          "name": "table_name",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "row_count",
+          "type": "INTEGER",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "is_empty",
+          "type": "INTEGER",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "duplicate_candidates",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "high_null_columns",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "checked_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        },
+        {
+          "name": "status",
+          "type": "TEXT",
+          "notnull": 1,
+          "pk": 0
+        }
+      ],
+      "record_count": 152,
+      "primary_keys": [
+        "id"
+      ],
+      "timestamp_columns": [],
+      "column_count": 8
+    },
+    "コード": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新日時",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成日時",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成者",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新者",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "コードid",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "コード値",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "コード名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        }
+      ],
+      "record_count": 199,
+      "primary_keys": [],
+      "timestamp_columns": [
+        "更新日時",
+        "作成日時"
+      ],
+      "column_count": 10
+    },
+    "仕入": {
+      "columns": [
+        {
+          "name": "期",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新日時",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成日時",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成者",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新者",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "事業部門",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "取引先区分",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ステータス",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入確定フラグ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入入力日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入確定日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入確定解除日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "締め日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "支払い日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "営業担当者id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "営業担当者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "営業事務担当者id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "営業事務担当者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "伝票日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "伝票番号",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "確定後_合計_仕入金額_円",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "確定後_合計_諸掛込金額_円",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "消費税率",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "輸送方法",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "メモ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入先id_国内用",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入先名_国内用",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "明細id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "商品マスタid",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "po",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入先id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入先名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "logs_code",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "sample_code",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "商品名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "通貨",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "為替",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入単価",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入単位数量",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入単位",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "型番",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "カラー",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "サイズ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入数量",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入数量_pcs",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "円単価",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入金額",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入金額_円",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "割合",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "諸掛",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "諸掛込単価",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "諸掛込金額_円",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "実際原価",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "経費率",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "明細営業担当者id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "明細営業担当者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "明細営業事務担当者id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "明細営業事務担当者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "生産管理担当者id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "生産管理担当者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "伝票枚数",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "実際仕入金額",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入先担当者",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "商品作成者",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入営業担当",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        }
+      ],
+      "record_count": 44855,
+      "primary_keys": [],
+      "timestamp_columns": [
+        "更新日時",
+        "作成日時"
+      ],
+      "column_count": 68
+    },
+    "仕入諸掛": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新日時",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成日時",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成者",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新者",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "諸掛区分id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入先id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入先名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "通貨",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "為替",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "金額",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "金額_円",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        }
+      ],
+      "record_count": 21390,
+      "primary_keys": [],
+      "timestamp_columns": [
+        "更新日時",
+        "作成日時"
+      ],
+      "column_count": 15
+    },
+    "取引先": {
+      "columns": [
+        {
+          "name": "期",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新日時",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成日時",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成者",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新者",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "取引先名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "取引先カナ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "取引条件",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "取引先分類",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "生産管理担当者id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "生産管理担当者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "取引先種別",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "取引通貨",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "発注書表示_to",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "郵便番号",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "住所",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "電話番号",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "fax番号",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "代表者役職",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "代表者氏名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "銀行コード",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "銀行名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "支店コード",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "支店名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "銀行口座種別",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "銀行口座番号",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "銀行口座名義",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "振込手数料",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "締日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "支払サイト",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "支払日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "事業部門",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "備考",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "freee連携対象フラグ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "freee用取引先id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "lgsフラグ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        }
+      ],
+      "record_count": 2148,
+      "primary_keys": [],
+      "timestamp_columns": [
+        "更新日時",
+        "作成日時"
+      ],
+      "column_count": 39
+    },
+    "商品": {
+      "columns": [
+        {
+          "name": "期",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新日時",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成日時",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成者",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新者",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "logs_code",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "sample_code",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "商品名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "型番",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "色",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "色_2",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "サイズ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "事業部門",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "事業分類",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "商品分類",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "通貨",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "在庫計上不要フラグ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "発注単価",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "発注単価②",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "発注単位id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "発注単位",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "輸入経費率",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "論理原価",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "実際原価",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "通常売価",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "粗利率",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "上代単価",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "組成表示",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入先id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入先名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "論理在庫数量",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "発注フラグ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "カタログ掲載フラグ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "為替id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "為替",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ログズjanコード",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "論理在庫金額",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        }
+      ],
+      "record_count": 10236,
+      "primary_keys": [],
+      "timestamp_columns": [
+        "更新日時",
+        "作成日時"
+      ],
+      "column_count": 40
+    },
+    "売上": {
+      "columns": [
+        {
+          "name": "期",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新日時",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成日時",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成者",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新者",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "事業部門",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ステータス",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "納品伝票日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "専用伝票番号",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "顧客締め日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "顧客入金日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "売上入力日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "売上確定フラグ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "売上確定日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "売上確定解除日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "入金処理日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "入金処理解除日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "確定後_消費税",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "確定後_請求合計金額",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "確定後_請求合計金額_税込",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "得意先id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "得意先名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "得意先tel",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "得意先fax",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "得意先郵便番号",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "得意先住所",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "請求先id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "請求先名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "請求先tel",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "請求先郵便番号",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "請求先住所",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ブランドid",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ブランド名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "顧客備考欄",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "得意先連絡事項",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "営業担当者id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "営業担当者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "事務処理担当者id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "事務処理担当者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "経理担当者id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "経理担当者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "決済方法",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "運送会社",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "免税フラグ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "納品数量",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "売上数量",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "売上合計金額",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "代引手数料",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "消費税id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "消費税",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "請求合計金額",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "請求合計金額_税込",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "粗利",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "粗利率",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "自社署名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "自社取引銀行id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "請求書発行日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "明細id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入先id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入先名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "商品id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "logs_code",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "sample_code",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "登録商品名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "伝票表示品名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "型番",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "カラー",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "サイズ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "原価",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "売単価",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "数量_pcs",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "売上金額",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "明細粗利",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "明細粗利率",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "上代単価",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "上代合計",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "備考",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "伝票枚数",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "事業分類",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        }
+      ],
+      "record_count": 199512,
+      "primary_keys": [],
+      "timestamp_columns": [
+        "更新日時",
+        "作成日時"
+      ],
+      "column_count": 82
+    },
+    "発注依頼": {
+      "columns": [
+        {
+          "name": "期",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新日時",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成日時",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成者",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新者",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "事業部門",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ステータス",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "発注依頼日時",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "po_no",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "po発行日時",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "po修正日時",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "発注種別",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "案件名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入先id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "仕入先名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "po_to",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "po_from",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "取引条件",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "country_of_origin",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "country_of_destination",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "terms_of_payment",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "顧客id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "顧客名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "営業担当者id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "営業担当者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "営業事務担当者id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "営業事務担当者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "生産管理担当者id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "生産管理担当者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "企画担当者id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "企画担当者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "shipped_per",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "shipped_per_text",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "on_or_before",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "on_or_before2",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "route_from_country___city",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "route_from_country___city_備考欄",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "route_to_country___city",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "route_to_country___city_備考欄",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ブランドネーム",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ブランドネーム_備考欄",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "洗濯ネーム",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "洗濯ネーム_備考欄",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "下げ札",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "下げ札_備考欄",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "その他副資材",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "その他副資材_備考欄",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "個別包装",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "個別包装_備考欄",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ケースマーク",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ケースマーク_備考欄",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "アソート組",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "アソート組_備考欄",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ケースサイズ規定",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ケースサイズ規定_備考欄",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "第三者検品検針",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "検針内容",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "コンベア基準",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "顧客指定検品所",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "検品所",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "po発行予定日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "po発行予定日備考欄",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "po発行日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "revised",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "顧客納品日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "顧客納品日備考欄",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "納品日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "納品日備考欄",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "縫製資材lgs出荷日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "縫製資材lgs出荷日備考欄",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ppサンプル希望納品日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "pp_ex_f",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ppサンプル希望納品日備考欄",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "topサンプル希望納品日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "top_ex_f",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "topサンプル希望納品日備考欄",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "納前サンプル希望納品日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "shipping_ex_f",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "納前サンプル希望納品日備考欄",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "検査予定日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "検査予定日備考欄",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ex_fty_工場出荷日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ex_fty_工場出荷日_note",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "inspection_from",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "inspection_to",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "inspection_note",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "etd",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "etd_from",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "etd_note",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "eta",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "eta_to",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "eta_note",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "clearance",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "clearance_note",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "delivery_納品日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "delivery_納品日_note",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "備考欄",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "remarks_備考欄",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "増減産",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "合計生産数量",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "合計生産数量_pcs",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "合計発注金額",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "合計売上原価",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "合計売上金額",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "粗利",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "粗利率",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "明細id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "商品id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "logs_code",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "sample_code",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "description",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "商品名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "型番",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "事業分類",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "商品分類",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "通貨",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "為替",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "発注単価",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "発注単位",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "発注単位数量",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "輸入経費率",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "売価",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "粗利率2",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "バイヤーカラー",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "バイヤーカラー名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ログズカラー",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ログズカラー名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "バイヤーサイズ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ログズサイズ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "受注数量",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "発注数量",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "発注数量_pcs",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "発注金額",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "売上原価",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "売上金額",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "発注件数",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        }
+      ],
+      "record_count": 34733,
+      "primary_keys": [],
+      "timestamp_columns": [
+        "更新日時",
+        "作成日時",
+        "発注依頼日時",
+        "po発行日時",
+        "po修正日時"
+      ],
+      "column_count": 139
+    },
+    "集計": {
+      "columns": [
+        {
+          "name": "分類",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "顧客id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "顧客名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "社員id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "社員名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "営業事務id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "営業事務名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "案件名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "量産数量_型",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "案件売上",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "案件粗利",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "①二次加工費_副資材単価_資材等運送含む",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "②検品_検針_検査含む",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "③サンプル費用",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "④その他販売経費",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "案件粗利率",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "期",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "年",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "月",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "po",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "記載日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "商品分類",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "チーム",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "記載日_週",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "記載日年",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "記載日月",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "顧客詳細分類",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "記載日期",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        }
+      ],
+      "record_count": 16705,
+      "primary_keys": [],
+      "timestamp_columns": [],
+      "column_count": 28
+    },
+    "顧客": {
+      "columns": [
+        {
+          "name": "期",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新日時",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成日時",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成者",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新者",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "顧客名称",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "顧客カナ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "顧客化フラグ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "web問い合わせid",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "顧客分類",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "事業規模",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "取引傾向分類",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ブランドid",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ブランド名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "請求先id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "請求先名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "決済方法",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "paidid",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "営業担当者id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "営業担当者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "事務処理担当者id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "事務処理担当者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "免税フラグ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "通知方法",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "郵便番号",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "住所",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "電話番号",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "fax番号",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "代表者役職",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "代表者氏名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "増減産",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ケースマーク",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ケースマーク備考",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ケースサイズ規定",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "ケースサイズ規定備考",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "第三者検品検針",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "顧客指定検品所有無",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "コンベア基準",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "銀行コード",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "銀行名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "支店コード",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "支店名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "銀行口座種別",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "銀行口座番号",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "銀行口座名義",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "締日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "支払サイト",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "支払日",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "請求書作成フラグ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "売上用備考",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "請求用備考",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "事業部門",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "freee連携対象フラグ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "freee用取引先id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "当月新規フラグ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        }
+      ],
+      "record_count": 2738,
+      "primary_keys": [],
+      "timestamp_columns": [
+        "更新日時",
+        "作成日時"
+      ],
+      "column_count": 58
+    },
+    "顧客担当者": {
+      "columns": [
+        {
+          "name": "期",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新日時",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成日時",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成者",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "作成者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新者",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "更新者名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "顧客id",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "顧客名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "担当者氏名",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "所属部署",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "担当者役職",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "メールアドレス",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "電話番号1",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "電話番号2",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "dm送付不要フラグ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "退職者フラグ",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "備考",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        },
+        {
+          "name": "営業担当",
+          "type": "TEXT",
+          "notnull": 0,
+          "pk": 0
+        }
+      ],
+      "record_count": 3816,
+      "primary_keys": [],
+      "timestamp_columns": [
+        "更新日時",
+        "作成日時"
+      ],
+      "column_count": 20
+    }
+  }
+}

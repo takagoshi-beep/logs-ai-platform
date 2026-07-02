@@ -33,11 +33,93 @@ _task_recommendations = [
 ]
 
 _projects = [
-    {"id": "fanatics-oem", "name": "Fanatics OEM", "summary": "Delivery and purchasing risk management"},
-    {"id": "beams-retail", "name": "BEAMS Retail", "summary": "Proposal and margin optimization"},
-    {"id": "goldwin-campaign", "name": "GOLDWIN Campaign", "summary": "Quote and production coordination"},
-    {"id": "newhattan-sales", "name": "newhattan sales kit", "summary": "Sales material refresh"},
+    {"id": "fanatics-oem", "name": "Fanatics OEM", "customer": "Fanatics", "owner": "佐藤", "status": "対応中", "next_action": "納期確認"},
+    {"id": "beams-retail", "name": "BEAMS Retail", "customer": "BEAMS", "owner": "高越", "status": "未着手", "next_action": "提案資料確認"},
+    {"id": "goldwin-campaign", "name": "GOLDWIN Campaign", "customer": "GOLDWIN", "owner": "加藤", "status": "保留", "next_action": "見積作成"},
+    {"id": "newhattan-sales-kit", "name": "newhattan sales kit", "customer": "newhattan", "owner": "-", "status": "保留", "next_action": "商標確認"},
 ]
+
+_consult_knowledge = {
+    "fanatics-oem": {
+        "reason": "出荷枠の確保期限が本日中のため。",
+        "business_rule": "DELIVERY_SLA_7DAYS",
+        "confidence": 0.95,
+        "open_question": "実際の出荷枠確保が完了したか未確認です。",
+    },
+    "beams-retail": {
+        "reason": "レビュー担当からコスト説明の更新依頼があったため。",
+        "business_rule": "PROPOSAL_REVIEW_PENDING",
+        "confidence": 0.9,
+        "open_question": "コスト説明セクションの最新版がまだ共有されていません。",
+    },
+    "goldwin-campaign": {
+        "reason": "顧客から条件変更の依頼があったため。",
+        "business_rule": "QUOTE_REVISION_REQUIRED",
+        "confidence": 0.85,
+        "open_question": "変更後の希望条件（数量・単価）が未確定です。",
+    },
+    "newhattan-sales-kit": {
+        "reason": "商標に関する確認待ちのため。",
+        "business_rule": "LEGAL_TRADEMARK_HOLD",
+        "confidence": 0.8,
+        "open_question": "法務からの確認回答期限が未定です。",
+    },
+}
+
+
+def _find_project_for_message(message: str) -> dict[str, Any] | None:
+    lowered = message.lower()
+    for project in _projects:
+        if project["customer"].lower() in lowered or project["name"].lower() in lowered:
+            return project
+    return None
+
+
+def consult(message: str) -> dict[str, Any]:
+    """Answer a consultation question grounded in the demo project dataset."""
+    matched = _find_project_for_message(message)
+
+    if not matched:
+        return {
+            "matched_project_id": None,
+            "ai_response": "該当する案件が見つかりませんでした。案件名や顧客名（例: Fanatics, BEAMS, GOLDWIN, newhattan）を含めて質問してください。",
+            "data_sources": [],
+            "judgment_reasoning": [],
+            "related_projects": [
+                {"project_id": p["id"], "name": p["name"], "customer": p["customer"], "status": p["status"]}
+                for p in _projects
+            ],
+            "open_questions": ["質問に案件名または顧客名を含めてください。"],
+            "trace_id": "trace-consult-unmatched",
+        }
+
+    knowledge = _consult_knowledge[matched["id"]]
+    open_questions = [knowledge["open_question"]]
+    if matched["owner"] == "-":
+        open_questions.append("担当者が未アサインです。")
+
+    return {
+        "matched_project_id": matched["id"],
+        "ai_response": f"{matched['name']}の案件は現在「{matched['status']}」です。{knowledge['reason']}次のアクション: {matched['next_action']}。",
+        "data_sources": [
+            {"table": "案件データ", "record": matched["name"]},
+            {"table": "タスク履歴", "record": f"{matched['name']} - {matched['next_action']}"},
+        ],
+        "judgment_reasoning": [
+            {
+                "reason": knowledge["reason"],
+                "confidence": knowledge["confidence"],
+                "business_rule": knowledge["business_rule"],
+            }
+        ],
+        "related_projects": [
+            {"project_id": p["id"], "name": p["name"], "customer": p["customer"], "status": p["status"]}
+            for p in _projects
+            if p["id"] != matched["id"]
+        ][:2],
+        "open_questions": open_questions,
+        "trace_id": f"trace-consult-{matched['id']}",
+    }
 
 _proposal_draft = {
     "id": "pd-101",

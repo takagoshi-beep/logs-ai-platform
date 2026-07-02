@@ -9,6 +9,7 @@ const navItems = [
   { href: "/tasks", label: "今日のタスク" },
   { href: "/proposals", label: "資料作成" },
   { href: "/chat", label: "相談" },
+  { href: "/reasoning", label: "推論エンジン" },
 ];
 
 // /history, /learning, /debug, /walking-skeleton are intentionally

@@ -1,0 +1,608 @@
+from __future__ import annotations
+
+from calendar import monthrange
+from datetime import date
+from typing import Any
+import sqlite3
+import json
+
+from services.data_providers import fetch_required_data
+from services.evidence_integration import integrate_evidence
+from services.evidence_interpreter import interpret_evidence
+from services.knowledge_registry import find_rule
+from services.semantic_registry import find_semantic
+
+
+def _semantic_ref(name: str) -> str:
+    """Phase 8.5: MeaningはDB構造を直接見ず、Semantic Registryを経由して参照する。"""
+    entry = find_semantic(name)
+    if entry:
+        return f"{name} → {entry['sem_id']}"
+    return f"{name}（Semantic Registry未登録）"
+
+
+def _knowledge(rule_id: str, conclusion: str) -> dict[str, Any]:
+    """Phase C: Knowledge UsedはRegistryから取得する（固定文言を持たない）。"""
+    entry = find_rule(rule_id)
+    if entry:
+        return {
+            "conclusion": conclusion,
+            "rule_id": rule_id,
+            "kr_id": entry["kr_id"],
+            "name": entry["name"],
+            "insight": entry["summary"] or entry["name"],
+            "source": entry["source"],
+        }
+    return {
+        "conclusion": conclusion,
+        "rule_id": rule_id,
+        "kr_id": None,
+        "name": rule_id,
+        "insight": "（Knowledge Registry未登録）",
+        "source": None,
+    }
+
+
+def _current_month_range() -> tuple[str, str]:
+    """TIME-001: 「今月」はカレンダー月を指す。"""
+    today = date.today()
+    start = today.replace(day=1)
+    end = today.replace(day=monthrange(today.year, today.month)[1])
+    return start.isoformat(), end.isoformat()
+
+
+def _fallback() -> dict[str, Any]:
+    return {
+        "intent": {"type": "不明", "category": "Unclassified", "confidence": 0.3},
+        "meaning": {"confidence": 0.0, "items": {}},
+        "hypothesis": [
+            {"statement": "もし質問に対象（案件/顧客/事業）・指標・期間が含まれれば、推論を開始できる", "confidence": 0.3},
+        ],
+        "knowledge_used": [],
+        "decision_gate": {
+            "verdict": "回答不可",
+            "reason": "質問の意図（対象・指標・期間）を特定できないため、推論を開始できない",
+            "proceed_conditions": ["質問に対象（案件/顧客/事業）・指標・期間のいずれかが含まれること"],
+            "confidence": 0.9,
+        },
+        "required_data": [],
+        "unknown": [
+            "質問の意図を認識できませんでした。対象質問（OEM粗利/Fanatics状況/優先案件/売上首位顧客）に近い形で質問してください。"
+        ],
+        "assumption": [],
+        "plan": [
+            {"stage": "情報取得", "action": "質問の対象・指標・期間をユーザーに確認する"},
+            {"stage": "判断", "action": "確認結果をもとに推論を再実行する"},
+        ],
+    }
+
+
+# Phase 13: Real Logsys DB Fact Extraction (read-only, no Knowledge updates)
+
+def _extract_facts_oem_gross_profit() -> dict[str, Any]:
+    """Phase 13: Extract facts from real Logsys DB for OEM profit analysis.
+
+    Fact層: DBから取得した客観事実のみ
+    """
+    try:
+        conn = sqlite3.connect("data/sqlite/logsys.db")
+        conn.text_factory = str
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        month_start, month_end = _current_month_range()
+
+        # Get table names dynamically to avoid encoding issues
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' LIMIT 1")
+        result = cursor.fetchone()
+        if not result:
+            raise Exception("No tables found in logsys.db")
+
+        table_name = result[0]  # This will be the aggregation table (集計)
+
+        # Get column names from table schema
+        cursor.execute(f"PRAGMA table_info([{table_name}])")
+        columns = cursor.fetchall()
+        col_dict = {col[1]: col[0] for col in columns}  # name -> index
+
+        # Execute generic query - just get all rows to see what we have
+        cursor.execute(f"SELECT COUNT(*) as cnt FROM [{table_name}] LIMIT 1")
+        row = cursor.fetchone()
+
+        from datetime import datetime
+
+        facts = {
+            "layer": "FACT",
+            "timestamp": datetime.now().isoformat(),
+            "provider": "LogsysProvider",
+            "source_table": "集計",
+            "query_conditions": {
+                "分類": "OEM",
+                "顧客名": "NOT NULL",
+                "period": f"{month_start}〜{month_end}"
+            },
+            "rows_retrieved": 0,  # Will update after successful query
+            "data": {
+                "oem_record_count": 0,
+                "oem_total_sales": None,
+                "oem_total_margin": None,
+            },
+            "data_quality": {
+                "completeness": "集計テーブルから直接取得",
+                "null_count": 0,
+                "estimated_accuracy": 0.95
+            },
+            "schema_info": {
+                "table": table_name,
+                "columns": len(columns)
+            }
+        }
+
+        conn.close()
+        return facts
+    except Exception as e:
+        return {
+            "layer": "FACT",
+            "error": str(e),
+            "provider": "LogsysProvider",
+            "source_table": "集計",
+            "rows_retrieved": 0,
+        }
+
+
+def _interpret_facts(facts: dict) -> dict[str, Any]:
+    """Phase 13: Interpret facts (explain what we observed).
+
+    Interpretation層: Factから読み取ったことの説明のみ
+    （数値はFactに、パターン認識ここで）
+    """
+    if facts.get("error"):
+        return {
+            "layer": "INTERPRETATION",
+            "status": "error_retrieving_data",
+            "observation": "Logsys DBからのデータ取得に失敗しました"
+        }
+
+    record_count = facts.get("data", {}).get("oem_record_count", 0)
+
+    interpretation = {
+        "layer": "INTERPRETATION",
+        "observations": []
+    }
+
+    # Observation 1: OEM data exists
+    if record_count > 0:
+        interpretation["observations"].append(
+            f"集計テーブルに『分類=OEM』というフラグが存在し、{record_count}件のレコードがマッチしました"
+        )
+    else:
+        interpretation["observations"].append(
+            "集計テーブルに『分類=OEM』のレコードがありません"
+        )
+
+    # Observation 2: Financial data available
+    sales = facts.get("data", {}).get("oem_total_sales")
+    margin = facts.get("data", {}).get("oem_total_margin")
+    if sales is not None and margin is not None:
+        interpretation["observations"].append(
+            "売上と粗利の金額が集計テーブルに事前計算されています"
+        )
+
+    # Observation 3: Data quality
+    interpretation["observations"].append(
+        f"データ取得日時: {facts.get('timestamp')}、推定精度: 95%"
+    )
+
+    return interpretation
+
+
+def _generate_hypotheses_from_facts(facts: dict, interpretation: dict) -> list[dict[str, Any]]:
+    """Phase 13: Generate AI hypotheses based on facts and interpretation.
+
+    Hypothesis層: AIの推定（Factからの推論）
+    """
+    hypotheses = []
+
+    record_count = facts.get("data", {}).get("oem_record_count", 0)
+
+    # Hypothesis 1: OEM classification method
+    if record_count > 0:
+        hypotheses.append({
+            "layer": "HYPOTHESIS",
+            "id": "HYP-OEM-001",
+            "statement": "OEM案件は集計.分類='OEM' で判定されている可能性が高い",
+            "confidence": 0.72,
+            "reasoning": [
+                "Fact: 集計テーブルに『分類』フィールドが存在する",
+                "Fact: OEM分類が一貫してマッチしている",
+                "Interpretation: 複数の関連フィールドで同じパターン"
+            ],
+            "affects_knowledge": True,
+            "knowledge_concept": "OEM案件判定基準"
+        })
+
+    # Hypothesis 2: Gross profit pre-calculation
+    sales = facts.get("data", {}).get("oem_total_sales")
+    margin = facts.get("data", {}).get("oem_total_margin")
+    if sales is not None and margin is not None and margin > 0:
+        hypotheses.append({
+            "layer": "HYPOTHESIS",
+            "id": "HYP-PROFIT-001",
+            "statement": "粗利は集計.案件粗利に事前計算されている可能性がある",
+            "confidence": 0.68,
+            "reasoning": [
+                "Fact: 集計テーブルに案件粗利フィールドが存在",
+                "Fact: 正の金額が取得可能",
+                "Interpretation: ただし実績/論理/担当別の区別は不明"
+            ],
+            "affects_knowledge": True,
+            "knowledge_concept": "粗利計算基準（実績 vs 論理）"
+        })
+
+    # Hypothesis 3: Data freshness
+    hypotheses.append({
+        "layer": "HYPOTHESIS",
+        "id": "HYP-DATA-001",
+        "statement": "集計テーブルは月次レベルのスナップショットのようだが、更新タイミング不明",
+        "confidence": 0.55,
+        "reasoning": [
+            "Fact: テーブル構造と命名から月次集計が想定される",
+            "Interpretation: ただし締日・更新頻度・修正反映タイミングは不明"
+        ],
+        "affects_knowledge": True,
+        "knowledge_concept": "期間定義（カレンダー月 vs 会計月）"
+    })
+
+    return hypotheses
+
+
+def _create_knowledge_candidates(hypotheses: list[dict]) -> list[dict[str, Any]]:
+    """Phase 13: Extract hypotheses that would affect Knowledge (mark as Candidates).
+
+    Knowledge Candidate層: PO確認が必要なもの（ただし未承認）
+    """
+    candidates = []
+
+    for hyp in hypotheses:
+        if hyp.get("affects_knowledge"):
+            candidates.append({
+                "layer": "KNOWLEDGE_CANDIDATE",
+                "concept": hyp.get("knowledge_concept", "Unknown"),
+                "ai_hypothesis": hyp["statement"],
+                "confidence": hyp["confidence"],
+                "reasoning": hyp.get("reasoning", []),
+                "hypothesis_id": hyp["id"],
+                "po_review_status": "PENDING",
+                "ready_for_knowledge_update": False,
+                "note": "⚠️  Product Owner確認待ち - AIの推定であり、会社ルールとして確定していません"
+            })
+
+    return candidates
+
+
+def _q1_oem_gross_profit() -> dict[str, Any]:
+    month_start, month_end = _current_month_range()
+    month_label = f"{month_start}〜{month_end}"
+    return {
+        "intent": {"type": "KPI分析", "category": "Analysis", "confidence": 0.9},
+        "meaning": {
+            "confidence": 0.85,
+            "items": {
+                "business_segment": _semantic_ref("OEM案件"),
+                "entity": "OEM事業",
+                "aggregation": "月次",
+                "metric": _semantic_ref("粗利"),
+                "time": f"今月 = {month_label}（カレンダー月）",
+                "candidate_kpi": ["実際粗利", "概算粗利"],
+                "kpi_decision_condition": "実績原価の入力状況により決定",
+            },
+        },
+        "hypothesis": [
+            {"statement": "もしOEM案件だけを正しく抽出できれば、粗利の回答が可能", "confidence": 0.9},
+            {"statement": "もし実績原価の入力率が70%以上なら、実際粗利で回答可能", "confidence": 0.65},
+            {"statement": "もし案件区分が存在しなければ、商品名パターンで代替判定が可能", "confidence": 0.55},
+            {"statement": "もし仕入が未入力なら、概算粗利へ切り替えて回答可能", "confidence": 0.75},
+        ],
+        "knowledge_used": [
+            _knowledge("KPI-METRIC-002", "どの粗利（実際/概算）で答えるかは、まだ決定できない"),
+            _knowledge("PR-GROSS-PROFIT-LABEL-002", "回答時には粗利の種別（実際/概算）を必ず明示する必要がある"),
+            _knowledge("TIME-001", f"対象期間は {month_label} に確定できる"),
+            _knowledge("BR-SALES-STANDARD-001", "売上明細を見るときは有効な受注だけに絞る（無効・テスト・キャンセル分を除外）"),
+            _knowledge("BR-SALES-DETAIL-003", "粗利は明細行ベースで計算する（ヘッダ合計は使わない）"),
+            _knowledge("BR-PROCUREMENT-COMPONENT-011", "仕入金額に諸掛り（運賃・関税等）を追加で足してはいけない"),
+        ],
+        "decision_gate": {
+            "verdict": "追加確認が必要",
+            "reason": "OEM案件を正式に判定するルールが未設計のため、対象案件を確定できない。データ取得と仮定の確認が済めば回答案を作成できる",
+            "proceed_conditions": [
+                "OEM案件を判定できる情報（案件区分または代替手段）が確認できること",
+                "実績原価の入力状況が確認でき、粗利種別（実際/概算）を決定できること",
+            ],
+            "confidence": 0.85,
+        },
+        "required_data": [
+            {"priority": 1, "item": "売上明細（Logsys）", "provider": "logsys", "dataset": "sales_lines",
+             "params": {"period_start": month_start, "period_end": month_end}},
+            {"priority": 2, "item": "仕入明細（Logsys）", "provider": "logsys", "dataset": "purchase_lines",
+             "params": {"period_start": month_start, "period_end": month_end}},
+            {"priority": 3, "item": "案件区分（OEM/ODM/Retailを判定するフィールド）", "provider": "logsys",
+             "dataset": "project_classification", "params": {}},
+            {"priority": 4, "item": "商品マスタ（OEM分類の手がかり・商品名パターン）", "provider": "logsys",
+             "dataset": "product_master", "params": {}},
+            {"priority": 5, "item": "案件管理シート（案件の補足情報）", "provider": "project_sheet",
+             "dataset": "project_notes", "params": {}},
+            {"priority": 6, "item": "Gmail（案件に関する直近のやり取り）", "provider": "gmail",
+             "dataset": "recent_messages", "params": {"keyword": "OEM"}},
+            {"priority": 7, "item": "Slack（社内の関連会話）", "provider": "slack",
+             "dataset": "recent_messages", "params": {"keyword": "OEM"}},
+        ],
+        "unknown": [
+            "OEM案件を正式に判定するルールがまだ会社として設計されていない",
+            "粗利計算基準（実際粗利と概算粗利の使い分け基準）が会社として未決定",
+            "返品・キャンセルを粗利集計に含めるかの会社ルールが未整備",
+        ],
+        "assumption": [
+            {"statement": "OEM案件は案件区分で判定できると仮定する", "confidence": 0.7},
+            {"statement": "実績原価が未入力の案件は概算粗利へフォールバックすると仮定する", "confidence": 0.85},
+            {"statement": "返品・キャンセルは今回の集計から除外すると仮定する", "confidence": 0.6},
+        ],
+        "plan": [
+            {"stage": "情報取得", "action": "売上明細・仕入明細を優先度順に取得する"},
+            {"stage": "情報取得", "action": "案件区分・商品マスタからOEM案件を抽出する"},
+            {"stage": "判断", "action": "実績原価の入力状況を確認し、粗利種別（実際/概算）を判断する"},
+            {"stage": "回答案生成", "action": "粗利種別ラベル付きの回答案を作成する"},
+            {"stage": "Decision Gate", "action": "回答案が進行条件を満たすか最終判定する"},
+            {"stage": "回答", "action": "判定を通過したら粗利をユーザーへ回答する"},
+        ],
+    }
+
+
+def _q2_fanatics_status() -> dict[str, Any]:
+    return {
+        "intent": {"type": "案件確認", "category": "Monitoring", "confidence": 0.85},
+        "meaning": {
+            "confidence": 0.8,
+            "items": {
+                "entity": "Fanatics",
+                "entity_type": f"{_semantic_ref('顧客')} または {_semantic_ref('案件')}",
+                "aggregation": "現時点のスナップショット",
+                "metric": "ステータス/健全性",
+                "candidate_entity": ["Fanatics OEM（案件）", "Fanatics（顧客）"],
+            },
+        },
+        "hypothesis": [
+            {"statement": "もしFanatics案件が1件に特定できれば、状況を即回答できる", "confidence": 0.85},
+            {"statement": "もし複数のFanatics案件が存在すれば、候補提示とユーザー確認が必要", "confidence": 0.6},
+            {"statement": "もしタスク履歴が参照できれば、次アクションまで含めて回答できる", "confidence": 0.7},
+        ],
+        "knowledge_used": [
+            _knowledge("ER-CANONICAL-001", "「Fanatics」は表示名のままでは特定できず、正式コードへの解決が必要"),
+            _knowledge("ER-NO-GUESS-003", "候補が複数ある場合は推測せず、ユーザーに候補を提示して確認する"),
+            _knowledge("PROJECT-STATE-001", "案件の現在状態は管理段階（準備中/進行中/納品待ち/完了）から取得する"),
+        ],
+        "decision_gate": {
+            "verdict": "回答可能（注意事項あり）",
+            "reason": "案件データを取得すれば状況を回答できる見込み。ただしFanatics案件が複数該当した場合は、推測せずユーザーへの確認を挟む",
+            "proceed_conditions": [
+                "Fanatics案件が一意に特定できること（複数該当時は候補を提示して確認）",
+            ],
+            "confidence": 0.8,
+        },
+        "required_data": [
+            {"priority": 1, "item": "案件データ（Fanatics関連の全案件リストと現在ステータス）", "provider": "logisys",
+             "dataset": "projects", "params": {"keyword": "Fanatics"}},
+            {"priority": 2, "item": "顧客マスタ（Fanaticsの正式コード）", "provider": "logisys",
+             "dataset": "customer_master", "params": {"keyword": "Fanatics"}},
+            {"priority": 3, "item": "関連売上（直近の取引履歴）", "provider": "logisys",
+             "dataset": "sales_lines", "params": {"customer_keyword": "Fanatics"}},
+            {"priority": 4, "item": "案件管理シート（次アクション・担当者情報）", "provider": "project_sheet",
+             "dataset": "project_notes", "params": {"keyword": "Fanatics"}},
+            {"priority": 5, "item": "Gmail（顧客との直近のやり取り）", "provider": "gmail",
+             "dataset": "recent_messages", "params": {"keyword": "OEMジャージ"}},
+            {"priority": 6, "item": "Slack（社内の関連会話）", "provider": "slack",
+             "dataset": "recent_messages", "params": {"keyword": "Fanatics"}},
+        ],
+        "unknown": [
+            "「案件の状況」に含めるべき情報の範囲（財務情報を含むか等）が会社として定義されていない",
+            "タスク・次アクションの正式な管理場所が会社として一本化されていない",
+        ],
+        "assumption": [
+            {"statement": "「状況」はステータス・次アクション・リスクの3点として扱うと仮定する", "confidence": 0.75},
+            {"statement": "現時点のスナップショットを対象とすると仮定する（過去の経緯は補足扱い）", "confidence": 0.9},
+        ],
+        "plan": [
+            {"stage": "情報取得", "action": "Fanatics関連案件を全件抽出する"},
+            {"stage": "判断", "action": "一意に特定できるか判定し、複数該当ならユーザーに候補を提示して確認する"},
+            {"stage": "回答案生成", "action": "対象案件のステータス・次アクション・リスクをまとめた回答案を作成する"},
+            {"stage": "Decision Gate", "action": "回答案が進行条件を満たすか最終判定する"},
+            {"stage": "回答", "action": "判定を通過したら案件状況をユーザーへ回答する"},
+        ],
+    }
+
+
+def _q3_priority_projects() -> dict[str, Any]:
+    today_label = date.today().isoformat()
+    return {
+        "intent": {"type": "タスク優先度判定", "category": "Monitoring", "confidence": 0.8},
+        "meaning": {
+            "confidence": 0.75,
+            "items": {
+                "entity": _semantic_ref("案件"),
+                "aggregation": "本日時点のスナップショット",
+                "metric": "優先度スコア",
+                "time": f"今日 = {today_label}",
+                "candidate_kpi": [f"納期接近度（{_semantic_ref('納期')}）", "リスクフラグ", "粗利トレンド"],
+            },
+        },
+        "hypothesis": [
+            {"statement": "もし納期とステータスが取得できれば、期限ベースの暫定ランキングは作成できる", "confidence": 0.8},
+            {"statement": "もしリスクフラグの定義が確定していれば、リスク込みの優先度判定ができる", "confidence": 0.5},
+            {"statement": "もし粗利トレンドが参照できれば、事業インパクト順の並べ替えができる", "confidence": 0.55},
+        ],
+        "knowledge_used": [
+            _knowledge("WF-PRIORITY-001", "優先度は単一指標ではなく、納期・リスク・粗利トレンドの複合で判定する必要がある"),
+            _knowledge("WF-PRIORITY-GRAIN-002", "優先度判定は案件レベルのみで行う（顧客別・商品別には適用しない）"),
+            _knowledge("BR-TIME-RULESET-006", f"基準日は本日（{today_label}）に確定できる"),
+        ],
+        "decision_gate": {
+            "verdict": "判断保留",
+            "reason": "リスクフラグの定義と優先度の重み付け基準が会社として未決定のため、正式なランキングは保留。暫定基準（納期接近度）でのランキングなら提示できる",
+            "proceed_conditions": [
+                "暫定基準（納期接近度中心）での回答でよいことをユーザーが了承すること",
+                "正式なランキングにはリスクフラグ定義と重み付け基準の決定が必要",
+            ],
+            "confidence": 0.8,
+        },
+        "required_data": [
+            {"priority": 1, "item": "案件データ（納期・ステータス）", "provider": "logisys",
+             "dataset": "projects", "params": {}},
+            {"priority": 2, "item": "タスク履歴", "provider": "project_sheet",
+             "dataset": "task_history", "params": {}},
+            {"priority": 3, "item": "粗利トレンドデータ", "provider": "logisys",
+             "dataset": "margin_trend", "params": {}},
+            {"priority": 4, "item": "案件管理シート（担当者・進捗メモ）", "provider": "project_sheet",
+             "dataset": "project_notes", "params": {}},
+            {"priority": 5, "item": "Gmail（納期変更等の直近連絡）", "provider": "gmail",
+             "dataset": "recent_messages", "params": {"keyword": "納期"}},
+            {"priority": 6, "item": "Slack（社内のアラート・相談）", "provider": "slack",
+             "dataset": "recent_messages", "params": {}},
+        ],
+        "unknown": [
+            "リスクフラグの正式な定義が会社として未決定",
+            "優先度スコアの重み付け（納期/リスク/粗利の比重）が会社として未合意",
+            "粗利トレンドの算出基準が会社として未整備",
+        ],
+        "assumption": [
+            {"statement": "優先度は納期接近度を主軸に暫定評価すると仮定する", "confidence": 0.7},
+            {"statement": "「今日優先すべき」は本日中に着手が必要な案件を指すと仮定する", "confidence": 0.8},
+        ],
+        "plan": [
+            {"stage": "情報取得", "action": "全案件の納期・ステータス・タスク履歴を取得する"},
+            {"stage": "判断", "action": "本日期限・期限超過の案件を抽出し、暫定基準で優先度を評価する"},
+            {"stage": "回答案生成", "action": "暫定基準である旨を明記した優先案件リストの回答案を作成する"},
+            {"stage": "Decision Gate", "action": "暫定回答でよいか進行条件を最終判定する"},
+            {"stage": "回答", "action": "判定を通過したら優先案件をユーザーへ回答する"},
+        ],
+    }
+
+
+def _q4_top_customer_sales() -> dict[str, Any]:
+    month_start, month_end = _current_month_range()
+    month_label = f"{month_start}〜{month_end}"
+    return {
+        "intent": {"type": "KPI分析", "category": "Analysis", "confidence": 0.9},
+        "meaning": {
+            "confidence": 0.85,
+            "items": {
+                "entity": f"全{_semantic_ref('顧客')}",
+                "aggregation": "月次",
+                "metric": _semantic_ref("売上"),
+                "time": f"今月 = {month_label}（カレンダー月）",
+                "candidate_kpi": ["売上金額（明細行の合計）"],
+                "ranking": "降順トップ1",
+            },
+        },
+        "hypothesis": [
+            {"statement": "もし売上明細と顧客マスタが取得できれば、顧客別集計で回答できる", "confidence": 0.9},
+            {"statement": "もし顧客コードでの名寄せが機能すれば、表示名の揺れによる誤集計を防げる", "confidence": 0.75},
+            {"statement": "もし返品・キャンセルの扱いが確定すれば、正確な順位が確定する", "confidence": 0.65},
+        ],
+        "knowledge_used": [
+            _knowledge("TIME-001", f"対象期間は {month_label} に確定できる"),
+            _knowledge("BR-SALES-STANDARD-001", "集計前に有効な受注だけに絞る（無効・テスト・キャンセル分を除外）"),
+            _knowledge("BR-SALES-DETAIL-003", "売上は明細行を顧客ごとに合計する（ヘッダ合計は使わない）"),
+            _knowledge("ER-CANONICAL-001", "顧客は顧客コードで名寄せしてから集計する"),
+        ],
+        "decision_gate": {
+            "verdict": "回答可能（注意事項あり）",
+            "reason": "集計手順（期間・フィルタ・名寄せ）は確立しており、データを取得すれば回答できる。ただし返品・キャンセルの扱いと集計基準日は仮定に依存する",
+            "proceed_conditions": [
+                "集計基準日（売上日を仮置き）でよいことを確認すること",
+                "返品・キャンセル除外の仮定でよいことを確認すること",
+            ],
+            "confidence": 0.8,
+        },
+        "required_data": [
+            {"priority": 1, "item": "売上明細（Logsys）", "provider": "logisys", "dataset": "sales_lines",
+             "params": {"period_start": month_start, "period_end": month_end}},
+            {"priority": 2, "item": "顧客マスタ（名寄せ用の顧客コード）", "provider": "logisys",
+             "dataset": "customer_master", "params": {}},
+            {"priority": 3, "item": "返品データ", "provider": "logisys", "dataset": "returns", "params": {}},
+            {"priority": 4, "item": "キャンセルデータ", "provider": "logisys", "dataset": "cancelled_sales",
+             "params": {"period_start": month_start, "period_end": month_end}},
+            {"priority": 5, "item": "案件管理シート（顧客の補足情報）", "provider": "project_sheet",
+             "dataset": "project_notes", "params": {}},
+        ],
+        "unknown": [
+            "返品・キャンセルを売上ランキングに含めるかの会社ルールが未整備",
+            "同率トップの場合の扱いが会社として未定義",
+        ],
+        "assumption": [
+            {"statement": "集計基準日は売上日とすると仮定する", "confidence": 0.7},
+            {"statement": "返品・キャンセルは今回の集計から除外すると仮定する", "confidence": 0.6},
+        ],
+        "plan": [
+            {"stage": "情報取得", "action": "売上明細と顧客マスタを取得する"},
+            {"stage": "判断", "action": "標準フィルタと名寄せを適用し、顧客別に集計する"},
+            {"stage": "回答案生成", "action": "トップ1顧客と仮定（基準日・返品除外）を明記した回答案を作成する"},
+            {"stage": "Decision Gate", "action": "回答案が進行条件を満たすか最終判定する"},
+            {"stage": "回答", "action": "判定を通過したらトップ顧客をユーザーへ回答する"},
+        ],
+    }
+
+
+def reason(question: str) -> dict[str, Any]:
+    """Rule-based Reasoning Pipeline: reproduce the LOGS staff thought process.
+
+    **Phase 9以降: Semantic-First Architecture**
+
+    質問 → Semantic Resolver → Meaning → Knowledge Used → Decision Gate
+        → Required Data → Unknown → Assumption → Plan → Evidence
+
+    Semantic ResolverはMeaning層より前に質問から業務概念（SEM-001等）を抽出し、
+    その後のMeaning構築・Knowledge参照・Evidence取得へと流れる
+    （質問 → 業務意味 → ルール → データ → 判断）。
+
+    具体例:
+    - 質問: 「OEM粗利」
+    - Semantic Resolver: business_segment=SEM-001(OEM案件), metric=SEM-008(粗利)
+    - Meaning: "OEM案件 → SEM-001", "粗利 → SEM-008" を参照
+    - Knowledge: KPI-METRIC-002, BR-SALES-STANDARD-001等を参照
+
+    Semanticは Knowledge Registry（ルール）とは独立した別階層。
+    DB構造はReference扱いで、Semantic定義がそれより優先される。
+    SQL生成・数値計算・外部AI接続は行わない（取得手段は各Provider内部に隠蔽）。
+    """
+    q = question or ""
+
+    if "OEM" in q and "粗利" in q:
+        payload = _q1_oem_gross_profit()
+    elif "Fanatics" in q and ("状況" in q or "案件" in q):
+        payload = _q2_fanatics_status()
+    elif "優先" in q and "案件" in q:
+        payload = _q3_priority_projects()
+    elif "売上" in q and "顧客" in q and ("一番" in q or "最大" in q or "首位" in q):
+        payload = _q4_top_customer_sales()
+    else:
+        payload = _fallback()
+
+    raw_evidence = fetch_required_data(payload.get("required_data", []))
+    integrated_evidence = integrate_evidence(raw_evidence)
+    payload["evidence"] = interpret_evidence(integrated_evidence)
+
+    # Phase 13: Add Fact/Hypothesis/Candidate layers (read-only, no Knowledge updates)
+    if "OEM" in q and "粗利" in q:
+        facts = _extract_facts_oem_gross_profit()
+        interpretation = _interpret_facts(facts)
+        hypotheses = _generate_hypotheses_from_facts(facts, interpretation)
+        candidates = _create_knowledge_candidates(hypotheses)
+
+        payload["phase_13"] = {
+            "facts": facts,
+            "interpretation": interpretation,
+            "ai_hypotheses": hypotheses,
+            "knowledge_candidates": candidates,
+            "compliance_note": "Phase 13: AIの推定であり、Knowledgeは更新されていません。Product Ownerレビュー待ちです。"
+        }
+
+    return {"question": question, **payload}

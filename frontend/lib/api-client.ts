@@ -97,6 +97,26 @@ export async function getProjects(limit: number = 10) {
 }
 
 /**
+ * Ask a consultation question and get an evidence-backed answer
+ */
+export async function consultQuestion(message: string) {
+  return apiCall("/api/chat", {
+    method: "POST",
+    body: JSON.stringify({ user_id: "u-demo", role: "sales", message }),
+  });
+}
+
+/**
+ * Run the Reasoning Pipeline v0.1: Intent / Meaning / Knowledge Used / Required Data / Unknown
+ */
+export async function runReasoning(message: string) {
+  return apiCall("/api/reasoning", {
+    method: "POST",
+    body: JSON.stringify({ user_id: "u-demo", role: "sales", message }),
+  });
+}
+
+/**
  * Get single project with full aggregate
  */
 export async function getProject(projectId: string) {

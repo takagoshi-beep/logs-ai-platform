@@ -1,0 +1,38 @@
+[
+  {
+    "question": "今月のOEM事業の粗利を教えて",
+    "expected_verdict": "追加確認が必要",
+    "actual_verdict": "追加確認が必要",
+    "verdict_match": true,
+    "semantic_refs_count": 2,
+    "has_evidence": true,
+    "knowledge_used_count": 6
+  },
+  {
+    "question": "Fanatics案件の状況を教えて",
+    "expected_verdict": "回答可能（注意事項あり）",
+    "actual_verdict": "回答可能（注意事項あり）",
+    "verdict_match": true,
+    "semantic_refs_count": 1,
+    "has_evidence": true,
+    "knowledge_used_count": 3
+  },
+  {
+    "question": "今日優先すべき案件は？",
+    "expected_verdict": "判断保留",
+    "actual_verdict": "判断保留",
+    "verdict_match": true,
+    "semantic_refs_count": 1,
+    "has_evidence": true,
+    "knowledge_used_count": 3
+  },
+  {
+    "question": "今月売上が一番大きい顧客は？",
+    "expected_verdict": "回答可能（注意事項あり）",
+    "actual_verdict": "回答可能（注意事項あり）",
+    "verdict_match": true,
+    "semantic_refs_count": 2,
+    "has_evidence": true,
+    "knowledge_used_count": 4
+  }
+]

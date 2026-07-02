@@ -58,7 +58,7 @@ class ProjectService:
         try:
             sql = "SELECT * FROM 仕入 LIMIT ?"
             rows = repo.fetch_all(sql, (limit,))
-            return rows or []
+            return [dict(row) for row in rows] if rows else []
         except Exception as e:
             print(f"Error querying projects: {e}")
             return []
