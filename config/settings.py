@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Any
 import os
 import tomllib
-
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 CONFIG_DIR = Path(__file__).resolve().parent
