@@ -152,6 +152,15 @@ def import_latest_excel_to_sqlite(excel_dir: Path, db_path: Path) -> dict:
 
 def main() -> int:
     """CLI entrypoint for importing the latest Excel workbook into SQLite."""
+    import os
+    if os.getenv("STORAGE_PROVIDER", "sqlite").strip().lower() == "supabase":
+        print(
+            "ERROR: STORAGE_PROVIDER=supabase が設定されています。\n"
+            "このプロジェクトは public スキーマの本番データを直接参照する運用です。\n"
+            "Excelの再インポートは行わない方針のため、実行を中止しました。\n"
+            "本当に実行する場合は STORAGE_PROVIDER=sqlite に切り替えてください。"
+        )
+        return 1
     root_dir = Path(__file__).resolve().parents[1]
     excel_dir = root_dir / "data" / "excel"
     db_path = root_dir / "data" / "sqlite" / "logsys.db"
