@@ -1,28 +1,137 @@
-import { ActionPanel, Badge, Button, Card, ProjectCard, SectionHeader, StatusBadge, TaskCard, Timeline } from "@/components/design-system";
-import { projects, taskRecommendations, workspaceHistory } from "@/lib/mock-data";
+"use client";
+
+import { useEffect, useState } from "react";
+import { ActionPanel, Badge, Button, Card, SectionHeader, StatusBadge, TaskCard, Timeline } from "@/components/design-system";
+import { taskRecommendations } from "@/lib/mock-data";
+import { getProject } from "@/lib/api-client";
 
 type Params = { params: { projectId: string } };
 
+interface ProjectAction {
+  action_id: string;
+  title: string;
+  priority: string;
+  confidence: number;
+}
+
+interface ProjectEvent {
+  event_id: string;
+  business_meaning: string;
+  impact_summary: string;
+  event_time: string;
+}
+
+interface ProjectDetail {
+  project_id: string;
+  po_number: string;
+  state: string;
+  priority: string;
+  health: { health_score: number; health_status: string; reason: string } | null;
+  risk_score: number;
+  risk_level: string;
+  opportunity_score: number;
+  opportunity_level: string;
+  recommended_focus: string;
+  data: {
+    customer_name: string;
+    supplier_name: string;
+    days_until_delivery: number;
+    po_amount: number | null;
+    cost_amount: number | null;
+    sale_amount: number | null;
+    gross_profit: number | null;
+    gross_profit_margin: number | null;
+  };
+  actions: ProjectAction[];
+  events: { count: number; items: ProjectEvent[] };
+}
+
+const STATE_LABEL: Record<string, string> = {
+  initiated: "開始済み",
+  delivery_received: "納品済み・請求待ち",
+  awaiting_payment: "入金待ち",
+  cost_unconfirmed: "原価未確定",
+  gross_profit_unconfirmed: "粗利未確定",
+  gross_profit_degraded: "粗利低下",
+  completed: "完了",
+  delivery_overdue: "納期超過",
+  payment_overdue: "支払遅延",
+  cost_discrepancy: "原価相違",
+  customer_confirmation_needed: "顧客確認待ち",
+};
+
+function fmtYen(v: number | null | undefined): string {
+  if (v === null || v === undefined) return "—";
+  return `${Math.round(v).toLocaleString()}円`;
+}
+
 export default function WorkspacePage({ params }: Params) {
-  const project = projects.find((item) => item.id === params.projectId) ?? projects[0];
-  const projectTasks = taskRecommendations.filter((item) => item.project.toLowerCase().includes(project.name.split(" ")[0].toLowerCase()));
+  const [project, setProject] = useState<ProjectDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    getProject(params.projectId).then((data: any) => {
+      setLoading(false);
+      if (data?.success === false) {
+        setError(data.error ?? "案件データの取得に失敗しました");
+        return;
+      }
+      setProject(data?.project ?? null);
+    });
+  }, [params.projectId]);
+
+  if (loading) {
+    return <p className="px-4 py-8 text-center text-sm text-sub">読み込み中...</p>;
+  }
+
+  if (error || !project) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+        {error ?? "案件が見つかりませんでした"}
+      </div>
+    );
+  }
+
+  const stateLabel = STATE_LABEL[project.state] ?? project.state;
 
   return (
     <div className="space-y-5">
       <header className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h1 className="page-title">案件: {project.name}</h1>
-        <p className="page-subtitle">案件の概要、タスク、資料、次の対応をまとめて確認します。</p>
+        <h1 className="page-title">案件: {project.po_number}</h1>
+        <p className="page-subtitle">Supabase（purchase_orders）の実データに基づく分析です。</p>
       </header>
 
       <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
-        <ProjectCard name={project.name} summary={project.summary} owner={project.owner} status={project.status} />
+        <Card>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-ink">{project.data.customer_name}</h3>
+            <StatusBadge status={stateLabel} />
+          </div>
+          <p className="text-sm text-sub">仕入先: {project.data.supplier_name}</p>
+          <p className="mt-2 text-xs text-sub">納期まで: {project.data.days_until_delivery}日</p>
+          <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+            <div>売上金額: {fmtYen(project.data.sale_amount)}</div>
+            <div>原価: {fmtYen(project.data.cost_amount)}</div>
+            <div>粗利: {fmtYen(project.data.gross_profit)}</div>
+            <div>粗利率: {project.data.gross_profit_margin != null ? `${project.data.gross_profit_margin.toFixed(1)}%` : "—"}</div>
+          </div>
+          {project.health && (
+            <div className="mt-3 flex items-center gap-2">
+              <Badge label={`健全性 ${project.health.health_score} (${project.health.health_status})`} />
+              <Badge label={`リスク ${project.risk_score} (${project.risk_level})`} />
+              <Badge label={`推奨対応: ${project.recommended_focus}`} />
+            </div>
+          )}
+        </Card>
+
         <ActionPanel
-          title="次にやること"
-          items={[
-            { label: "最優先", value: "リスクアラートを確認し担当者を割り当てる" },
-            { label: "次に対応", value: "提案資料のセクションを更新する" },
-            { label: "その後", value: "関係者にフォローアップを送る" },
-          ]}
+          title="AIが提案する次のアクション"
+          items={
+            project.actions.length > 0
+              ? project.actions.map((a) => ({ label: a.priority, value: a.title }))
+              : [{ label: "情報", value: "現時点で推奨アクションはありません" }]
+          }
           action={
             <Button href="/tasks" size="sm">
               関連タスクを見る
@@ -33,9 +142,9 @@ export default function WorkspacePage({ params }: Params) {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
-          <SectionHeader title="関連タスク" subtitle="この案件に紐づく対応です。" />
+          <SectionHeader title="関連タスク（デモ）" subtitle="この案件に紐づく対応の例です（モックデータ）。" />
           <div className="mt-3 space-y-3">
-            {(projectTasks.length ? projectTasks : taskRecommendations).map((task) => (
+            {taskRecommendations.slice(0, 3).map((task) => (
               <TaskCard
                 key={task.id}
                 title={task.title}
@@ -52,38 +161,20 @@ export default function WorkspacePage({ params }: Params) {
 
         <div className="space-y-4">
           <Card>
-            <SectionHeader title="AI相談" subtitle="この案件に関する最新の提案です。" />
-            <p className="mt-3 text-sm text-sub">最新の提案</p>
-            <p className="mt-1 text-sm">「納期までに仕入先確認と出荷枠の確保を最優先にしてください」</p>
-            <div className="mt-3 flex items-center gap-2">
-              <Badge label="判断に使った情報" />
-              <Badge label="タスク履歴" />
-              <Badge label="遅延傾向" />
-            </div>
-          </Card>
-
-          <Card>
-            <SectionHeader title="作成した資料" subtitle="作成済み・作成中の資料です。" />
-            <ul className="mt-3 space-y-2 text-sm">
-              <li className="surface-soft flex items-center justify-between p-3">
-                <span>提案資料ドラフト v2 (pptx)</span>
-                <StatusBadge status="準備完了" />
-              </li>
-              <li className="surface-soft flex items-center justify-between p-3">
-                <span>フォローアップメール下書き</span>
-                <StatusBadge status="保留" />
-              </li>
-              <li className="surface-soft flex items-center justify-between p-3">
-                <span>実行ログ ex-1002</span>
-                <StatusBadge status="承認済み" />
-              </li>
-            </ul>
-          </Card>
-
-          <Card>
-            <SectionHeader title="活動履歴" subtitle="この案件で行われた対応の履歴です。" />
+            <SectionHeader title="活動履歴" subtitle="この案件で検知された実際のイベントです。" />
             <div className="mt-3">
-              <Timeline items={workspaceHistory} />
+              {project.events.items.length > 0 ? (
+                <Timeline
+                  items={project.events.items.map((e) => ({
+                    id: e.event_id,
+                    title: e.business_meaning,
+                    time: new Date(e.event_time).toLocaleString("ja-JP"),
+                    detail: e.impact_summary,
+                  }))}
+                />
+              ) : (
+                <p className="text-sm text-sub">イベントはまだ記録されていません</p>
+              )}
             </div>
           </Card>
         </div>
