@@ -24,28 +24,15 @@ from domain.project import (
     ProjectHealth,
     ProjectState,
 )
-from storage.provider import create_storage_repository
-from storage.repository import BaseRepository
+from services.supabase_client import get_connection
 
 
 class ProjectService:
     """Service for building complete ProjectAggregate from database."""
 
     def __init__(self, db_path: Path | None = None):
-        """Initialize service with database connection."""
-        if db_path is None:
-            try:
-                from config.settings import get_settings
-                settings = get_settings()
-                db_path = settings.db_path
-            except (ImportError, ModuleNotFoundError, AttributeError):
-                # Fallback to relative path - resolves from repo root
-                db_path = Path(__file__).resolve().parents[2] / "data/sqlite/logsys.db"
+        """Initialize service. Supabase connection details come from services.supabase_client."""
         self.db_path = db_path
-
-    def _open_repo(self) -> BaseRepository:
-        """Open repository connection."""
-        return create_storage_repository(db_path=self.db_path)
 
     def _generate_trace_id(self, project_id: str) -> str:
         """Generate deterministic trace ID based on project."""
@@ -53,46 +40,61 @@ class ProjectService:
         return f"project-{project_hash}"
 
     def _query_projects_from_db(self, limit: int = 50) -> list[dict[str, Any]]:
-        """Query database to find all project candidates (Purchase Orders with related data)."""
-        repo = self._open_repo()
+        """Query database to find all project candidates (Purchase Orders)."""
+        conn = get_connection()
         try:
-            sql = "SELECT * FROM 仕入 LIMIT ?"
-            rows = repo.fetch_all(sql, (limit,))
-            return [dict(row) for row in rows] if rows else []
+            with conn.cursor() as cur:
+                cur.execute('SELECT DISTINCT "ID" FROM purchase_orders ORDER BY "ID" DESC LIMIT %s', (limit,))
+                rows = cur.fetchall()
+            return [{"id": row[0]} for row in rows]
         except Exception as e:
             print(f"Error querying projects: {e}")
             return []
         finally:
-            repo.close()
+            conn.close()
 
     def _build_project_data(self, project_id: str) -> ProjectData | None:
-        """Build ProjectData by querying related information from database."""
-        repo = self._open_repo()
-        try:
-            po_sql = "SELECT * FROM 仕入 WHERE id = ?"
-            po_record = repo.fetch_one(po_sql, (project_id,))
-            if not po_record:
+        """Build ProjectData by querying purchase_orders (real Supabase public schema)."""
+
+        def parse_date(date_val: Any) -> datetime | None:
+            if not date_val:
+                return None
+            if isinstance(date_val, datetime):
+                return date_val
+            try:
+                return datetime.fromisoformat(str(date_val).replace("Z", "+00:00"))
+            except Exception:
                 return None
 
-            po_dict = dict(po_record) if hasattr(po_record, 'items') else po_record
-
-            def parse_date(date_val: Any) -> datetime | None:
-                if not date_val:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    'SELECT "PO_No", "仕入先ID", "仕入先名", "顧客ID", "顧客名", '
+                    '"PO発行日", "顧客納品日", "納品日", '
+                    '"合計発注金額", "合計売上原価", "合計売上金額" '
+                    'FROM purchase_orders WHERE "ID" = %s',
+                    (project_id,),
+                )
+                row = cur.fetchone()
+                if not row:
                     return None
-                if isinstance(date_val, datetime):
-                    return date_val
-                try:
-                    return datetime.fromisoformat(str(date_val).replace("Z", "+00:00"))
-                except:
-                    return None
+                columns = [desc[0] for desc in cur.description]
+                po_dict = dict(zip(columns, row))
+        except Exception as e:
+            print(f"Error building project data: {e}")
+            return None
+        finally:
+            conn.close()
 
-            po_number = po_dict.get("po", "") or ""
-            supplier_id = str(po_dict.get("仕入先id", "") or "unknown")
+        try:
+            po_number = po_dict.get("PO_No", "") or ""
+            supplier_id = str(po_dict.get("仕入先ID", "") or "unknown")
             supplier_name = po_dict.get("仕入先名", "") or ""
-            customer_id = str(po_dict.get("客先id", "") or "unknown")
-            customer_name = po_dict.get("客先名", "") or ""
-            po_created = parse_date(po_dict.get("仕入日", None)) or datetime.now()
-            po_required_delivery = parse_date(po_dict.get("仕入期日", None)) or (datetime.now() + timedelta(days=30))
+            customer_id = str(po_dict.get("顧客ID", "") or "unknown")
+            customer_name = po_dict.get("顧客名", "") or ""
+            po_created = parse_date(po_dict.get("PO発行日")) or datetime.now()
+            po_required_delivery = parse_date(po_dict.get("顧客納品日")) or (datetime.now() + timedelta(days=30))
 
             project_data = ProjectData(
                 project_id=project_id,
@@ -110,15 +112,15 @@ class ProjectService:
                 customer_email=None,
                 customer_address=None,
                 po_required_delivery_date_alt=None,
-                actual_delivery_date=parse_date(po_dict.get("納品日", None)),
+                actual_delivery_date=parse_date(po_dict.get("納品日")),
                 invoice_date=None,
                 payment_due_date=None,
                 actual_payment_date=None,
                 products=[],
-                po_amount=float(po_dict.get("仕入金額", 0) or 0),
+                po_amount=float(po_dict.get("合計発注金額", 0) or 0),
                 supplier_invoice_amount=None,
-                cost_amount=float(po_dict.get("原価", 0) or 0),
-                sale_amount=float(po_dict.get("売上", 0) or 0),
+                cost_amount=float(po_dict.get("合計売上原価", 0) or 0),
+                sale_amount=float(po_dict.get("合計売上金額", 0) or 0),
                 gross_profit=None,
                 gross_profit_margin=None,
             )
@@ -131,8 +133,6 @@ class ProjectService:
         except Exception as e:
             print(f"Error building project data: {e}")
             return None
-        finally:
-            repo.close()
 
     def _generate_project_events(self, data: ProjectData, trace_id: str) -> ProjectEvents:
         """Generate business events from project data."""
@@ -141,13 +141,12 @@ class ProjectService:
         event_id = 1
         now = datetime.now()
 
-        # Actual Event: project_created (derived from po_created_date)
         events.add_event(ProjectEvent(
             event_id=f"evt-{event_id}",
             project_id=data.project_id,
             event_type=ProjectEventType.PROJECT_CREATED,
             event_time=data.po_created_date,
-            source_table="仕入",
+            source_table="purchase_orders",
             business_meaning="PO作成 - 新規案件始動",
             impact_summary="プロジェクト開始、納期管理開始",
             trace_id=trace_id,
@@ -163,7 +162,7 @@ class ProjectService:
                 project_id=data.project_id,
                 event_type=ProjectEventType.SALES_REGISTERED,
                 event_time=now,
-                source_table="売上",
+                source_table="purchase_orders",
                 business_meaning="売上登録 - 収入確定",
                 impact_summary="売上が確定し、粗利を計算可能に",
                 trace_id=trace_id,
@@ -180,7 +179,7 @@ class ProjectService:
                 project_id=data.project_id,
                 event_type=ProjectEventType.PURCHASE_REGISTERED,
                 event_time=now,
-                source_table="仕入",
+                source_table="purchase_orders",
                 business_meaning="仕入登録 - 原価確定",
                 impact_summary="原価が確定し、粗利を計算可能に",
                 trace_id=trace_id,
@@ -197,7 +196,7 @@ class ProjectService:
                 project_id=data.project_id,
                 event_type=ProjectEventType.DELIVERY_COMPLETED,
                 event_time=data.actual_delivery_date,
-                source_table="仕入",
+                source_table="purchase_orders",
                 business_meaning="納品完了 - 納期達成",
                 impact_summary="納期目標達成",
                 trace_id=trace_id,
@@ -214,7 +213,7 @@ class ProjectService:
                 project_id=data.project_id,
                 event_type=ProjectEventType.PAYMENT_PROCESSED,
                 event_time=data.actual_payment_date,
-                source_table="支払",
+                source_table="purchase_orders",
                 business_meaning="支払完了 - 現金化",
                 impact_summary="全資金回収完了",
                 trace_id=trace_id,
@@ -225,15 +224,13 @@ class ProjectService:
             ))
             event_id += 1
 
-        # Derived Events: AI-generated from current data state
-
         if data.gross_profit_margin and data.gross_profit_margin >= 15:
             events.add_event(ProjectEvent(
                 event_id=f"evt-{event_id}",
                 project_id=data.project_id,
                 event_type=ProjectEventType.GROSS_PROFIT_RECALCULATED,
                 event_time=now,
-                source_table="仕入",
+                source_table="purchase_orders",
                 business_meaning="粗利再計算 - 目標達成",
                 impact_summary="粗利15%以上確保",
                 trace_id=trace_id,
@@ -248,7 +245,7 @@ class ProjectService:
                 project_id=data.project_id,
                 event_type=ProjectEventType.GROSS_PROFIT_DECLINED,
                 event_time=now,
-                source_table="仕入",
+                source_table="purchase_orders",
                 business_meaning="粗利低下 - リスク検知",
                 impact_summary="粗利が15%未満に低下",
                 trace_id=trace_id,
@@ -265,7 +262,7 @@ class ProjectService:
                 project_id=data.project_id,
                 event_type=ProjectEventType.DELIVERY_RISK_DETECTED,
                 event_time=now,
-                source_table="仕入",
+                source_table="purchase_orders",
                 business_meaning="納期リスク検知 - 7日以内",
                 impact_summary="納期まで時間が少ない - 急ぎ対応必要",
                 trace_id=trace_id,
@@ -446,7 +443,7 @@ class ProjectService:
                     related_state=state,
                     related_goal=ProjectGoal.MEET_DEADLINE,
                     decision_source=decision.decision,
-                    source_tables=["仕入"],
+                    source_tables=["purchase_orders"],
                     action_type="phone_call",
                     trace_id=trace_id,
                     confidence=decision.confidence,
@@ -463,7 +460,7 @@ class ProjectService:
                     related_state=state,
                     related_goal=ProjectGoal.CONFIRM_COST,
                     decision_source=decision.decision,
-                    source_tables=["仕入"],
+                    source_tables=["purchase_orders"],
                     action_type="email",
                     trace_id=trace_id,
                     confidence=decision.confidence,
@@ -480,7 +477,7 @@ class ProjectService:
                     related_state=state,
                     related_goal=ProjectGoal.SECURE_MARGIN,
                     decision_source=decision.decision,
-                    source_tables=["仕入"],
+                    source_tables=["purchase_orders"],
                     action_type="review",
                     trace_id=trace_id,
                     confidence=decision.confidence,
@@ -494,9 +491,7 @@ class ProjectService:
         score = 100
         factors = {}
 
-        # Completed state - high health unless there were margin issues
         if state == ProjectState.COMPLETED:
-            # Completed projects get 95+ unless there were margin issues
             if data.profit_margin_pct and data.profit_margin_pct < 10:
                 score = 85
                 factors["completed_low_margin"] = -15
@@ -508,7 +503,6 @@ class ProjectService:
                 trace_id=trace_id,
             )
 
-        # Gross profit penalty - most important factor
         if data.profit_margin_pct is not None:
             if data.profit_margin_pct < 0:
                 penalty = 70
@@ -527,10 +521,8 @@ class ProjectService:
             if penalty > 0:
                 score -= penalty
 
-        # Delivery risk - aggressive for imminent failures
         if not data.actual_delivery_date and data.days_until_delivery is not None:
             if data.days_until_delivery < 0:
-                # Overdue but not delivered yet - severe
                 penalty = 50
                 factors["delivery_overdue"] = -penalty
             elif data.days_until_delivery < 3:
@@ -547,27 +539,22 @@ class ProjectService:
             if penalty > 0:
                 score -= penalty
 
-        # Payment/billing pending - cash flow risk
         if state == ProjectState.DELIVERY_RECEIVED or (state == ProjectState.AWAITING_PAYMENT and data.actual_delivery_date):
-            # Delivered but not paid - cash flow risk
             penalty = 20
             score -= penalty
             factors["cash_flow_pending"] = -penalty
 
-        # Cost unconfirmed penalty
         confirm_cost_eval = goals.evaluations.get(ProjectGoal.CONFIRM_COST)
         if confirm_cost_eval and confirm_cost_eval.status == GoalStatus.AT_RISK:
             penalty = 15
             score -= penalty
             factors["cost_unconfirmed"] = -penalty
 
-        # High priority action penalty
         if len(actions) > 0 and any(a.priority == "high" for a in actions):
             penalty = 15
             score -= penalty
             factors["high_priority_action"] = -penalty
 
-        # Data completeness penalty
         has_missing_data = ((data.sale_amount == 0 or data.sale_amount is None) or
                            (data.cost_amount == 0 or data.cost_amount is None) or
                            (data.po_amount == 0 or data.po_amount is None))
@@ -578,7 +565,6 @@ class ProjectService:
 
         score = max(0, min(100, score))
 
-        # Determine status
         if score >= 80:
             status = "healthy"
         elif score >= 60:
@@ -602,7 +588,6 @@ class ProjectService:
         """Calculate risk score (0-100) reflecting danger if ignored."""
         risk_components = []
 
-        # Margin risk - financial viability
         if data.profit_margin_pct is not None:
             if data.profit_margin_pct < 0:
                 margin_risk = 100
@@ -614,9 +599,8 @@ class ProjectService:
                 margin_risk = 55
             else:
                 margin_risk = 20
-            risk_components.append(("margin", margin_risk, 0.40))  # 40% weight
+            risk_components.append(("margin", margin_risk, 0.40))
 
-        # Delivery risk - operational execution
         if not data.actual_delivery_date and data.days_until_delivery is not None:
             if data.days_until_delivery < 0:
                 delivery_risk = 100
@@ -630,25 +614,21 @@ class ProjectService:
                 delivery_risk = 40
             else:
                 delivery_risk = 15
-            risk_components.append(("delivery", delivery_risk, 0.35))  # 35% weight
+            risk_components.append(("delivery", delivery_risk, 0.35))
         else:
             risk_components.append(("delivery", 0, 0.35))
 
-        # Cash flow / billing risk
         if data.actual_delivery_date and not data.actual_payment_date:
-            # Delivered but not yet paid = cash flow risk
             billing_risk = 70
         elif state == ProjectState.DELIVERY_OVERDUE:
             billing_risk = 65
         else:
             billing_risk = 15
-        risk_components.append(("billing", billing_risk, 0.25))  # 25% weight
+        risk_components.append(("billing", billing_risk, 0.25))
 
-        # Calculate weighted risk score
         risk_score = sum(component[1] * component[2] for component in risk_components)
         risk_score = min(100, int(risk_score))
 
-        # Determine risk level with stricter thresholds
         if risk_score >= 80:
             risk_level = "critical"
         elif risk_score >= 60:
@@ -665,7 +645,6 @@ class ProjectService:
         opportunity_score = 0
         vip_multiplier = 1.5 if customer_priority == "vip" else (1.2 if customer_priority == "high" else 1.0)
 
-        # High margin opportunity (strongest signal)
         if data.profit_margin_pct and data.profit_margin_pct >= 35:
             margin_score = int(50 * vip_multiplier)
             opportunity_score += margin_score
@@ -676,7 +655,6 @@ class ProjectService:
             margin_score = int(15 * vip_multiplier)
             opportunity_score += margin_score
 
-        # Large deal opportunity
         if data.sale_amount and data.sale_amount >= 2000000:
             deal_score = int(30 * vip_multiplier)
             opportunity_score += deal_score
@@ -684,10 +662,8 @@ class ProjectService:
             deal_score = int(15 * vip_multiplier)
             opportunity_score += deal_score
 
-        # Cap at 100
         opportunity_score = min(100, opportunity_score)
 
-        # Determine opportunity level
         if opportunity_score >= 70:
             opportunity_level = "high"
         elif opportunity_score >= 40:
@@ -709,7 +685,6 @@ class ProjectService:
         if not data:
             return None
 
-        # Generate deterministic trace ID
         trace_id = self._generate_trace_id(project_id)
 
         events = self._generate_project_events(data, trace_id)
@@ -718,7 +693,6 @@ class ProjectService:
         decisions = self._generate_decisions(data, state, goals)
         actions = self._generate_actions(data, state, decisions, trace_id)
 
-        # Calculate 3-axis scores
         health = self._calculate_health_score(data, state, goals, decisions, actions, trace_id)
         risk_score, risk_level = self._calculate_risk_score(data, state, goals)
         opportunity_score, opportunity_level = self._calculate_opportunity_score(data)
