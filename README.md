@@ -9,14 +9,14 @@ LOGS AI Platform is an internal AI/data platform for using Logsys-connected Exce
 ### Try the Live Demo
 
 1. **Start Backend:**
-   ```bash
+```bash
    python -m uvicorn app.main:app --reload
-   ```
+```
 
 2. **Start Frontend:**
-   ```bash
+```bash
    cd frontend && npm run dev
-   ```
+```
 
 3. **Open Demo:**
    Navigate to: **http://localhost:3000/walking-skeleton**
@@ -82,6 +82,12 @@ data/excel/
 The importer will automatically pick the newest Excel file in that directory.
 
 ## Import data into SQLite
+
+> ⚠️ **Not used in the current configuration.** This project currently runs
+> with `STORAGE_PROVIDER=supabase` and reads directly from the shared
+> production `public` schema. See
+> [Supabase configuration](#supabase-configuration-current-direct-public-schema-reference)
+> below before using this importer.
 
 Run the unified command below:
 
@@ -180,23 +186,48 @@ docker compose up --build
 
 The container exposes the FastAPI service on port `8000`.
 
-## Supabase schema-separated configuration
+## Supabase configuration (current: direct `public` schema reference)
 
-SQLite remains the default provider.
+SQLite remains the default provider when `STORAGE_PROVIDER` is not set.
 
-Set the provider and Supabase connection only when enabling cloud storage:
+This project currently reuses the existing production Supabase database
+(the same one used by the separate ChatGPT-driven operational tooling)
+by reading directly from its `public` schema, instead of re-importing
+Excel data into a separate schema. This avoids duplicating 200K+ rows
+of live sales/customer/product data.
+
+Set the following in `.env` to enable this:
 
 ```bash
 STORAGE_PROVIDER=supabase
 SUPABASE_DB_URL=postgresql://...
-SUPABASE_SCHEMA_RAW=ai_os_raw
-SUPABASE_SCHEMA_CORE=ai_os_core
-SUPABASE_SCHEMA_META=ai_os_meta
+SUPABASE_SCHEMA_CORE=public
 ```
 
-AI OS uses only these schemas in Supabase and does not depend on existing `public` tables.
+`.env` is loaded automatically via `python-dotenv` in `config/settings.py`;
+no manual environment variable export is required.
 
-Optional bootstrap script (safe create-only):
+### Important: do not re-run the Excel importer
+
+`database/importer.py` writes into a separate SQLite database and is
+**not compatible with this configuration**. It is disabled by a safety
+guard when `STORAGE_PROVIDER=supabase` to avoid confusion:
+
+```bash
+python -m database.importer
+# ERROR: STORAGE_PROVIDER=supabase が設定されています。... (execution blocked)
+```
+
+If Excel-based local development is genuinely needed, switch to
+`STORAGE_PROVIDER=sqlite` first and be aware the resulting local data
+is separate from the shared production data.
+
+### Legacy: dedicated `ai_os_*` schemas (not currently used)
+
+An earlier design used dedicated schemas (`ai_os_raw`, `ai_os_core`,
+`ai_os_meta`) fully isolated from `public`. This is no longer the
+active configuration but the bootstrap script remains available if a
+future migration back to isolated schemas is needed:
 
 ```bash
 python scripts/bootstrap_supabase_schemas.py
@@ -739,7 +770,7 @@ This sprint adds a cloud-ready foundation so data sources and DB backends can be
   - `storage/models.py` defines `StorageConfig`.
   - `storage/repository.py` defines the repository interface.
   - `storage/sqlite.py` provides the working SQLite implementation.
-  - `storage/postgres.py` provides a PostgreSQL scaffold for later activation.
+  - `storage/postgres.py` provides the PostgreSQL implementation (used for the shared `public` schema).
 
 - Connector Layer:
   - `connector/google_drive/` and `connector/google_sheets.py` provide connector implementations.
@@ -938,6 +969,7 @@ Google Drive (sync source)
   -> Business Logic
   -> Runtime
   -> Answer
+```
 
 ## Sprint 32: Business-only answers without LLM
 
@@ -957,6 +989,7 @@ Repository
   -> Business
   -> Business Formatter
   -> Answer
+```
 
 ## Sprint 33: Business Tool Registry and Selector
 
@@ -978,6 +1011,4 @@ Intent
   -> Business Query
   -> Formatter
   -> Answer
-```
-```
 ```
