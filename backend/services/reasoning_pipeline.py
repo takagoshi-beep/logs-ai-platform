@@ -77,75 +77,69 @@ def _fallback() -> dict[str, Any]:
     }
 
 
-# Phase 13: Real Logsys DB Fact Extraction (read-only, no Knowledge updates)
+# Phase 13: Real Data Fact Extraction (read-only, no Knowledge updates)
 
 def _extract_facts_oem_gross_profit() -> dict[str, Any]:
-    """Phase 13: Extract facts from real Logsys DB for OEM profit analysis.
+    """Phase 13: Extract facts from the real Supabase `public.sales` table
+    for OEM gross-profit analysis.
 
-    Fact層: DBから取得した客観事実のみ
+    Fact層: DBから取得した客観事実のみ。
+    OEM分類（事業分類=1）は code_master（BUSINESS_TYPE コード群）で
+    確認済みの正式なマスタ定義であり、AIの推測ではない。
     """
+    from datetime import datetime
+
+    from services.supabase_client import get_connection
+
+    month_start, month_end = _current_month_range()
+
     try:
-        conn = sqlite3.connect("data/sqlite/logsys.db")
-        conn.text_factory = str
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        month_start, month_end = _current_month_range()
-
-        # Get table names dynamically to avoid encoding issues
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' LIMIT 1")
-        result = cursor.fetchone()
-        if not result:
-            raise Exception("No tables found in logsys.db")
-
-        table_name = result[0]  # This will be the aggregation table (集計)
-
-        # Get column names from table schema
-        cursor.execute(f"PRAGMA table_info([{table_name}])")
-        columns = cursor.fetchall()
-        col_dict = {col[1]: col[0] for col in columns}  # name -> index
-
-        # Execute generic query - just get all rows to see what we have
-        cursor.execute(f"SELECT COUNT(*) as cnt FROM [{table_name}] LIMIT 1")
-        row = cursor.fetchone()
-
-        from datetime import datetime
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    'SELECT COUNT(*), SUM("売上合計金額"), SUM("粗利") '
+                    'FROM sales '
+                    'WHERE "事業分類" = 1 AND "売上入力日" >= %s AND "売上入力日" <= %s',
+                    (month_start, month_end),
+                )
+                record_count, total_sales, total_margin = cur.fetchone()
+        finally:
+            conn.close()
 
         facts = {
             "layer": "FACT",
             "timestamp": datetime.now().isoformat(),
-            "provider": "LogsysProvider",
-            "source_table": "集計",
+            "provider": "SupabaseProvider",
+            "source_table": "public.sales",
             "query_conditions": {
-                "分類": "OEM",
-                "顧客名": "NOT NULL",
-                "period": f"{month_start}〜{month_end}"
+                "事業分類": "1（OEM。code_master の BUSINESS_TYPE コード群で確認済み）",
+                "period (売上入力日)": f"{month_start}〜{month_end}",
             },
-            "rows_retrieved": 0,  # Will update after successful query
+            "rows_retrieved": record_count or 0,
             "data": {
-                "oem_record_count": 0,
-                "oem_total_sales": None,
-                "oem_total_margin": None,
+                "oem_record_count": record_count or 0,
+                "oem_total_sales": float(total_sales) if total_sales is not None else 0.0,
+                "oem_total_margin": float(total_margin) if total_margin is not None else 0.0,
             },
             "data_quality": {
-                "completeness": "集計テーブルから直接取得",
+                "completeness": "public.sales から直接集計",
                 "null_count": 0,
-                "estimated_accuracy": 0.95
+                "estimated_accuracy": 1.0,
             },
             "schema_info": {
-                "table": table_name,
-                "columns": len(columns)
-            }
+                "table": "public.sales",
+                "classification_source": "code_master (BUSINESS_TYPE)",
+                "date_field_assumption": "売上入力日を期間フィルタに使用（要確認）",
+            },
         }
-
-        conn.close()
         return facts
     except Exception as e:
         return {
             "layer": "FACT",
             "error": str(e),
-            "provider": "LogsysProvider",
-            "source_table": "集計",
+            "provider": "SupabaseProvider",
+            "source_table": "public.sales",
             "rows_retrieved": 0,
         }
 
@@ -154,103 +148,67 @@ def _interpret_facts(facts: dict) -> dict[str, Any]:
     """Phase 13: Interpret facts (explain what we observed).
 
     Interpretation層: Factから読み取ったことの説明のみ
-    （数値はFactに、パターン認識ここで）
     """
     if facts.get("error"):
         return {
             "layer": "INTERPRETATION",
             "status": "error_retrieving_data",
-            "observation": "Logsys DBからのデータ取得に失敗しました"
+            "observation": "Supabase (public.sales) からのデータ取得に失敗しました",
         }
 
     record_count = facts.get("data", {}).get("oem_record_count", 0)
 
     interpretation = {
         "layer": "INTERPRETATION",
-        "observations": []
+        "observations": [],
     }
 
-    # Observation 1: OEM data exists
     if record_count > 0:
         interpretation["observations"].append(
-            f"集計テーブルに『分類=OEM』というフラグが存在し、{record_count}件のレコードがマッチしました"
+            f"public.sales の事業分類=1（OEM、code_masterで確認済み）に該当する"
+            f"レコードが{record_count}件見つかりました"
         )
     else:
         interpretation["observations"].append(
-            "集計テーブルに『分類=OEM』のレコードがありません"
+            "指定期間内に事業分類=1（OEM）のレコードが見つかりませんでした"
         )
 
-    # Observation 2: Financial data available
     sales = facts.get("data", {}).get("oem_total_sales")
     margin = facts.get("data", {}).get("oem_total_margin")
     if sales is not None and margin is not None:
         interpretation["observations"].append(
-            "売上と粗利の金額が集計テーブルに事前計算されています"
+            "売上・粗利は sales テーブルの明細行を直接合計して算出しています"
+            "（事前集計されたテーブルではありません）"
         )
 
-    # Observation 3: Data quality
     interpretation["observations"].append(
-        f"データ取得日時: {facts.get('timestamp')}、推定精度: 95%"
+        f"データ取得日時: {facts.get('timestamp')}、"
+        f"期間の基準列は『売上入力日』と仮定（要確認）"
     )
 
     return interpretation
 
 
 def _generate_hypotheses_from_facts(facts: dict, interpretation: dict) -> list[dict[str, Any]]:
-    """Phase 13: Generate AI hypotheses based on facts and interpretation.
+    """Phase 13: Generate remaining AI hypotheses (genuinely unresolved points only).
 
-    Hypothesis層: AIの推定（Factからの推論）
+    Hypothesis層: AIの推定（Factからの推論）。
+    OEM分類自体は code_master で確認済みのため、ここでは扱わない。
     """
     hypotheses = []
 
-    record_count = facts.get("data", {}).get("oem_record_count", 0)
-
-    # Hypothesis 1: OEM classification method
-    if record_count > 0:
-        hypotheses.append({
-            "layer": "HYPOTHESIS",
-            "id": "HYP-OEM-001",
-            "statement": "OEM案件は集計.分類='OEM' で判定されている可能性が高い",
-            "confidence": 0.72,
-            "reasoning": [
-                "Fact: 集計テーブルに『分類』フィールドが存在する",
-                "Fact: OEM分類が一貫してマッチしている",
-                "Interpretation: 複数の関連フィールドで同じパターン"
-            ],
-            "affects_knowledge": True,
-            "knowledge_concept": "OEM案件判定基準"
-        })
-
-    # Hypothesis 2: Gross profit pre-calculation
-    sales = facts.get("data", {}).get("oem_total_sales")
-    margin = facts.get("data", {}).get("oem_total_margin")
-    if sales is not None and margin is not None and margin > 0:
-        hypotheses.append({
-            "layer": "HYPOTHESIS",
-            "id": "HYP-PROFIT-001",
-            "statement": "粗利は集計.案件粗利に事前計算されている可能性がある",
-            "confidence": 0.68,
-            "reasoning": [
-                "Fact: 集計テーブルに案件粗利フィールドが存在",
-                "Fact: 正の金額が取得可能",
-                "Interpretation: ただし実績/論理/担当別の区別は不明"
-            ],
-            "affects_knowledge": True,
-            "knowledge_concept": "粗利計算基準（実績 vs 論理）"
-        })
-
-    # Hypothesis 3: Data freshness
     hypotheses.append({
         "layer": "HYPOTHESIS",
-        "id": "HYP-DATA-001",
-        "statement": "集計テーブルは月次レベルのスナップショットのようだが、更新タイミング不明",
-        "confidence": 0.55,
+        "id": "HYP-DATE-001",
+        "statement": "期間フィルタには『売上入力日』を使うのが適切と仮定しているが、"
+                     "『売上確定日』や『納品伝票日』を使うべき可能性もある",
+        "confidence": 0.6,
         "reasoning": [
-            "Fact: テーブル構造と命名から月次集計が想定される",
-            "Interpretation: ただし締日・更新頻度・修正反映タイミングは不明"
+            "Fact: sales テーブルには複数の日付カラムが存在する",
+            "Interpretation: どの日付を『今月の売上』の基準にするかは会社ルールとして未確認",
         ],
         "affects_knowledge": True,
-        "knowledge_concept": "期間定義（カレンダー月 vs 会計月）"
+        "knowledge_concept": "売上集計における期間基準日の定義",
     })
 
     return hypotheses
@@ -274,7 +232,7 @@ def _create_knowledge_candidates(hypotheses: list[dict]) -> list[dict[str, Any]]
                 "hypothesis_id": hyp["id"],
                 "po_review_status": "PENDING",
                 "ready_for_knowledge_update": False,
-                "note": "⚠️  Product Owner確認待ち - AIの推定であり、会社ルールとして確定していません"
+                "note": "⚠️  Product Owner確認待ち - AIの推定であり、会社ルールとして確定していません",
             })
 
     return candidates

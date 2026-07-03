@@ -53,3 +53,8 @@ def get_real_kpis() -> dict:
         }
     except Exception as exc:  # noqa: BLE001
         return {"success": False, "error": str(exc)}
+
+
+def get_connection():
+    """Expose a raw psycopg connection for callers that need custom queries."""
+    return _connect()
