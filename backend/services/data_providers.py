@@ -6,12 +6,10 @@ Reasoningは required_data の provider/dataset を指定するだけで、
 """
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
-DB_PATH = Path(__file__).resolve().parents[1] / "data" / "sqlite" / "logsys.db"
+from services.supabase_client import get_connection
 
 
 def _evidence(
@@ -40,17 +38,20 @@ def _evidence(
 
 
 class LogisysProvider:
-    """Logisys(SQLite)。SQLはこのクラスの内部だけが知る。"""
+    """Logisys(Supabase public schema)。SQLはこのクラスの内部だけが知る。"""
 
     name = "logisys"
 
     def _query(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
-        con = sqlite3.connect(DB_PATH)
-        con.row_factory = sqlite3.Row
+        conn = get_connection()
         try:
-            return [dict(row) for row in con.execute(sql, params).fetchall()]
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                columns = [desc[0] for desc in cur.description] if cur.description else []
+                rows = cur.fetchall()
+            return [dict(zip(columns, row)) for row in rows]
         finally:
-            con.close()
+            conn.close()
 
     def fetch(self, dataset: str, params: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -58,29 +59,30 @@ class LogisysProvider:
             if handler is None:
                 return _evidence(self.name, dataset, "unavailable", f"未対応のデータセット: {dataset}")
             return handler(params)
-        except sqlite3.OperationalError as exc:
+        except Exception as exc:  # noqa: BLE001
             return _evidence(
                 self.name, dataset, "unavailable",
                 "Logisysから取得できませんでした",
-                note=f"テーブル未整備の可能性（{exc}）",
+                note=f"テーブル/カラム未整備の可能性（{exc}）",
             )
 
     def _sales_lines(self, params: dict[str, Any]) -> dict[str, Any]:
         sql = (
-            "SELECT 売上日, 顧客コード, 顧客名, 商品名, 案件区分, 数量, 金額, 概算粗利 "
-            "FROM 売上明細 WHERE status IN (2,3,4,5) AND payment_method != 4"
+            'SELECT "売上入力日", "得意先ID", "得意先名", "登録商品名", '
+            '"事業分類", "数量pcs", "売上金額", "明細粗利" '
+            'FROM sales WHERE 1=1'
         )
         args: list[Any] = []
         if params.get("period_start"):
-            sql += " AND 売上日 >= ?"
+            sql += ' AND "売上入力日" >= %s'
             args.append(params["period_start"])
         if params.get("period_end"):
-            sql += " AND 売上日 <= ?"
+            sql += ' AND "売上入力日" <= %s'
             args.append(params["period_end"])
         if params.get("customer_keyword"):
-            sql += " AND 顧客名 LIKE ?"
+            sql += ' AND "得意先名" LIKE %s'
             args.append(f"%{params['customer_keyword']}%")
-        sql += " ORDER BY 売上日"
+        sql += ' ORDER BY "売上入力日"'
         rows = self._query(sql, tuple(args))
         period = (
             f"{params.get('period_start', '')}〜{params.get('period_end', '')}"
@@ -88,76 +90,53 @@ class LogisysProvider:
         )
         return _evidence(
             self.name, "sales_lines", "ok",
-            f"売上明細 {len(rows)}件を取得（{period}、有効な受注のみ・標準フィルタ適用済み）",
+            f"売上明細 {len(rows)}件を取得（{period}）",
             rows,
+            note="有効/無効の絞り込み基準（ステータス・決済方法の意味）は未確認のため、フィルタ未適用",
         )
 
     def _purchase_lines(self, params: dict[str, Any]) -> dict[str, Any]:
-        sql = "SELECT 仕入日, 仕入先名, 商品コード, 商品名, 金額 FROM 仕入明細 WHERE 1=1"
-        args: list[Any] = []
-        if params.get("period_start"):
-            sql += " AND 仕入日 >= ?"
-            args.append(params["period_start"])
-        if params.get("period_end"):
-            sql += " AND 仕入日 <= ?"
-            args.append(params["period_end"])
-        sql += " ORDER BY 仕入日"
-        rows = self._query(sql, tuple(args))
         return _evidence(
-            self.name, "purchase_lines", "ok",
-            f"仕入明細 {len(rows)}件を取得（諸掛り込み金額）",
-            rows,
+            self.name, "purchase_lines", "unavailable",
+            "仕入明細は取得できませんでした",
+            note="実データでの対応テーブル（purchases / purchase_orders）が未確認のため保留",
         )
 
     def _projects(self, params: dict[str, Any]) -> dict[str, Any]:
-        sql = "SELECT id, 案件名, 顧客名, 案件区分, ステータス, 納期 FROM 案件 WHERE 1=1"
-        args: list[Any] = []
-        if params.get("keyword"):
-            sql += " AND (案件名 LIKE ? OR 顧客名 LIKE ?)"
-            args += [f"%{params['keyword']}%", f"%{params['keyword']}%"]
-        sql += " ORDER BY 納期"
-        rows = self._query(sql, tuple(args))
-        label = f"「{params['keyword']}」関連の" if params.get("keyword") else ""
-        return _evidence(self.name, "projects", "ok", f"{label}案件 {len(rows)}件を取得", rows)
+        return _evidence(
+            self.name, "projects", "unavailable",
+            "案件データは取得できませんでした",
+            note="実データでの「案件」に相当するテーブル対応が未確認のため保留",
+        )
 
     def _customer_master(self, params: dict[str, Any]) -> dict[str, Any]:
-        sql = "SELECT 顧客コード, 顧客名, 別名 FROM 顧客マスタ WHERE 1=1"
+        sql = 'SELECT "ID", "顧客名称" FROM customers WHERE 1=1'
         args: list[Any] = []
         if params.get("keyword"):
-            sql += " AND (顧客名 LIKE ? OR 別名 LIKE ?)"
-            args += [f"%{params['keyword']}%", f"%{params['keyword']}%"]
+            sql += ' AND "顧客名称" LIKE %s'
+            args.append(f"%{params['keyword']}%")
         rows = self._query(sql, tuple(args))
         return _evidence(self.name, "customer_master", "ok", f"顧客マスタ {len(rows)}件を取得（名寄せ用）", rows)
 
     def _product_master(self, params: dict[str, Any]) -> dict[str, Any]:
-        rows = self._query("SELECT 商品コード, 商品名, 分類 FROM 商品マスタ")
+        rows = self._query('SELECT "LOGS_CODE", "商品名", "商品分類" FROM products')
         return _evidence(self.name, "product_master", "ok", f"商品マスタ {len(rows)}件を取得", rows)
 
     def _project_classification(self, params: dict[str, Any]) -> dict[str, Any]:
-        rows = self._query("SELECT 案件区分, COUNT(*) AS 件数 FROM 案件 GROUP BY 案件区分")
+        # 事業分類のコード対応は code_master(BUSINESS_TYPE)で確認済み:
+        # 1=OEM, 2=商品仕入れ（海外）, 3=商品仕入れ（国内）
+        rows = self._query('SELECT "事業分類", COUNT(*) AS 件数 FROM sales GROUP BY "事業分類"')
         return _evidence(
             self.name, "project_classification", "ok",
-            f"案件区分フィールドを確認（区分 {len(rows)}種類が存在）",
+            f"事業分類フィールドを確認（区分 {len(rows)}種類が存在。code_masterで確認済み）",
             rows,
         )
 
     def _cancelled_sales(self, params: dict[str, Any]) -> dict[str, Any]:
-        sql = (
-            "SELECT 売上日, 顧客名, 商品名, 金額, status, payment_method "
-            "FROM 売上明細 WHERE (status = 9 OR payment_method = 4)"
-        )
-        args: list[Any] = []
-        if params.get("period_start"):
-            sql += " AND 売上日 >= ?"
-            args.append(params["period_start"])
-        if params.get("period_end"):
-            sql += " AND 売上日 <= ?"
-            args.append(params["period_end"])
-        rows = self._query(sql, tuple(args))
         return _evidence(
-            self.name, "cancelled_sales", "ok",
-            f"キャンセル・集計対象外の売上 {len(rows)}件を取得（標準フィルタで除外される明細）",
-            rows,
+            self.name, "cancelled_sales", "unavailable",
+            "キャンセル・集計対象外の売上は取得できませんでした",
+            note="ステータス・決済方法のコード値の意味が未確認のため保留",
         )
 
     def _returns(self, params: dict[str, Any]) -> dict[str, Any]:
