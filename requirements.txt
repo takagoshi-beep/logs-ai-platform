@@ -10,3 +10,5 @@ google-auth==2.38.0
 google-auth-oauthlib==1.2.1
 google-auth-httplib2==0.2.0
 PyYAML==6.0.3
+psycopg[binary]==3.3.4
+python-dotenv==1.2.2
