@@ -14,10 +14,15 @@ data/excel/*
 !data/excel/.gitkeep
 data/sqlite/*
 !data/sqlite/.gitkeep
+backend/data/sqlite/*
+!backend/data/sqlite/.gitkeep
 *.xlsx
 *.xlsm
 *.xls
 *.db
+*.db-shm
+*.db-wal
+*.db-journal
 *.sqlite
 *.sqlite3
 
