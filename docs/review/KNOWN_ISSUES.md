@@ -188,6 +188,22 @@
 **Workaround:** Check browser console (F12) and backend logs  
 **Fix:** Phase 5b will add detailed error messages and logging
 
+### 8. Delivery Completion Signal Relies Solely on Logsys Sales Entry
+**Limitation:** `ProjectService` determines the `DELIVERY_OVERDUE` state purely
+from whether `顧客納品日`（customer delivery date, from `purchase_orders`）
+has passed without a corresponding sales entry (`sale_amount`) in Logsys. It
+has no way to know whether the item was actually delivered in reality.  
+**Impact:** Many older POs that were completed in practice but never had
+sales/cost entered into Logsys are flagged as "納期超過" (overdue), causing
+`今日のタスク` (Task Center) to be dominated by repetitive
+"仕入先へ納期急ぎ連絡" (urgent supplier delivery follow-up) actions that are
+not actually actionable.  
+**Workaround:** Manually cross-check against the production management
+team's separate tracking spreadsheet before acting on these alerts.  
+**Fix:** Integrate the production management spreadsheet (used by 生産管理)
+as an additional data source for actual delivery/completion status, so
+`ProjectService` can distinguish "truly overdue" from "Logsys entry pending."
+
 ---
 
 ## Known UI/UX Issues
@@ -338,7 +354,6 @@ If you find something not on this list:
 
 **For use when testing new pages or features:**
 
-```
 Page: [URL]
 Browser: [Chrome/Firefox/Safari/Edge]
 Date: [YYYY-MM-DD]
@@ -357,7 +372,6 @@ Issues Found:
 
 Sign-off: 
 [Developer name] verified this page on [date]
-```
 
 See docs/review/BROWSER_VERIFICATION_REPORT.md for detailed process.
 
@@ -369,7 +383,3 @@ For questions about any limitation:
 - Ask the team in the review meeting
 - Reference this document by section number
 - Suggest priority for fixes in FEEDBACK_TEMPLATE.md
-
-
-- Suggest priority for fixes in FEEDBACK_TEMPLATE.md
-
