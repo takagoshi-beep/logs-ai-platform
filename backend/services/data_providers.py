@@ -67,6 +67,8 @@ class LogisysProvider:
             )
 
     def _sales_lines(self, params: dict[str, Any]) -> dict[str, Any]:
+        # NOTE: SALES_STATUS=3（赤伝）は返品であり、集計から除外しない
+        # （マイナス計上すべき正規取引のため）。除外フィルタは意図的に付けていない。
         sql = (
             'SELECT "売上入力日", "得意先ID", "得意先名", "登録商品名", '
             '"事業分類", "数量pcs", "売上金額", "明細粗利" '
@@ -92,7 +94,7 @@ class LogisysProvider:
             self.name, "sales_lines", "ok",
             f"売上明細 {len(rows)}件を取得（{period}）",
             rows,
-            note="有効/無効の絞り込み基準（ステータス・決済方法の意味）は未確認のため、フィルタ未適用",
+            note="赤伝（返品）は除外せず含む。仮出庫（未確定出荷）の扱いは別途 cancelled_sales で除外可能。",
         )
 
     def _purchase_lines(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -133,17 +135,46 @@ class LogisysProvider:
         )
 
     def _cancelled_sales(self, params: dict[str, Any]) -> dict[str, Any]:
+        # PAYMENT_METHOD=4（仮出庫）は未確定出荷のため集計対象外。
+        # SALES_STATUS=3（赤伝）は返品であり、除外せずマイナス計上すべき取引のため、ここには含めない。
+        sql = (
+            'SELECT "売上入力日", "得意先名", "登録商品名", "売上金額", "決済方法" '
+            "FROM sales WHERE \"決済方法\" = '4'"
+        )
+        args: list[Any] = []
+        if params.get("period_start"):
+            sql += ' AND "売上入力日" >= %s'
+            args.append(params["period_start"])
+        if params.get("period_end"):
+            sql += ' AND "売上入力日" <= %s'
+            args.append(params["period_end"])
+        rows = self._query(sql, tuple(args))
         return _evidence(
-            self.name, "cancelled_sales", "unavailable",
-            "キャンセル・集計対象外の売上は取得できませんでした",
-            note="ステータス・決済方法のコード値の意味が未確認のため保留",
+            self.name, "cancelled_sales", "ok",
+            f"仮出庫（未確定出荷）{len(rows)}件を取得（code_master PAYMENT_METHOD で確認済み）",
+            rows,
+            note="赤伝（返品）はここに含めない。返品はマイナス計上すべき正規取引のため。",
         )
 
     def _returns(self, params: dict[str, Any]) -> dict[str, Any]:
+        # SALES_STATUS=3（赤伝）が返品に相当することが code_master で確認済み。
+        sql = (
+            'SELECT "売上入力日", "得意先名", "登録商品名", "売上金額", "ステータス" '
+            "FROM sales WHERE \"ステータス\" = '3'"
+        )
+        args: list[Any] = []
+        if params.get("period_start"):
+            sql += ' AND "売上入力日" >= %s'
+            args.append(params["period_start"])
+        if params.get("period_end"):
+            sql += ' AND "売上入力日" <= %s'
+            args.append(params["period_end"])
+        rows = self._query(sql, tuple(args))
         return _evidence(
-            self.name, "returns", "unavailable",
-            "返品データは取得できませんでした",
-            note="返品テーブルが未整備（返品の扱いは会社ルールとして未決定）",
+            self.name, "returns", "ok",
+            f"返品（赤伝）{len(rows)}件を取得（code_master SALES_STATUS で確認済み）",
+            rows,
+            note="赤伝は除外対象ではなく、マイナス計上すべき正規取引として扱う。",
         )
 
     def _margin_trend(self, params: dict[str, Any]) -> dict[str, Any]:
