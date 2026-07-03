@@ -67,12 +67,14 @@ class LogisysProvider:
             )
 
     def _sales_lines(self, params: dict[str, Any]) -> dict[str, Any]:
-        # NOTE: SALES_STATUS=3（赤伝）は返品であり、集計から除外しない
-        # （マイナス計上すべき正規取引のため）。除外フィルタは意図的に付けていない。
+        # ステータス・決済方法の集計フィルタは、本番運用中のシステムプロンプト
+        # （別アプリ app.py の system_sql）で確認済みの正式ルール。
+        # 赤伝（ステータス=3）は返品として含める。仮出庫（決済方法=4）は除外する。
         sql = (
             'SELECT "売上入力日", "得意先ID", "得意先名", "登録商品名", '
             '"事業分類", "数量pcs", "売上金額", "明細粗利" '
-            'FROM sales WHERE 1=1'
+            'FROM sales '
+            "WHERE \"ステータス\" IN (2, 3, 4, 5) AND \"決済方法\" != '4'"
         )
         args: list[Any] = []
         if params.get("period_start"):
@@ -92,24 +94,49 @@ class LogisysProvider:
         )
         return _evidence(
             self.name, "sales_lines", "ok",
-            f"売上明細 {len(rows)}件を取得（{period}）",
+            f"売上明細 {len(rows)}件を取得（{period}、有効な受注のみ・標準フィルタ適用済み）",
             rows,
-            note="赤伝（返品）は除外せず含む。仮出庫（未確定出荷）の扱いは別途 cancelled_sales で除外可能。",
         )
 
     def _purchase_lines(self, params: dict[str, Any]) -> dict[str, Any]:
+        # ステータスIN(2,3)は本番運用中のシステムプロンプトで確認済みの
+        # 仕入集計時の正式フィルタ条件。
+        sql = (
+            'SELECT "伝票日", "仕入先名", "商品分類", "仕入数量pcs", '
+            '"仕入金額円", "諸掛込金額円" '
+            'FROM purchases '
+            'WHERE "ステータス" IN (2, 3)'
+        )
+        args: list[Any] = []
+        if params.get("period_start"):
+            sql += ' AND "伝票日" >= %s'
+            args.append(params["period_start"])
+        if params.get("period_end"):
+            sql += ' AND "伝票日" <= %s'
+            args.append(params["period_end"])
+        sql += ' ORDER BY "伝票日"'
+        rows = self._query(sql, tuple(args))
         return _evidence(
-            self.name, "purchase_lines", "unavailable",
-            "仕入明細は取得できませんでした",
-            note="実データでの対応テーブル（purchases / purchase_orders）が未確認のため保留",
+            self.name, "purchase_lines", "ok",
+            f"仕入明細 {len(rows)}件を取得（諸掛り込み金額、標準フィルタ適用済み）",
+            rows,
         )
 
     def _projects(self, params: dict[str, Any]) -> dict[str, Any]:
-        return _evidence(
-            self.name, "projects", "unavailable",
-            "案件データは取得できませんでした",
-            note="実データでの「案件」に相当するテーブル対応が未確認のため保留",
+        # 「案件」に相当する実データは purchase_orders テーブル
+        # （PO発行〜納品・輸送・検品スケジュール管理、案件単位）。
+        sql = (
+            'SELECT "ID", "案件名", "顧客名", "ステータス", "顧客納品日" '
+            'FROM purchase_orders WHERE 1=1'
         )
+        args: list[Any] = []
+        if params.get("keyword"):
+            sql += ' AND ("案件名" LIKE %s OR "顧客名" LIKE %s)'
+            args += [f"%{params['keyword']}%", f"%{params['keyword']}%"]
+        sql += ' ORDER BY "顧客納品日"'
+        rows = self._query(sql, tuple(args))
+        label = f"「{params['keyword']}」関連の" if params.get("keyword") else ""
+        return _evidence(self.name, "projects", "ok", f"{label}案件 {len(rows)}件を取得", rows)
 
     def _customer_master(self, params: dict[str, Any]) -> dict[str, Any]:
         sql = 'SELECT "ID", "顧客名称" FROM customers WHERE 1=1'
@@ -136,7 +163,7 @@ class LogisysProvider:
 
     def _cancelled_sales(self, params: dict[str, Any]) -> dict[str, Any]:
         # PAYMENT_METHOD=4（仮出庫）は未確定出荷のため集計対象外。
-        # SALES_STATUS=3（赤伝）は返品であり、除外せずマイナス計上すべき取引のため、ここには含めない。
+        # SALES_STATUS=3（赤伝）は返品であり、除外せずマイナス計上すべき正規取引のため、ここには含めない。
         sql = (
             'SELECT "売上入力日", "得意先名", "登録商品名", "売上金額", "決済方法" '
             "FROM sales WHERE \"決済方法\" = '4'"
