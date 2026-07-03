@@ -166,7 +166,7 @@ class PostgresRepository(BaseRepository):
         else:
             schema_name, object_name = self.schema_core, table_name
         return self.fetch_all(
-            "SELECT column_name, data_type, is_nullable "
+            "SELECT column_name AS name, data_type AS type, is_nullable "
             "FROM information_schema.columns "
             "WHERE table_schema = %s AND table_name = %s "
             "ORDER BY ordinal_position",
