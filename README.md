@@ -6,11 +6,18 @@ LOGS AI Platform is an internal AI/data platform for using Logsys-connected Exce
 
 **Want to see the AI OS in action?** Check out the [Walking Skeleton Review Guide](docs/review/FIRST_USER_REVIEW.md).
 
+> **Important:** `app/main.py` (this section) and `backend/main.py` (used by the
+> Next.js frontend for real data) are **separate servers with overlapping route
+> names** (both define `/api/projects`, with different meanings — one is an
+> in-memory demo sandbox, the other reads real Supabase data). Do not run both
+> on the same port. Use `--port 8001` for `app/main.py` as shown below if
+> `backend/main.py` is also running on 8000.
+
 ### Try the Live Demo
 
 1. **Start Backend:**
 ```bash
-   python -m uvicorn app.main:app --reload
+   python -m uvicorn app.main:app --reload --port 8001
 ```
 
 2. **Start Frontend:**
@@ -55,6 +62,21 @@ LOGS AI Platform is an internal AI/data platform for using Logsys-connected Exce
 - System Manifest: [docs/system_manifest.md](docs/system_manifest.md)
 - Raw Data Validation: [docs/raw_data_validation.md](docs/raw_data_validation.md)
 - ADRs: [docs/decisions/](docs/decisions)
+
+## Two separate servers in this repository
+
+This repository contains **two independent FastAPI applications** that must
+not be run on the same port:
+
+| Server | Entry point | Default port | Purpose |
+|---|---|---|---|
+| Full AI OS | `app/main.py` | 8001 (recommended) | The complete layered platform (Runtime/Context/Intent/Planner/Business/Knowledge/Learning). Reads real data from Supabase `public` schema via `business/` and `storage/`. Also hosts the in-memory Walking Skeleton demo under `/api/projects`. |
+| Frontend API (V0.1 skeleton) | `backend/main.py` | 8000 | Serves the Next.js frontend (`frontend/`) under `/api/*`. A mix of real Supabase-backed endpoints (home KPIs, reasoning, projects, today-actions) and intentional mock endpoints (chat, tasks, proposals, history — see `backend/services/mock_store.py`). |
+
+Both define a route also called `/api/projects`, but with **different meanings**:
+`app/main.py`'s version is an in-memory demo sandbox for the Walking Skeleton
+review; `backend/main.py`'s version reads real `purchase_orders` data. Keep
+this in mind when testing — always check which server you're pointed at.
 
 ## Sprint 1 goal
 
@@ -123,7 +145,7 @@ curl -X POST http://127.0.0.1:8000/db/import
 Start the FastAPI app:
 
 ```bash
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --port 8001
 ```
 
 The API will expose:
@@ -157,13 +179,13 @@ The customer business module supports flexible customer data access based on sch
 Open:
 
 ```text
-http://127.0.0.1:8000
+http://127.0.0.1:8001
 ```
 
 Then open the automatic API docs and execute the endpoints from the browser:
 
 ```text
-http://127.0.0.1:8000/docs
+http://127.0.0.1:8001/docs
 ```
 
 ## Cloud Deployment
@@ -540,7 +562,7 @@ The AI runtime layer now provides a single orchestrator entrypoint that executes
 Example:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/ai/chat \
+curl -X POST http://127.0.0.1:8001/ai/chat \
   -H "Content-Type: application/json" \
   -d '{"message":"OEMとは？"}'
 ```
@@ -757,7 +779,7 @@ Trace sessions keep the full sequence for one question so the runtime path can b
 Example:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/business/query \
+curl -X POST http://127.0.0.1:8001/business/query \
   -H "Content-Type: application/json" \
   -d '{"message":"売上ランキングを見せて"}'
 ```
@@ -854,7 +876,7 @@ New sync API:
 Example:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/storage/sync \
+curl -X POST http://127.0.0.1:8001/storage/sync \
   -H "Content-Type: application/json" \
   -d '{"folder_id":"your-drive-folder-id"}'
 ```
@@ -902,7 +924,7 @@ python scripts/google_drive_oauth.py
 Sync execution:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/sync \
+curl -X POST http://127.0.0.1:8001/api/sync \
   -H "Content-Type: application/json" \
   -d '{"folder_id":"your-drive-folder-id"}'
 ```
@@ -910,19 +932,19 @@ curl -X POST http://127.0.0.1:8000/api/sync \
 Catalog check:
 
 ```bash
-curl http://127.0.0.1:8000/api/catalog
+curl http://127.0.0.1:8001/api/catalog
 ```
 
 Sync status check:
 
 ```bash
-curl http://127.0.0.1:8000/api/sync/status
+curl http://127.0.0.1:8001/api/sync/status
 ```
 
 Chat API question:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/chat \
+curl -X POST http://127.0.0.1:8001/api/chat \
   -H "Content-Type: application/json" \
   -d '{"question":"売上トップ10は？"}'
 ```
