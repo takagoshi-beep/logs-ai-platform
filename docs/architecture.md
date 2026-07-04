@@ -401,8 +401,9 @@ work (Supabase `public` schema).
 
 - `backend/api/` — route definitions. `router.py` mounts business/project
   routes under the `/api` prefix; `capability_router.py` mounts the
-  Capability REST API separately under its own `/capabilities` prefix (not
-  `/api`). Both are registered in `backend/main.py`.
+  Capability REST API separately under its own `/capabilities` prefix;
+  `governance_router.py` mounts the minimal Governance Queue API under its
+  own `/governance` prefix. All three are registered in `backend/main.py`.
 - `backend/business/` — business-rule helpers specific to the frontend
   surface (`today_actions.py`, `evaluation_rules.py`). Distinct from the
   top-level `business/` package used by `app/`.
@@ -432,9 +433,13 @@ work (Supabase `public` schema).
     `backend/data/capability_executions.jsonl` and replays it on startup,
     so success_rate/execution history survive process restarts (the base
     `CapabilityRegistry` class is in-memory-only by design).
-  - `project_service.py` — builds project state from real `purchase_orders`
+  - - `project_service.py` — builds project state from real `purchase_orders`
     data. `build_project_aggregate` is recorded as a Capability execution
     (`project_aggregate_analysis`) via `capability_instance.registry`.
+  - `governance_store.py` — minimal Governance Queue (Phase D-1): durable
+    JSONL-backed proposal/approval/audit records
+    (`backend/data/governance_approvals.jsonl`,
+    `governance_audit.jsonl`). See 13.5 for scope/limitations.
   - `mock_store.py` — **intentional mock implementation** backing several
     endpoints that have not yet been migrated to real data (see 13.3).
 - `backend/connectors/`, `backend/runtime/` — currently placeholder
@@ -502,14 +507,15 @@ fastest way to check current status without re-auditing from scratch.
 |---|---|---|
 | 2, 4, 5, 12 (Capability Driven) | Mostly done | `capability_router.py` is mounted and reachable (Phase A). Both `ProjectService.build_project_aggregate` (`project_aggregate_analysis`, Phase C-1) and `reasoning_pipeline.reason` (`business_question_reasoning`, Phase C-2) are tracked Capability executions via the shared registry in `services/capability_instance.py`. Remaining mock-backed endpoints (`chat`, `tasks/recommend`, `proposals/draft`, `documents/draft`) are not yet wired (Phase E). |
 | 6, 10 (Transparent AI / Trace Everything) | Done for `ProjectService` and `reasoning_pipeline` | Both generate and persist a `trace_id` to `backend/data/traces.jsonl`, retrievable via `GET /api/debug/trace/{id}` (Phase B, extended in Phase C-2). |
-| 3, 5 (Human Governed / Governed Learning) | Partial | No governance/change_management wiring exists in `backend/` — that part is genuinely not started. However, `capability.registry.CapabilityRegistry`'s execution history/metrics (success_rate, past executions) now survive restarts via `services/capability_instance.py`'s persistence hook (`backend/data/capability_executions.jsonl`), so at least the *measurement* substrate a future governance loop would read from is durable. |
+| 3, 5 (Human Governed / Governed Learning) | Mostly done (reduced scope) | Phase D-1 added a minimal Governance Queue (`services/governance_store.py`, `/governance` API): `reasoning_pipeline.py`'s Phase 13 knowledge candidates auto-submit as `QUEUED_FOR_REVIEW`, and a human must call `POST /governance/{id}/decide` (approve/reject + reason) before anything is considered approved — durably audited (`backend/data/governance_approvals.jsonl`, `governance_audit.jsonl`). Deliberately NOT implemented: the Blueprint's 4-tier approval levels, auto-approval by confidence threshold, PolicyRule creation/activation/rollback, and approver authority checks (`decide()` trusts whatever `approver_id` is passed). Approving a proposal here does not yet edit any `knowledge/` file automatically — that "apply the rule" step is still manual. |
 
 Remaining candidate work:
-- Build a governance approval loop for `backend/`, mirroring what `app/`'s
-  Learning system does partially (see `docs/review/KNOWN_ISSUES.md`).
 - Wire the remaining mock-backed endpoints in `backend/api/router.py`
   through the Capability pattern as they get real implementations
   (Phase E).
+- If/when needed: approval levels + auto-approve thresholds, PolicyRule
+  versioning/rollback, and approver authority validation for the
+  Governance Queue (Phase D-1 intentionally deferred all of these).
 
 ## Constraints
 
