@@ -50,14 +50,12 @@ class ProjectService:
 
     def _query_projects_from_db(self, limit: int = 50) -> list[dict[str, Any]]:
         """
-        Query database to find all project candidates (Purchase Orders with related data).
-        Returns list of project records with all columns.
+        Query database to find all project candidates (Purchase Orders).
+        Returns list of project records with a "project_id" key.
         """
         repo = self._open_repo()
         try:
-            # Query the main purchase order table (仕入) - use SELECT * to get all columns
-            # Database has Japanese column names, we'll handle mapping in _build_project_data
-            sql = "SELECT * FROM 仕入 LIMIT ?"
+            sql = 'SELECT DISTINCT "ID" AS project_id FROM purchase_orders ORDER BY "ID" DESC LIMIT ?'
             rows = repo.fetch_all(sql, (limit,))
             return rows or []
         except Exception as e:
@@ -68,29 +66,28 @@ class ProjectService:
 
     def _build_project_data(self, project_id: str) -> ProjectData | None:
         """
-        Build ProjectData by querying related information from database.
-        Uses actual Japanese column names from the database.
+        Build ProjectData by querying purchase_orders (real Supabase public schema).
         """
         repo = self._open_repo()
         try:
-            # Query main PO record from 仕入 table
-            po_sql = "SELECT * FROM 仕入 WHERE id = ?"
+            po_sql = (
+                'SELECT "PO_No", "仕入先ID", "仕入先名", "顧客ID", "顧客名", '
+                '"PO発行日", "顧客納品日", "納品日", '
+                '"合計発注金額", "合計売上原価", "合計売上金額" '
+                'FROM purchase_orders WHERE "ID" = ?'
+            )
             po_record = repo.fetch_one(po_sql, (project_id,))
             if not po_record:
                 return None
 
-            # Extract data safely with Japanese columns
-            # Note: Column names are in Japanese, accessing via dict keys
             try:
-                # Get the actual column keys
-                po_dict = dict(po_record) if hasattr(po_record, 'items') else po_record
+                po_dict = po_record
 
-                # Build ProjectData with available fields
-                po_number = po_dict.get("po", "") or ""
-                supplier_id = str(po_dict.get("仕入先id", "") or "unknown")
+                po_number = po_dict.get("PO_No", "") or ""
+                supplier_id = str(po_dict.get("仕入先ID", "") or "unknown")
                 supplier_name = po_dict.get("仕入先名", "") or ""
-                customer_id = str(po_dict.get("客先id", "") or "unknown")
-                customer_name = po_dict.get("客先名", "") or ""
+                customer_id = str(po_dict.get("顧客ID", "") or "unknown")
+                customer_name = po_dict.get("顧客名", "") or ""
 
                 def parse_date(date_val: Any) -> datetime | None:
                     if not date_val:
@@ -99,13 +96,24 @@ class ProjectService:
                         return date_val
                     try:
                         return datetime.fromisoformat(str(date_val).replace("Z", "+00:00"))
-                    except:
+                    except Exception:
                         return None
 
-                po_created = parse_date(po_dict.get("仕入日", None)) or datetime.now()
-                po_required_delivery = parse_date(po_dict.get("仕入期日", None)) or (datetime.now() + timedelta(days=30))
+                po_created = parse_date(po_dict.get("PO発行日")) or datetime.now()
+                po_required_delivery = parse_date(po_dict.get("顧客納品日")) or (datetime.now() + timedelta(days=30))
 
-                # Build ProjectData
+                po_amount = float(po_dict.get("合計発注金額", 0) or 0) or None
+                cost_amount = float(po_dict.get("合計売上原価", 0) or 0) or None
+                sale_amount = float(po_dict.get("合計売上金額", 0) or 0) or None
+                gross_profit = None
+                gross_profit_margin = None
+                if cost_amount is not None and sale_amount is not None:
+                    gross_profit = sale_amount - cost_amount
+                    if sale_amount:
+                        # NOTE: gross_profit_margin is stored as a fraction (0.15 = 15%),
+                        # matching how _determine_state/_evaluate_goals compare it below.
+                        gross_profit_margin = gross_profit / sale_amount
+
                 project_data = ProjectData(
                     project_id=project_id,
                     po_number=po_number or f"PO-{project_id}",
@@ -122,22 +130,22 @@ class ProjectService:
                     customer_email=None,
                     customer_address=None,
                     po_required_delivery_date_alt=None,
-                    actual_delivery_date=parse_date(po_dict.get("納品日", None)),
+                    actual_delivery_date=parse_date(po_dict.get("納品日")),
                     invoice_date=None,
                     payment_due_date=None,
                     actual_payment_date=None,
                     products=[],
-                    po_amount=None,
+                    po_amount=po_amount,
                     supplier_invoice_amount=None,
-                    cost_amount=None,
-                    sale_amount=None,
-                    gross_profit=None,
-                    gross_profit_margin=None,
-                    cost_confirmed=False,
-                    profit_confirmed=False,
+                    cost_amount=cost_amount,
+                    sale_amount=sale_amount,
+                    gross_profit=gross_profit,
+                    gross_profit_margin=gross_profit_margin,
+                    cost_confirmed=cost_amount is not None,
+                    profit_confirmed=gross_profit is not None,
                     delivery_status="pending",
                     payment_status="unpaid",
-                    data_source_tables=["仕入"],
+                    data_source_tables=["purchase_orders"],
                 )
                 return project_data
 
@@ -155,30 +163,10 @@ class ProjectService:
                     po_required_delivery_date=datetime.now() + timedelta(days=30),
                     delivery_status="pending",
                     payment_status="unpaid",
-                    data_source_tables=["仕入"],
+                    data_source_tables=["purchase_orders"],
                 )
-
-        except Exception as e:
-            print(f"Error building project data: {e}")
-            return None
         finally:
             repo.close()
-
-    def _get_table_names(self, repo: BaseRepository) -> set[str]:
-        """Get all table names in database."""
-        try:
-            tables = repo.get_tables()
-            return {t.get("name") for t in tables if t.get("name")}
-        except:
-            return set()
-
-    def _query_products_for_project(self, repo: BaseRepository, project_id: str) -> list[dict[str, Any]]:
-        """Query products associated with a project."""
-        try:
-            # This would need to join to the correct product linking table
-            return []
-        except:
-            return []
 
     def _generate_project_events(self, data: ProjectData, trace_id: str) -> ProjectEvents:
         """Generate project events from project data."""
@@ -193,7 +181,7 @@ class ProjectService:
                     project_id=data.project_id,
                     event_type=ProjectEventType.PROJECT_CREATED,
                     event_time=data.po_created_date,
-                    source_table="仕入",
+                    source_table="purchase_orders",
                     source_record_id=data.project_id,
                     before_state=None,
                     after_state=ProjectState.INITIATED,
@@ -212,7 +200,7 @@ class ProjectService:
                     project_id=data.project_id,
                     event_type=ProjectEventType.SALES_REGISTERED,
                     event_time=now,
-                    source_table="売上",
+                    source_table="purchase_orders",
                     changed_fields={"sale_amount": (None, data.sale_amount)},
                     business_meaning=f"Sales registered: {data.sale_amount}",
                     impact_summary="Revenue confirmed for this project",
@@ -229,7 +217,7 @@ class ProjectService:
                     project_id=data.project_id,
                     event_type=ProjectEventType.PURCHASE_REGISTERED,
                     event_time=now,
-                    source_table="仕入",
+                    source_table="purchase_orders",
                     changed_fields={"cost_amount": (None, data.cost_amount)},
                     business_meaning=f"Purchase cost recorded: {data.cost_amount}",
                     impact_summary="Cost of goods confirmed",
@@ -246,7 +234,7 @@ class ProjectService:
                     project_id=data.project_id,
                     event_type=ProjectEventType.DELIVERY_COMPLETED,
                     event_time=data.actual_delivery_date,
-                    source_table="納品書",
+                    source_table="purchase_orders",
                     before_state=ProjectState.INITIATED,
                     after_state=ProjectState.DELIVERY_RECEIVED,
                     business_meaning=f"Delivery completed on {data.actual_delivery_date.date()}",
@@ -264,7 +252,7 @@ class ProjectService:
                     project_id=data.project_id,
                     event_type=ProjectEventType.INVOICE_RECEIVED,
                     event_time=data.invoice_date,
-                    source_table="仕入請求書",
+                    source_table="purchase_orders",
                     before_state=ProjectState.DELIVERY_RECEIVED,
                     after_state=ProjectState.AWAITING_PAYMENT,
                     changed_fields={"invoice_amount": (None, data.supplier_invoice_amount)},
@@ -283,7 +271,7 @@ class ProjectService:
                     project_id=data.project_id,
                     event_type=ProjectEventType.GROSS_PROFIT_RECALCULATED,
                     event_time=now,
-                    source_table="財務計算",
+                    source_table="purchase_orders",
                     changed_fields={"gross_profit_margin": (None, data.gross_profit_margin)},
                     business_meaning=f"Profit margin calculated: {data.gross_profit_margin:.1%}",
                     impact_summary="Profitability analysis complete",
@@ -300,7 +288,7 @@ class ProjectService:
                     project_id=data.project_id,
                     event_type=ProjectEventType.GROSS_PROFIT_DECLINED,
                     event_time=now,
-                    source_table="財務計算",
+                    source_table="purchase_orders",
                     before_state=ProjectState.GROSS_PROFIT_UNCONFIRMED,
                     after_state=ProjectState.GROSS_PROFIT_DEGRADED,
                     changed_fields={"gross_profit_margin": (0.15, data.gross_profit_margin)},
@@ -321,7 +309,7 @@ class ProjectService:
                         project_id=data.project_id,
                         event_type=ProjectEventType.DELIVERY_RISK_DETECTED,
                         event_time=now,
-                        source_table="仕入",
+                        source_table="purchase_orders",
                         before_state=ProjectState.INITIATED,
                         after_state=ProjectState.DELIVERY_OVERDUE,
                         business_meaning=f"Delivery overdue by {-days_until} days",
@@ -339,7 +327,7 @@ class ProjectService:
                     project_id=data.project_id,
                     event_type=ProjectEventType.PAYMENT_PROCESSED,
                     event_time=data.actual_payment_date,
-                    source_table="支払記録",
+                    source_table="purchase_orders",
                     before_state=ProjectState.AWAITING_PAYMENT,
                     after_state=ProjectState.COMPLETED,
                     business_meaning=f"Payment processed on {data.actual_payment_date.date()}",
@@ -618,11 +606,11 @@ class ProjectService:
                         related_state=state,
                         related_goal=ProjectGoal.MEET_DEADLINE,
                         decision_source=decision.decision,
-                        source_tables=["仕入", "納品書"],
+                        source_tables=["purchase_orders"],
                         source_record_ids={"po_id": data.project_id, "supplier_id": data.supplier_id},
                         condition=f"delivery_overdue AND supplier_phone={data.supplier_phone}",
                         trace_id=trace_id,
-                        executed_sql=f"SELECT * FROM 仕入 WHERE id='{data.project_id}' AND delivery_status IS NULL",
+                        executed_sql=f'SELECT * FROM purchase_orders WHERE "ID"=\'{data.project_id}\'',
                         business_rule_applied="DELIVERY_SLA_CRITICAL",
                         confidence=decision.confidence,
                         created_at=datetime.now(),
@@ -645,11 +633,11 @@ class ProjectService:
                         related_state=state,
                         related_goal=ProjectGoal.SECURE_MARGIN,
                         decision_source=decision.decision,
-                        source_tables=["仕入", "仕入請求書"],
+                        source_tables=["purchase_orders"],
                         source_record_ids={"po_id": data.project_id},
-                        condition=f"margin < 0.15",
+                        condition="margin < 0.15",
                         trace_id=trace_id,
-                        executed_sql=f"SELECT * FROM 仕入 WHERE id='{data.project_id}'",
+                        executed_sql=f'SELECT * FROM purchase_orders WHERE "ID"=\'{data.project_id}\'',
                         business_rule_applied="MARGIN_TARGET_15PERCENT",
                         confidence=decision.confidence,
                         created_at=datetime.now(),
@@ -672,11 +660,11 @@ class ProjectService:
                         related_state=state,
                         related_goal=ProjectGoal.PROCESS_PAYMENT,
                         decision_source=decision.decision,
-                        source_tables=["仕入請求書", "仕入"],
+                        source_tables=["purchase_orders"],
                         source_record_ids={"po_id": data.project_id, "invoice_id": data.project_id},
                         condition="awaiting_payment",
                         trace_id=trace_id,
-                        executed_sql=f"SELECT * FROM 仕入請求書 WHERE po_id='{data.project_id}'",
+                        executed_sql=f'SELECT * FROM purchase_orders WHERE "ID"=\'{data.project_id}\'',
                         business_rule_applied="PAYMENT_PROCESSING",
                         confidence=decision.confidence,
                         created_at=datetime.now(),
