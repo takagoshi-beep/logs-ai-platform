@@ -422,12 +422,16 @@ work (Supabase `public` schema).
   - `knowledge_loader.py`, `knowledge_registry.py`, `semantic_registry.py` —
     knowledge/semantic lookups specific to this surface (separate from the
     top-level `knowledge/` package).
-  - `capability_instance.py` — the single shared `CapabilityRegistry`
+  - - `capability_instance.py` — the single shared `CapabilityRegistry`
     instance used by both `capability_router.py` and any business logic
     that wants its work tracked as a Capability (e.g.
-    `project_service.py`). Import `registry` from here rather than
-    constructing a new `CapabilityRegistry()` — a previous bug had
-    `capability_router.py` construct its own, disconnected instance.
+    `project_service.py`, `reasoning_pipeline.py`). Import `registry` from
+    here rather than constructing a new `CapabilityRegistry()` — a previous
+    bug had `capability_router.py` construct its own, disconnected
+    instance. Also persists execution history to
+    `backend/data/capability_executions.jsonl` and replays it on startup,
+    so success_rate/execution history survive process restarts (the base
+    `CapabilityRegistry` class is in-memory-only by design).
   - `project_service.py` — builds project state from real `purchase_orders`
     data. `build_project_aggregate` is recorded as a Capability execution
     (`project_aggregate_analysis`) via `capability_instance.registry`.
@@ -498,13 +502,9 @@ fastest way to check current status without re-auditing from scratch.
 |---|---|---|
 | 2, 4, 5, 12 (Capability Driven) | Mostly done | `capability_router.py` is mounted and reachable (Phase A). Both `ProjectService.build_project_aggregate` (`project_aggregate_analysis`, Phase C-1) and `reasoning_pipeline.reason` (`business_question_reasoning`, Phase C-2) are tracked Capability executions via the shared registry in `services/capability_instance.py`. Remaining mock-backed endpoints (`chat`, `tasks/recommend`, `proposals/draft`, `documents/draft`) are not yet wired (Phase E). |
 | 6, 10 (Transparent AI / Trace Everything) | Done for `ProjectService` and `reasoning_pipeline` | Both generate and persist a `trace_id` to `backend/data/traces.jsonl`, retrievable via `GET /api/debug/trace/{id}` (Phase B, extended in Phase C-2). |
-| 3, 5 (Human Governed / Governed Learning) | Not started | No governance/change_management wiring exists in `backend/`. `capability.registry.CapabilityRegistry` is in-memory only (no persistence) — capability *definitions* re-register idempotently on each use, but *execution history/metrics* (success_rate, confidence, past executions) are still lost on every restart, unlike traces. |
+| 3, 5 (Human Governed / Governed Learning) | Partial | No governance/change_management wiring exists in `backend/` — that part is genuinely not started. However, `capability.registry.CapabilityRegistry`'s execution history/metrics (success_rate, past executions) now survive restarts via `services/capability_instance.py`'s persistence hook (`backend/data/capability_executions.jsonl`), so at least the *measurement* substrate a future governance loop would read from is durable. |
 
 Remaining candidate work:
-- Give `CapabilityRegistry` durable storage for execution history/metrics —
-  it has the same in-memory-only limitation `trace_store.py` solved for
-  traces, but for a different kind of data (aggregated metrics, not
-  individual records), so it isn't a copy-paste of that solution.
 - Build a governance approval loop for `backend/`, mirroring what `app/`'s
   Learning system does partially (see `docs/review/KNOWN_ISSUES.md`).
 - Wire the remaining mock-backed endpoints in `backend/api/router.py`
