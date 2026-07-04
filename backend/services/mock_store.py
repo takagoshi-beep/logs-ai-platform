@@ -1,36 +1,21 @@
+"""Deliberately mock/demo implementations for endpoints not yet backed by
+real data or generative logic. See docs/architecture.md 13.3 for which
+endpoints these back and why they're still mock.
+
+NOTE (2026-07-04 cleanup): `get_health`, `get_history`, `get_execution`,
+`get_evaluation_summary`, and `store_event` used to live here too. They
+were either genuinely real already (`store_event`, which persists to
+`backend/data/events.jsonl`) or have since been rebuilt on real data
+(the other three) — see `services/status_reporting.py`. A dead
+`get_home_payload()` (superseded by `business/today_actions.py` back when
+`/api/home` was migrated to real data, but never removed) and a dead
+`get_trace()` (superseded by `services/trace_store.py` in Phase B, same
+issue) were also removed from here as unused duplication — neither was
+imported by `router.py` anymore.
+"""
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
-
-ROOT = Path(__file__).resolve().parents[1]
-EVENT_LOG_DIR = ROOT / "data"
-EVENT_LOG_PATH = EVENT_LOG_DIR / "events.jsonl"
-
-_today_actions = [
-    {"id": "a1", "title": "Fanatics delivery confirmation", "priority": "high", "why": "due today"},
-    {"id": "a2", "title": "BEAMS proposal review", "priority": "high", "why": "client review tomorrow"},
-    {"id": "a3", "title": "GOLDWIN quote response", "priority": "medium", "why": "pending for 2 days"},
-]
-
-_alerts = [
-    {"id": "al1", "severity": "high", "message": "Unpurchased sales case detected", "project": "Fanatics OEM"},
-    {"id": "al2", "severity": "medium", "message": "Gross margin decline alert", "project": "BEAMS Retail"},
-]
-
-_kpis = [
-    {"id": "k1", "name": "open_actions", "value": 12},
-    {"id": "k2", "name": "proposal_adoption_rate", "value": 0.42},
-    {"id": "k3", "name": "draft_adoption_rate", "value": 0.68},
-]
-
-_task_recommendations = [
-    {"id": "t1", "project": "Fanatics OEM", "title": "Confirm delay root cause", "due": "today", "priority": "high", "status": "open"},
-    {"id": "t2", "project": "BEAMS Retail", "title": "Review proposal deck", "due": "tomorrow", "priority": "high", "status": "in_progress"},
-    {"id": "t3", "project": "GOLDWIN Campaign", "title": "Prepare quote response", "due": "this_week", "priority": "medium", "status": "open"},
-]
 
 _projects = [
     {"id": "fanatics-oem", "name": "Fanatics OEM", "customer": "Fanatics", "owner": "佐藤", "status": "対応中", "next_action": "納期確認"},
@@ -76,7 +61,15 @@ def _find_project_for_message(message: str) -> dict[str, Any] | None:
 
 
 def consult(message: str) -> dict[str, Any]:
-    """Answer a consultation question grounded in the demo project dataset."""
+    """Answer a consultation question grounded in the demo project dataset.
+
+    NOTE: this is a separate, hardcoded demo dataset (Fanatics/BEAMS/
+    GOLDWIN/newhattan) — it does not read real Supabase data. It overlaps
+    conceptually with `services/reasoning_pipeline.py`, which *does* read
+    real data. Reconciling the two (should `/api/chat` call
+    `reasoning_pipeline.reason()` instead?) is a real design decision
+    flagged for a future phase, not something to paper over here.
+    """
     matched = _find_project_for_message(message)
 
     if not matched:
@@ -121,6 +114,18 @@ def consult(message: str) -> dict[str, Any]:
         "trace_id": f"trace-consult-{matched['id']}",
     }
 
+
+_task_recommendations = [
+    {"id": "t1", "project": "Fanatics OEM", "title": "Confirm delay root cause", "due": "today", "priority": "high", "status": "open"},
+    {"id": "t2", "project": "BEAMS Retail", "title": "Review proposal deck", "due": "tomorrow", "priority": "high", "status": "in_progress"},
+    {"id": "t3", "project": "GOLDWIN Campaign", "title": "Prepare quote response", "due": "this_week", "priority": "medium", "status": "open"},
+]
+
+
+def recommend_tasks() -> list[dict[str, Any]]:
+    return _task_recommendations
+
+
 _proposal_draft = {
     "id": "pd-101",
     "customer": "BEAMS",
@@ -133,44 +138,6 @@ _proposal_draft = {
     ],
     "status": "draft_ready",
 }
-
-_history = [
-    {"execution_id": "ex-1001", "type": "proposal_draft", "title": "BEAMS Q3 proposal", "status": "generated", "timestamp": "2026-06-30T09:14:00Z"},
-    {"execution_id": "ex-1002", "type": "task_recommend", "title": "Fanatics action plan", "status": "accepted", "timestamp": "2026-06-30T09:36:00Z"},
-    {"execution_id": "ex-1003", "type": "document_draft", "title": "GOLDWIN quote response", "status": "pending_approval", "timestamp": "2026-06-30T10:01:00Z"},
-]
-
-_traces = {
-    "trace-1001": {
-        "intent": "Proposal",
-        "meaning": "customer_proposal_draft",
-        "knowledge": ["Internal Database", "Business Rules", "Market Trend"],
-        "memory": ["customer_memory", "proposal_memory", "project_memory"],
-        "capability": ["Knowledge Retrieval", "Data Query", "Document Generation"],
-        "validation": "pass",
-        "evaluation": "task_planning_accuracy=0.688",
-        "runtime_logs": ["planner:ok", "capability_router:ok", "validator:ok"],
-    }
-}
-
-_events: list[dict[str, Any]] = []
-
-
-def get_health() -> dict[str, Any]:
-    return {"status": "ok", "service": "logs-ai-backend-v0.1", "timestamp": datetime.now(timezone.utc).isoformat()}
-
-
-def get_home_payload() -> dict[str, Any]:
-    return {
-        "today_actions": _today_actions,
-        "alerts": _alerts,
-        "kpis": _kpis,
-        "projects": _projects,
-    }
-
-
-def recommend_tasks() -> list[dict[str, Any]]:
-    return _task_recommendations
 
 
 def draft_proposal(customer: str, purpose: str) -> dict[str, Any]:
@@ -188,42 +155,3 @@ def draft_document(document_type: str, target_id: str | None) -> dict[str, Any]:
         "status": "pending_approval",
         "note": "Draft only in V0.1",
     }
-
-
-def get_history() -> list[dict[str, Any]]:
-    return _history
-
-
-def get_execution(execution_id: str) -> dict[str, Any]:
-    for item in _history:
-        if item["execution_id"] == execution_id:
-            return {
-                **item,
-                "intent": "Proposal" if "proposal" in item["type"] else "Monitoring",
-                "task": "required_action_check",
-                "capability": ["Data Query", "Monitoring Alert", "Presentation"],
-                "validation": "pass",
-                "trace_id": "trace-1001",
-            }
-    return {"execution_id": execution_id, "status": "not_found"}
-
-
-def get_evaluation_summary() -> dict[str, Any]:
-    return {
-        "overall_pass_rate": 0.3056,
-        "task_planning_accuracy": 0.688,
-        "capability_selection_accuracy": 0.771,
-        "validation_accuracy": 0.792,
-    }
-
-
-def get_trace(trace_id: str) -> dict[str, Any]:
-    return _traces.get(trace_id, {"trace_id": trace_id, "status": "not_found"})
-
-
-def store_event(event: dict[str, Any]) -> dict[str, Any]:
-    _events.append(event)
-    EVENT_LOG_DIR.mkdir(parents=True, exist_ok=True)
-    with EVENT_LOG_PATH.open("a", encoding="utf-8") as fp:
-        fp.write(json.dumps(event, ensure_ascii=False) + "\n")
-    return {"stored": True, "event_count": len(_events), "log_path": str(EVENT_LOG_PATH)}
