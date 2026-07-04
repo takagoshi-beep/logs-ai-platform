@@ -1,8 +1,14 @@
 # Known Issues & Limitations
 
-**Date:** 2026-07-01  
+**Date:** 2026-07-01 (originally); reviewed 2026-07-04
 **Scope:** Walking Skeleton Implementation (MVP for verification only)
 **Latest Update:** Build errors fixed, Browser Verification in progress
+
+> **2026-07-04 review note:** `ProjectService` (`backend/services/project_service.py`)
+> has since been migrated to query the real Supabase `purchase_orders` table
+> directly, replacing the in-memory `_projects_store` described below. See
+> the "Project Storage" and "Project Persistence" sections for details on
+> what changed and what is still not implemented.
 
 ---
 
@@ -89,13 +95,19 @@
 ### ❌ Not Implemented
 
 #### Project Persistence
-- [ ] SQLite database for projects
+- [x] ~~SQLite database for projects~~ — superseded: reads real Supabase
+      `purchase_orders` directly instead (2026-07-04)
 - [ ] Project history and archival
 - [ ] Multi-user project access control
 - [ ] Project templates and cloning
 
 **Planned:** Phase 5b (production hardening)  
-**Impact:** Walking Skeleton uses in-memory store; projects lost on restart
+**Impact (updated 2026-07-04):** `ProjectService` no longer uses an
+in-memory store; it queries `purchase_orders` in Supabase, so project data
+survives backend restarts. However, this is a read projection of purchase
+orders, not a genuinely separate, writable "project" entity — history,
+archival, multi-user access control, and templates/cloning remain
+unimplemented.
 
 #### Governance Admin Interface
 - [ ] Approval Queue management UI
@@ -147,10 +159,16 @@
 ## Known Technical Limitations
 
 ### 1. Project Storage
-**Limitation:** In-memory dict (_projects_store)  
-**Impact:** Projects lost when backend restarts  
-**Workaround:** Screenshot data or manually recreate projects  
-**Fix:** Phase 5b will add SQLite persistence
+**Limitation (as of 2026-07-01, superseded 2026-07-04):** Originally an
+in-memory dict (`_projects_store`). `ProjectService` now queries the real
+Supabase `purchase_orders` table directly, so this specific limitation no
+longer applies.  
+**Remaining gap:** There is still no independent, writable "project" entity
+with its own history/archival — this is a live projection over purchase
+order data, not persisted project state.  
+**Fix:** Re-evaluate whether Phase 5b's original SQLite-persistence plan is
+still needed given the Supabase migration, or whether it should be redefined
+around the remaining gap above.
 
 ### 2. Learning Confidence Thresholding
 **Limitation:** Hard threshold at 0.65 for OPERATIONAL vs GOVERNED  
