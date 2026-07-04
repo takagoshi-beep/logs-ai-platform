@@ -68,6 +68,28 @@ def _to_int(value: Any, default: int) -> int:
         return default
 
 
+def _resolve(env_key: str, *app_fallbacks: Any) -> Any:
+    """環境変数の優先順位を正しく解決する。
+
+    `os.getenv(key) or app.get(...)` は環境変数が明示的に空文字 "" に
+    設定されている場合でも偽値として扱われ、意図せず app (toml) 側の
+    値へフォールバックしてしまう。これを避けるため、環境変数が
+    実際に設定されているか (``env_key in os.environ``) を最優先で判定する。
+
+    環境変数が未設定の場合のみ、app_fallbacks を順番に評価し、
+    最初に truthy な値を返す。全て falsy であれば最後の値
+    (通常はデフォルト値) を返す。
+    """
+    if env_key in os.environ:
+        return os.environ[env_key]
+    result = None
+    for value in app_fallbacks:
+        result = value
+        if value:
+            return value
+    return result
+
+
 def _default_payload(environment: str) -> dict[str, Any]:
     return {
         "app": {
@@ -132,51 +154,55 @@ def load_settings(environment: str | None = None) -> AppSettings:
     payload = _load_payload(selected_environment)
     app = payload.get("app", {})
     storage_provider = str(
-        os.getenv("STORAGE_PROVIDER")
-        or app.get("storage_provider")
-        or app.get("storage_backend", "sqlite")
+        _resolve(
+            "STORAGE_PROVIDER",
+            app.get("storage_provider"),
+            app.get("storage_backend", "sqlite"),
+        )
     )
-    sqlite_path = str(os.getenv("SQLITE_PATH") or app.get("sqlite_path") or app.get("sqlite_db_path", "data/sqlite/logsys.db"))
-    postgres_url = str(os.getenv("POSTGRES_URL") or app.get("postgres_url", ""))
-    supabase_url = str(os.getenv("SUPABASE_URL") or app.get("supabase_url", ""))
+    sqlite_path = str(
+        _resolve(
+            "SQLITE_PATH",
+            app.get("sqlite_path"),
+            app.get("sqlite_db_path", "data/sqlite/logsys.db"),
+        )
+    )
+    postgres_url = str(_resolve("POSTGRES_URL", app.get("postgres_url", "")))
+    supabase_url = str(_resolve("SUPABASE_URL", app.get("supabase_url", "")))
     supabase_db_url = str(
-        os.getenv("SUPABASE_DB_URL")
-        or os.getenv("DATABASE_URL")
-        or app.get("supabase_db_url", "")
-        or app.get("database_url", "")
-        or postgres_url
+        _resolve(
+            "SUPABASE_DB_URL",
+            os.environ.get("DATABASE_URL") if "DATABASE_URL" in os.environ else None,
+            app.get("supabase_db_url", ""),
+            app.get("database_url", ""),
+            postgres_url,
+        )
     )
     supabase_service_role_key = str(
-        os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        or app.get("supabase_service_role_key", "")
+        _resolve("SUPABASE_SERVICE_ROLE_KEY", app.get("supabase_service_role_key", ""))
     )
     supabase_anon_key = str(
-        os.getenv("SUPABASE_ANON_KEY")
-        or app.get("supabase_anon_key", "")
+        _resolve("SUPABASE_ANON_KEY", app.get("supabase_anon_key", ""))
     )
     supabase_schema_raw = str(
-        os.getenv("SUPABASE_SCHEMA_RAW")
-        or app.get("supabase_schema_raw", "ai_os_raw")
+        _resolve("SUPABASE_SCHEMA_RAW", app.get("supabase_schema_raw", "ai_os_raw"))
     )
     supabase_schema_core = str(
-        os.getenv("SUPABASE_SCHEMA_CORE")
-        or app.get("supabase_schema_core", "ai_os_core")
+        _resolve("SUPABASE_SCHEMA_CORE", app.get("supabase_schema_core", "ai_os_core"))
     )
     supabase_schema_meta = str(
-        os.getenv("SUPABASE_SCHEMA_META")
-        or app.get("supabase_schema_meta", "ai_os_meta")
+        _resolve("SUPABASE_SCHEMA_META", app.get("supabase_schema_meta", "ai_os_meta"))
     )
     supabase_batch_size = _to_int(
-        os.getenv("SUPABASE_BATCH_SIZE") or app.get("supabase_batch_size"),
+        _resolve("SUPABASE_BATCH_SIZE", app.get("supabase_batch_size")),
         default=1000,
     )
     supabase_max_retries = _to_int(
-        os.getenv("SUPABASE_MAX_RETRIES") or app.get("supabase_max_retries"),
+        _resolve("SUPABASE_MAX_RETRIES", app.get("supabase_max_retries")),
         default=5,
     )
     supabase_write_mode = str(
-        os.getenv("SUPABASE_WRITE_MODE")
-        or app.get("supabase_write_mode", "insert")
+        _resolve("SUPABASE_WRITE_MODE", app.get("supabase_write_mode", "insert"))
     ).strip().lower()
     google_drive_enabled = _to_bool(
         os.getenv("GOOGLE_DRIVE_ENABLED", app.get("google_drive_enabled")),
@@ -191,24 +217,25 @@ def load_settings(environment: str | None = None) -> AppSettings:
         default=False,
     )
     google_drive_folder_id = str(
-        os.getenv("GOOGLE_DRIVE_FOLDER_ID")
-        or app.get("google_drive_folder_id", "")
+        _resolve("GOOGLE_DRIVE_FOLDER_ID", app.get("google_drive_folder_id", ""))
     )
     google_drive_logsys_folder_id = str(
-        os.getenv("GOOGLE_DRIVE_LOGSYS_FOLDER_ID")
-        or app.get("google_drive_logsys_folder_id", "")
+        _resolve(
+            "GOOGLE_DRIVE_LOGSYS_FOLDER_ID",
+            app.get("google_drive_logsys_folder_id", ""),
+        )
     )
     google_drive_sales_folder_id = str(
-        os.getenv("GOOGLE_DRIVE_SALES_FOLDER_ID")
-        or app.get("google_drive_sales_folder_id", "")
+        _resolve(
+            "GOOGLE_DRIVE_SALES_FOLDER_ID",
+            app.get("google_drive_sales_folder_id", ""),
+        )
     )
     google_credentials_path = str(
-        os.getenv("GOOGLE_CREDENTIALS_PATH")
-        or app.get("google_credentials_path", "credentials.json")
+        _resolve("GOOGLE_CREDENTIALS_PATH", app.get("google_credentials_path", "credentials.json"))
     )
     google_token_path = str(
-        os.getenv("GOOGLE_TOKEN_PATH")
-        or app.get("google_token_path", "token.json")
+        _resolve("GOOGLE_TOKEN_PATH", app.get("google_token_path", "token.json"))
     )
 
     return AppSettings(

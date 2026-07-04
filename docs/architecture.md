@@ -1,5 +1,14 @@
 # LOGS AI Platform Architecture (Current)
 
+> **Scope note:** This document describes the layered AI OS implemented in
+> `app/main.py` (port 8001). The repository also contains a second,
+> independent FastAPI application, `backend/main.py` (port 8000), which
+> serves the Next.js frontend and hosts the real-data (Supabase) integration
+> work for Home/Workspace/Reasoning. See
+> [Section 13](#13-second-api-surface-backend-nextjs-facing) for its
+> architecture. The two servers must not run on the same port; see the
+> [README](../README.md#two-separate-servers-in-this-repository) for details.
+
 ## 1) Current Layer Inventory
 
 - Entry/API layer (`app/`)
@@ -259,6 +268,29 @@ Scope constraints in this sprint:
 
 ## 9) Source Registry Expansion (Sprint 30)
 
+The ingestion layer now includes explicit source definitions for Google Drive preparation.
+
+- `ingestion/source_registry.py` manages source metadata contracts.
+- Initial sources include Logsys and sales-authored spreadsheet groups.
+- Each source can define connector target, folder_id, file_pattern, data_category, and enabled flag.
+
+Current first-target categories:
+
+- Logsys data sources
+- Sales data sources
+
+Future extension candidates (excluded in Sprint 30):
+
+- Mail attachments
+- PDF files
+- Google Docs
+- Proposal document workflows
+
+Data handling policy:
+
+- GitHub stores code and docs only.
+- Real datasets stay in Google Drive and cloud storage backends.
+
 ## 10) Theme 24 Production UI Target
 
 ### Product Direction
@@ -315,30 +347,7 @@ Persist each UI operation as an evaluation event:
 
 This enables automatic transformation from production behavior logs into future regression suites.
 
-The ingestion layer now includes explicit source definitions for Google Drive preparation.
-
-- `ingestion/source_registry.py` manages source metadata contracts.
-- Initial sources include Logsys and sales-authored spreadsheet groups.
-- Each source can define connector target, folder_id, file_pattern, data_category, and enabled flag.
-
-Current first-target categories:
-
-- Logsys data sources
-- Sales data sources
-
-Future extension candidates (excluded in Sprint 30):
-
-- Mail attachments
-- PDF files
-- Google Docs
-- Proposal document workflows
-
-Data handling policy:
-
-- GitHub stores code and docs only.
-- Real datasets stay in Google Drive and cloud storage backends.
-
-## 10) Storage-to-Business Query Runtime Path (Sprint 31)
+## 11) Storage-to-Business Query Runtime Path (Sprint 31)
 
 For user questions, the runtime path now prioritizes structured data in Storage through Business layer access.
 
@@ -362,7 +371,7 @@ flowchart LR
   RT --> ANS[Answer]
 ```
 
-## 11) Business Tool Registry Layer (Sprint 33)
+## 12) Business Tool Registry Layer (Sprint 33)
 
 Business capabilities are now managed through a dedicated selector/registry pair inside the business domain.
 
@@ -379,6 +388,91 @@ flowchart TD
   REG --> BQ[Business Query]
   BQ --> FMT[Business Formatter]
   FMT --> ANS[Answer]
+```
+
+## 13) Second API Surface: backend/ (Next.js-facing)
+
+`backend/` is a separate FastAPI application (`backend/main.py`, port 8000)
+from the layered AI OS in `app/`. It exists to serve the Next.js frontend
+(`frontend/`) and currently carries most of the active real-data integration
+work (Supabase `public` schema).
+
+### 13.1 Directory Inventory
+
+- `backend/api/` — route definitions (`router.py`, `capability_router.py`,
+  `schemas.py`). All routes are mounted under the `/api` prefix.
+- `backend/business/` — business-rule helpers specific to the frontend
+  surface (`today_actions.py`, `evaluation_rules.py`). Distinct from the
+  top-level `business/` package used by `app/`.
+- `backend/domain/` — domain model for projects (`project.py`), consumed by
+  `services/project_service.py`.
+- `backend/services/` — the bulk of backend logic:
+  - `supabase_client.py` — connection handling for the shared production
+    Supabase `public` schema (PostgreSQL).
+  - `data_providers.py` — real Supabase-backed data access (sales,
+    customers, products).
+  - `reasoning_pipeline.py` — the Fact/Interpretation/Hypothesis/Knowledge-
+    Candidate reasoning flow (Phase 8–13 work); reads real data through
+    `supabase_client`.
+  - `evidence_integration.py`, `evidence_interpreter.py` — supporting
+    evidence-handling logic for the reasoning pipeline.
+  - `knowledge_loader.py`, `knowledge_registry.py`, `semantic_registry.py` —
+    knowledge/semantic lookups specific to this surface (separate from the
+    top-level `knowledge/` package).
+  - `project_service.py` — builds project state from real `purchase_orders`
+    data.
+  - `mock_store.py` — **intentional mock implementation** backing several
+    endpoints that have not yet been migrated to real data (see 13.3).
+- `backend/connectors/`, `backend/runtime/` — currently placeholder
+  packages (`__init__.py` only); reserved for future connector/runtime
+  abstractions on this surface.
+- `backend/scripts/` — one-off / demo scripts (e.g.
+  `seed_logisys_demo.py`).
+
+### 13.2 Route Inventory (`backend/api/router.py`)
+
+| Route | Backing | Status |
+|---|---|---|
+| `GET /api/health` | `mock_store.get_health` | mock |
+| `GET /api/home` | `business.today_actions.get_home_payload` | real (Supabase) |
+| `POST /api/chat` | `mock_store.consult` | mock |
+| `POST /api/reasoning` | `services.reasoning_pipeline.reason` | real (Supabase) |
+| `GET /api/knowledge/documents` | `services.knowledge_loader.load_documents` | real (local knowledge files) |
+| `GET /api/knowledge/registry` | `services.knowledge_registry.get_registry` | real (local knowledge files) |
+| `POST /api/tasks/recommend` | `mock_store.recommend_tasks` | mock |
+| `POST /api/proposals/draft` | `mock_store.draft_proposal` | mock |
+| `POST /api/documents/draft` | `mock_store.draft_document` | mock |
+| `GET /api/history` | `mock_store.get_history` | mock |
+| `GET /api/executions/{id}` | `mock_store.get_execution` | mock |
+| `GET /api/evaluation/summary` | `mock_store.get_evaluation_summary` | mock |
+| `GET /api/debug/trace/{id}` | `mock_store.get_trace` | mock |
+| `POST /api/events` | `mock_store.store_event` | mock |
+| `GET /api/projects`, `GET /api/projects/{id}`, `GET /api/projects/{id}/trace` | `services.project_service.ProjectService` | real (Supabase `purchase_orders`) |
+| `GET /api/today-actions` | `business.today_actions` | real (Supabase) |
+
+> **Note:** this table should be re-verified whenever `backend/api/router.py`
+> changes; it reflects a manual read of the source on 2026-07-04, not an
+> automated check.
+
+### 13.3 Real vs Mock Boundary
+
+`backend/services/mock_store.py` intentionally backs several endpoints
+(`chat`, `tasks/recommend`, `proposals/draft`, `documents/draft`, `history`,
+`executions`, `evaluation/summary`, `debug/trace`, `events`, `health`). This
+is a deliberate placeholder boundary, not an oversight — but as real-data
+migration continues (see git history: Home/Workspace/ProjectService/Phase13
+were all migrated from mock to real Supabase queries in recent commits),
+this table is the fastest way to check what remains mock at any point in
+time.
+
+### 13.4 Data Flow (real-data path)
+
+```mermaid
+flowchart LR
+  FE[Next.js frontend] --> API[backend/api/router.py]
+  API --> SVC[backend/services/*]
+  SVC --> SBC[supabase_client.py]
+  SBC --> DB[(Supabase public schema)]
 ```
 
 ## Constraints

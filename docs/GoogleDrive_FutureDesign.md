@@ -31,7 +31,7 @@ AI OS/
 
 **GitHub で完結:**
 - Knowledge Base (`/knowledge/`)
-- Review 資料 (`/docs/reviews/`)
+- Review 資料 (`/docs/archive/reviews/`)
 - Code (`/backend/`, `/frontend/`)
 
 **Google Drive:**
