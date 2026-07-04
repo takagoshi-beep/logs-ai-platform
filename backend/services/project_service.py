@@ -447,6 +447,7 @@ class ProjectService:
                     action_type="phone_call",
                     trace_id=trace_id,
                     confidence=decision.confidence,
+                    condition=decision.reason,
                 ))
                 action_id += 1
 
@@ -464,6 +465,7 @@ class ProjectService:
                     action_type="email",
                     trace_id=trace_id,
                     confidence=decision.confidence,
+                    condition=decision.reason,
                 ))
                 action_id += 1
 
@@ -481,6 +483,7 @@ class ProjectService:
                     action_type="review",
                     trace_id=trace_id,
                     confidence=decision.confidence,
+                    condition=decision.reason,
                 ))
                 action_id += 1
 

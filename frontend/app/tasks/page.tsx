@@ -139,6 +139,9 @@ export default function TaskCenterPage() {
                     <span>期限: {task.due}</span>
                     <span>担当: {task.owner || "-"}</span>
                   </div>
+                  {task.reason && (
+                    <p className="mt-2 text-xs text-sub">理由: {task.reason}</p>
+                  )}
                   <div className="flex gap-2 mt-3">
                     <Button
                       size="sm"
