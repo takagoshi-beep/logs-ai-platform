@@ -47,3 +47,5 @@ frontend/*.tsbuildinfo
 frontend/trace
 
 tmp_*
+
+backend/data/traces.jsonl

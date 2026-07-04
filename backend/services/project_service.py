@@ -25,6 +25,8 @@ from domain.project import (
     ProjectState,
 )
 from services.supabase_client import get_connection
+from services.supabase_client import get_connection
+from services.trace_store import save_trace
 
 
 class ProjectService:
@@ -701,7 +703,7 @@ class ProjectService:
         opportunity_score, opportunity_level = self._calculate_opportunity_score(data)
         recommended_focus = self._recommend_focus(health.health_score, risk_score, opportunity_score)
 
-        return ProjectAggregate(
+        aggregate = ProjectAggregate(
             project_id=project_id,
             po_number=data.po_number,
             events=events,
@@ -719,6 +721,15 @@ class ProjectService:
             opportunity_level=opportunity_level,
             recommended_focus=recommended_focus,
         )
+
+        try:
+            save_trace(trace_id, aggregate.to_dict())
+        except Exception:
+            # Trace persistence must never block the actual response.
+            pass
+
+        return aggregate
+        
 
     def build_project_aggregates(self, limit: int = 50) -> list[ProjectAggregate]:
         """Build ProjectAggregates for multiple projects."""

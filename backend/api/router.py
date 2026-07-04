@@ -14,10 +14,10 @@ from services.mock_store import (
     get_execution,
     get_health,
     get_history,
-    get_trace,
     recommend_tasks,
     store_event,
 )
+from services.trace_store import get_trace
 from services.knowledge_loader import load_documents
 from services.knowledge_registry import get_registry
 from services.project_service import ProjectService
