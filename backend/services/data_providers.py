@@ -37,10 +37,10 @@ def _evidence(
     }
 
 
-class LogisysProvider:
-    """Logisys(Supabase public schema)。SQLはこのクラスの内部だけが知る。"""
+class LogsysProvider:
+    """Logsys(Supabase public schema)。SQLはこのクラスの内部だけが知る。"""
 
-    name = "logisys"
+    name = "logsys"
 
     def _query(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
         conn = get_connection()
@@ -62,7 +62,7 @@ class LogisysProvider:
         except Exception as exc:  # noqa: BLE001
             return _evidence(
                 self.name, dataset, "unavailable",
-                "Logisysから取得できませんでした",
+                "Logsysから取得できませんでした",
                 note=f"テーブル/カラム未整備の可能性（{exc}）",
             )
 
@@ -285,7 +285,7 @@ class SlackProvider:
 
 
 _PROVIDERS: dict[str, Any] = {
-    "logisys": LogisysProvider(),
+    "logsys": LogsysProvider(),
     "gmail": GmailProvider(),
     "project_sheet": ProjectSheetProvider(),
     "slack": SlackProvider(),

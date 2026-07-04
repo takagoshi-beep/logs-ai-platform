@@ -104,6 +104,79 @@ def _fallback() -> dict[str, Any]:
     }
 
 
+def _q5_project_lookup(message: str) -> dict[str, Any]:
+    """案件名・顧客名からの案件状況照会（キーワード検索）。
+
+    Q1〜Q4のどの固定パターンにも当てはまらなかった質問を、即座に
+    `_fallback()`（回答不可）にする前に、実際の顧客マスタ
+    （`customers`テーブル）と質問文を突き合わせて、該当する顧客名が
+    含まれていれば `purchase_orders` を実データで検索する。
+
+    旧 `backend/services/mock_store.py` の `consult()` が持っていた
+    「案件名・顧客名で聞かれたら答える」という振る舞いを、ハードコード
+    されたデモ4案件ではなく実データ側で再現する（Phase F: /api/chat統合）。
+    """
+    from services.data_providers import LogsysProvider
+
+    provider = LogsysProvider()
+    customer_result = provider.fetch("customer_master", {})
+    customers = customer_result.get("records", [])
+
+    lowered = message.lower()
+    matched_customer: str | None = None
+    for row in customers:
+        name = str(row.get("顧客名称", "") or "")
+        if name and name.lower() in lowered:
+            matched_customer = name
+            break
+
+    if not matched_customer:
+        return _fallback()
+
+    return {
+        "intent": {"type": "案件状況照会", "category": "ProjectLookup", "confidence": 0.7},
+        "meaning": {
+            "confidence": 0.7,
+            "items": {"matched_customer": matched_customer, "lookup_type": "顧客名によるキーワード検索"},
+        },
+        "hypothesis": [
+            {
+                "statement": f"質問文に含まれる顧客名「{matched_customer}」で案件マスタを検索すれば、該当案件の状況を回答できる",
+                "confidence": 0.7,
+            },
+        ],
+        "knowledge_used": [],
+        "decision_gate": {
+            "verdict": "データ取得後に判定",
+            "reason": "検索結果が0件・1件・複数件のいずれかで、回答の作り方が変わる",
+            "proceed_conditions": ["検索結果が1件以上であること"],
+            "confidence": 0.7,
+        },
+        "required_data": [
+            {
+                "priority": 1,
+                "item": f"{matched_customer}の案件検索",
+                "provider": "logsys",
+                "dataset": "projects",
+                "params": {"keyword": matched_customer},
+            },
+        ],
+        "unknown": [
+            "該当案件が複数見つかった場合、質問者がどの案件を指しているかは未確定",
+        ],
+        "assumption": [
+            {
+                "statement": "顧客名の部分一致で案件を絞り込めると仮定する（表記ゆれは考慮していない）",
+                "confidence": 0.6,
+            },
+        ],
+        "plan": [
+            {"stage": "情報取得", "action": f"顧客名「{matched_customer}」で案件マスタ（purchase_orders）を検索する"},
+            {"stage": "回答", "action": "検索結果件数に応じて、案件状況または候補一覧を回答する"},
+        ],
+    }
+
+
 # Phase 13: Real Data Fact Extraction (read-only, no Knowledge updates)
 
 def _extract_facts_oem_gross_profit() -> dict[str, Any]:
@@ -374,11 +447,11 @@ def _q2_fanatics_status() -> dict[str, Any]:
             "confidence": 0.8,
         },
         "required_data": [
-            {"priority": 1, "item": "案件データ（Fanatics関連の全案件リストと現在ステータス）", "provider": "logisys",
+            {"priority": 1, "item": "案件データ（Fanatics関連の全案件リストと現在ステータス）", "provider": "logsys",
              "dataset": "projects", "params": {"keyword": "Fanatics"}},
-            {"priority": 2, "item": "顧客マスタ（Fanaticsの正式コード）", "provider": "logisys",
+            {"priority": 2, "item": "顧客マスタ（Fanaticsの正式コード）", "provider": "logsys",
              "dataset": "customer_master", "params": {"keyword": "Fanatics"}},
-            {"priority": 3, "item": "関連売上（直近の取引履歴）", "provider": "logisys",
+            {"priority": 3, "item": "関連売上（直近の取引履歴）", "provider": "logsys",
              "dataset": "sales_lines", "params": {"customer_keyword": "Fanatics"}},
             {"priority": 4, "item": "案件管理シート（次アクション・担当者情報）", "provider": "project_sheet",
              "dataset": "project_notes", "params": {"keyword": "Fanatics"}},
@@ -439,11 +512,11 @@ def _q3_priority_projects() -> dict[str, Any]:
             "confidence": 0.8,
         },
         "required_data": [
-            {"priority": 1, "item": "案件データ（納期・ステータス）", "provider": "logisys",
+            {"priority": 1, "item": "案件データ（納期・ステータス）", "provider": "logsys",
              "dataset": "projects", "params": {}},
             {"priority": 2, "item": "タスク履歴", "provider": "project_sheet",
              "dataset": "task_history", "params": {}},
-            {"priority": 3, "item": "粗利トレンドデータ", "provider": "logisys",
+            {"priority": 3, "item": "粗利トレンドデータ", "provider": "logsys",
              "dataset": "margin_trend", "params": {}},
             {"priority": 4, "item": "案件管理シート（担当者・進捗メモ）", "provider": "project_sheet",
              "dataset": "project_notes", "params": {}},
@@ -508,12 +581,12 @@ def _q4_top_customer_sales() -> dict[str, Any]:
             "confidence": 0.8,
         },
         "required_data": [
-            {"priority": 1, "item": "売上明細（Logsys）", "provider": "logisys", "dataset": "sales_lines",
+            {"priority": 1, "item": "売上明細（Logsys）", "provider": "logsys", "dataset": "sales_lines",
              "params": {"period_start": month_start, "period_end": month_end}},
-            {"priority": 2, "item": "顧客マスタ（名寄せ用の顧客コード）", "provider": "logisys",
+            {"priority": 2, "item": "顧客マスタ（名寄せ用の顧客コード）", "provider": "logsys",
              "dataset": "customer_master", "params": {}},
-            {"priority": 3, "item": "返品データ", "provider": "logisys", "dataset": "returns", "params": {}},
-            {"priority": 4, "item": "キャンセルデータ", "provider": "logisys", "dataset": "cancelled_sales",
+            {"priority": 3, "item": "返品データ", "provider": "logsys", "dataset": "returns", "params": {}},
+            {"priority": 4, "item": "キャンセルデータ", "provider": "logsys", "dataset": "cancelled_sales",
              "params": {"period_start": month_start, "period_end": month_end}},
             {"priority": 5, "item": "案件管理シート（顧客の補足情報）", "provider": "project_sheet",
              "dataset": "project_notes", "params": {}},
@@ -616,7 +689,7 @@ def _reason_impl(question: str, trace_id: str = "") -> dict[str, Any]:
     elif "売上" in q and "顧客" in q and ("一番" in q or "最大" in q or "首位" in q):
         payload = _q4_top_customer_sales()
     else:
-        payload = _fallback()
+        payload = _q5_project_lookup(q)
 
     raw_evidence = fetch_required_data(payload.get("required_data", []))
     integrated_evidence = integrate_evidence(raw_evidence)
@@ -653,3 +726,85 @@ def _reason_impl(question: str, trace_id: str = "") -> dict[str, Any]:
         }
 
     return {"question": question, **payload}
+
+
+def to_chat_response(execution_id: str, result: dict[str, Any]) -> dict[str, Any]:
+    """`reason()`の構造化結果を、会話的な`/api/chat`のレスポンス形状に変換する。
+
+    Phase F: `/api/chat`を旧`mock_store.consult()`（ハードコードされた
+    デモ4案件）から、この関数経由で`reason()`（実データ）に統合するために
+    追加。案件検索（`_q5_project_lookup`）のEvidenceが1件ヒットしていれば
+    `matched_project_id`を、複数件ヒットしていれば`related_projects`を
+    埋める。
+    """
+    evidence = result.get("evidence", [])
+    decision_gate = result.get("decision_gate", {})
+
+    project_records: list[dict[str, Any]] = []
+    project_total_count = 0
+    for ev in evidence:
+        if ev.get("dataset") == "projects" and ev.get("status") == "ok":
+            project_records = ev.get("display_records") or []
+            project_total_count = ev.get("record_count", len(project_records))
+            break
+
+    matched_project_id = None
+    related_projects: list[dict[str, Any]] = []
+    ai_response: str | None = None
+
+    if project_total_count == 1 and project_records:
+        proj = project_records[0]
+        matched_project_id = proj.get("ID")
+        ai_response = (
+            f"{proj.get('案件名', '(案件名不明)')}"
+            f"（顧客: {proj.get('顧客名', '不明')}）は"
+            f"現在「{proj.get('ステータス', '不明')}」です。"
+        )
+    elif project_total_count > 1:
+        related_projects = [
+            {
+                "project_id": r.get("ID"),
+                "name": r.get("案件名"),
+                "customer": r.get("顧客名"),
+                "status": r.get("ステータス"),
+            }
+            for r in project_records[:5]
+        ]
+        names = "、".join(r.get("案件名", "") for r in project_records[:5])
+        sample_note = f"（先頭{len(project_records)}件を表示）" if project_total_count > len(project_records) else ""
+        ai_response = f"該当する案件が{project_total_count}件見つかりました{sample_note}: {names}。どの案件について知りたいか教えてください。"
+
+    if ai_response is None:
+        # プロジェクト検索以外（KPI分析系の質問など）は、decision_gateと
+        # evidenceのsummaryを組み合わせて要約する。
+        response_parts = [decision_gate.get("reason", "")]
+        for ev in evidence:
+            if ev.get("status") == "ok" and ev.get("summary"):
+                response_parts.append(ev["summary"])
+        ai_response = " ".join(part for part in response_parts if part) or "回答を生成できませんでした。"
+
+    data_sources = [
+        {"table": ev.get("dataset", ""), "record": ev.get("summary", "")}
+        for ev in evidence
+        if ev.get("status") == "ok"
+    ]
+
+    judgment_reasoning = [
+        {
+            "reason": item.get("conclusion", ""),
+            "confidence": result.get("intent", {}).get("confidence", 0.0),
+            "business_rule": item.get("rule_id", ""),
+        }
+        for item in result.get("knowledge_used", [])
+    ]
+
+    return {
+        "execution_id": execution_id,
+        "trace_id": result.get("trace_id", ""),
+        "matched_project_id": matched_project_id,
+        "ai_response": ai_response,
+        "data_sources": data_sources,
+        "judgment_reasoning": judgment_reasoning,
+        "related_projects": related_projects,
+        "open_questions": result.get("unknown", []),
+    }

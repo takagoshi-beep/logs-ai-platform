@@ -7,7 +7,6 @@ from fastapi import APIRouter, HTTPException
 from api.schemas import ChatRequest, DocumentDraftRequest, ProductEvent, ProposalDraftRequest, TasksRecommendRequest
 from business.today_actions import get_home_payload as get_home_payload_business
 from services.mock_store import (
-    consult,
     draft_document,
     draft_proposal,
     recommend_tasks,
@@ -23,7 +22,7 @@ from services.trace_store import get_trace
 from services.knowledge_loader import load_documents
 from services.knowledge_registry import get_registry
 from services.project_service import ProjectService
-from services.reasoning_pipeline import reason as run_reasoning
+from services.reasoning_pipeline import reason as run_reasoning, to_chat_response
 from pathlib import Path
 
 router = APIRouter(prefix="/api", tags=["v0.1"])
@@ -42,18 +41,14 @@ def home() -> dict:
 
 @router.post("/chat")
 def chat(req: ChatRequest) -> dict:
+    """`/api/chat` is now a thin wrapper around `reason()` (real data),
+    reshaped for a conversational response via `to_chat_response`. It no
+    longer uses `mock_store.consult()`'s hardcoded demo dataset (Phase F,
+    2026-07-04) — see docs/architecture.md 13.6.
+    """
     execution_id = f"ex-chat-{datetime.now(timezone.utc).strftime('%H%M%S')}"
-    result = consult(req.message)
-    return {
-        "execution_id": execution_id,
-        "trace_id": result["trace_id"],
-        "matched_project_id": result["matched_project_id"],
-        "ai_response": result["ai_response"],
-        "data_sources": result["data_sources"],
-        "judgment_reasoning": result["judgment_reasoning"],
-        "related_projects": result["related_projects"],
-        "open_questions": result["open_questions"],
-    }
+    result = run_reasoning(req.message)
+    return to_chat_response(execution_id, result)
 
 
 @router.post("/reasoning")

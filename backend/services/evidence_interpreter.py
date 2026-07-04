@@ -148,13 +148,13 @@ def _slack_facts(records: list[dict[str, Any]]) -> list[str]:
 
 
 _INTERPRETERS: dict[tuple[str, str], Callable[[list[dict[str, Any]]], list[str]]] = {
-    ("logisys", "sales_lines"): _sales_lines_facts,
-    ("logisys", "purchase_lines"): _purchase_lines_facts,
-    ("logisys", "project_classification"): _project_classification_facts,
-    ("logisys", "product_master"): _product_master_facts,
-    ("logisys", "projects"): _projects_facts,
-    ("logisys", "customer_master"): _customer_master_facts,
-    ("logisys", "cancelled_sales"): _cancelled_sales_facts,
+    ("logsys", "sales_lines"): _sales_lines_facts,
+    ("logsys", "purchase_lines"): _purchase_lines_facts,
+    ("logsys", "project_classification"): _project_classification_facts,
+    ("logsys", "product_master"): _product_master_facts,
+    ("logsys", "projects"): _projects_facts,
+    ("logsys", "customer_master"): _customer_master_facts,
+    ("logsys", "cancelled_sales"): _cancelled_sales_facts,
     ("project_sheet", "task_history"): _task_history_facts,
     ("project_sheet", "project_notes"): _project_notes_facts,
     ("gmail", "recent_messages"): _gmail_facts,

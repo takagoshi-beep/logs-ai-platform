@@ -1,5 +1,5 @@
 """Deliberately mock/demo implementations for endpoints not yet backed by
-real data or generative logic. See docs/architecture.md 13.3 for which
+real data or generative logic. See docs/architecture.md 13.3/13.6 for which
 endpoints these back and why they're still mock.
 
 NOTE (2026-07-04 cleanup): `get_health`, `get_history`, `get_execution`,
@@ -7,113 +7,22 @@ NOTE (2026-07-04 cleanup): `get_health`, `get_history`, `get_execution`,
 were either genuinely real already (`store_event`, which persists to
 `backend/data/events.jsonl`) or have since been rebuilt on real data
 (the other three) — see `services/status_reporting.py`. A dead
-`get_home_payload()` (superseded by `business/today_actions.py` back when
-`/api/home` was migrated to real data, but never removed) and a dead
-`get_trace()` (superseded by `services/trace_store.py` in Phase B, same
-issue) were also removed from here as unused duplication — neither was
-imported by `router.py` anymore.
+`get_home_payload()` (superseded by `business/today_actions.py`) and a
+dead `get_trace()` (superseded by `services/trace_store.py`) were also
+removed as unused duplication.
+
+NOTE (2026-07-04, Phase F): `consult()` and its hardcoded demo dataset
+(`_projects`, `_consult_knowledge`, `_find_project_for_message`) were
+removed. `/api/chat` now calls `services.reasoning_pipeline.reason()` +
+`to_chat_response()` instead — real Supabase data via the same Provider
+abstraction `reasoning_pipeline.py` already used, including a new
+`_q5_project_lookup` pattern added specifically to cover what `consult()`
+used to do (project/customer name lookup), but against real
+`purchase_orders`/`customers` data instead of 4 hardcoded demo projects.
 """
 from __future__ import annotations
 
 from typing import Any
-
-_projects = [
-    {"id": "fanatics-oem", "name": "Fanatics OEM", "customer": "Fanatics", "owner": "佐藤", "status": "対応中", "next_action": "納期確認"},
-    {"id": "beams-retail", "name": "BEAMS Retail", "customer": "BEAMS", "owner": "高越", "status": "未着手", "next_action": "提案資料確認"},
-    {"id": "goldwin-campaign", "name": "GOLDWIN Campaign", "customer": "GOLDWIN", "owner": "加藤", "status": "保留", "next_action": "見積作成"},
-    {"id": "newhattan-sales-kit", "name": "newhattan sales kit", "customer": "newhattan", "owner": "-", "status": "保留", "next_action": "商標確認"},
-]
-
-_consult_knowledge = {
-    "fanatics-oem": {
-        "reason": "出荷枠の確保期限が本日中のため。",
-        "business_rule": "DELIVERY_SLA_7DAYS",
-        "confidence": 0.95,
-        "open_question": "実際の出荷枠確保が完了したか未確認です。",
-    },
-    "beams-retail": {
-        "reason": "レビュー担当からコスト説明の更新依頼があったため。",
-        "business_rule": "PROPOSAL_REVIEW_PENDING",
-        "confidence": 0.9,
-        "open_question": "コスト説明セクションの最新版がまだ共有されていません。",
-    },
-    "goldwin-campaign": {
-        "reason": "顧客から条件変更の依頼があったため。",
-        "business_rule": "QUOTE_REVISION_REQUIRED",
-        "confidence": 0.85,
-        "open_question": "変更後の希望条件（数量・単価）が未確定です。",
-    },
-    "newhattan-sales-kit": {
-        "reason": "商標に関する確認待ちのため。",
-        "business_rule": "LEGAL_TRADEMARK_HOLD",
-        "confidence": 0.8,
-        "open_question": "法務からの確認回答期限が未定です。",
-    },
-}
-
-
-def _find_project_for_message(message: str) -> dict[str, Any] | None:
-    lowered = message.lower()
-    for project in _projects:
-        if project["customer"].lower() in lowered or project["name"].lower() in lowered:
-            return project
-    return None
-
-
-def consult(message: str) -> dict[str, Any]:
-    """Answer a consultation question grounded in the demo project dataset.
-
-    NOTE: this is a separate, hardcoded demo dataset (Fanatics/BEAMS/
-    GOLDWIN/newhattan) — it does not read real Supabase data. It overlaps
-    conceptually with `services/reasoning_pipeline.py`, which *does* read
-    real data. Reconciling the two (should `/api/chat` call
-    `reasoning_pipeline.reason()` instead?) is a real design decision
-    flagged for a future phase, not something to paper over here.
-    """
-    matched = _find_project_for_message(message)
-
-    if not matched:
-        return {
-            "matched_project_id": None,
-            "ai_response": "該当する案件が見つかりませんでした。案件名や顧客名（例: Fanatics, BEAMS, GOLDWIN, newhattan）を含めて質問してください。",
-            "data_sources": [],
-            "judgment_reasoning": [],
-            "related_projects": [
-                {"project_id": p["id"], "name": p["name"], "customer": p["customer"], "status": p["status"]}
-                for p in _projects
-            ],
-            "open_questions": ["質問に案件名または顧客名を含めてください。"],
-            "trace_id": "trace-consult-unmatched",
-        }
-
-    knowledge = _consult_knowledge[matched["id"]]
-    open_questions = [knowledge["open_question"]]
-    if matched["owner"] == "-":
-        open_questions.append("担当者が未アサインです。")
-
-    return {
-        "matched_project_id": matched["id"],
-        "ai_response": f"{matched['name']}の案件は現在「{matched['status']}」です。{knowledge['reason']}次のアクション: {matched['next_action']}。",
-        "data_sources": [
-            {"table": "案件データ", "record": matched["name"]},
-            {"table": "タスク履歴", "record": f"{matched['name']} - {matched['next_action']}"},
-        ],
-        "judgment_reasoning": [
-            {
-                "reason": knowledge["reason"],
-                "confidence": knowledge["confidence"],
-                "business_rule": knowledge["business_rule"],
-            }
-        ],
-        "related_projects": [
-            {"project_id": p["id"], "name": p["name"], "customer": p["customer"], "status": p["status"]}
-            for p in _projects
-            if p["id"] != matched["id"]
-        ][:2],
-        "open_questions": open_questions,
-        "trace_id": f"trace-consult-{matched['id']}",
-    }
-
 
 _task_recommendations = [
     {"id": "t1", "project": "Fanatics OEM", "title": "Confirm delay root cause", "due": "today", "priority": "high", "status": "open"},
