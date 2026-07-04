@@ -1,59 +1,36 @@
-"""Simplified test - Extracts real projects and demonstrates domain model."""
+"""Real pytest tests for the project domain model (state/goal/decision/action logic).
 
+These tests construct ProjectData directly (no database access), so they run
+fully offline and independent of STORAGE_PROVIDER. They exercise the same
+private ProjectService helper methods used by both services/project_service.py
+(root) and backend/services/project_service.py.
+"""
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime, timedelta
-from pathlib import Path
+
+import pytest
 
 from domain.project import (
-    ProjectState,
+    GoalStatus,
+    ProjectAggregate,
     ProjectData,
+    ProjectDecision,
+    ProjectGoal,
+    ProjectState,
 )
 from services.project_service import ProjectService
 
 
-def test_extract_real_projects() -> list[dict]:
-    """Test: Extract 5 real projects from database."""
-    print("\n" + "="*80)
-    print("TEST 1: Extract Real Projects from Database")
-    print("="*80)
-
-    db_path = Path("data/sqlite/logsys.db")
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-
-    # Query the main purchase order table (仕入) - get first 5
-    cursor.execute("SELECT * FROM 仕入 LIMIT 5")
-    rows = cursor.fetchall()
-
-    projects = []
-    for i, row in enumerate(rows, 1):
-        project_dict = dict(row)
-        projects.append(project_dict)
-        print(f"\nProject {i}:")
-        print(f"  ID: {project_dict.get('id')}")
-        # Print some columns that should exist
-        for key in list(project_dict.keys())[:10]:
-            val = project_dict.get(key)
-            if val and str(val)[:50]:
-                print(f"  {key}: {str(val)[:60]}")
-
-    conn.close()
-    print(f"\n[OK] Successfully extracted {len(projects)} projects")
-    return projects
+@pytest.fixture
+def service() -> ProjectService:
+    return ProjectService(db_path=":memory:")
 
 
-def test_domain_model_structure():
-    """Test: Verify domain model can be instantiated."""
-    print("\n" + "="*80)
-    print("TEST 2: Domain Model Structure Verification")
-    print("="*80)
-
-    # Create a sample project data
+def _make_project_data(**overrides) -> ProjectData:
+    """Build a ProjectData with sensible defaults, overridable per test."""
     now = datetime.now()
-    project_data = ProjectData(
+    defaults = dict(
         project_id="test-001",
         po_number="PO-2024-001",
         supplier_id="sup-001",
@@ -64,176 +41,165 @@ def test_domain_model_structure():
         po_required_delivery_date=now + timedelta(days=10),
         actual_delivery_date=None,
         invoice_date=None,
+        actual_payment_date=None,
         po_amount=10000.0,
-        gross_profit_margin=0.18,
+        cost_amount=None,
+        sale_amount=None,
+        gross_profit=None,
+        gross_profit_margin=None,
+        cost_confirmed=False,
+        profit_confirmed=False,
         delivery_status="pending",
         payment_status="unpaid",
+        data_source_tables=["purchase_orders"],
     )
-
-    print(f"\n[OK] ProjectData created successfully")
-    print(f"  Project ID: {project_data.project_id}")
-    print(f"  PO Number: {project_data.po_number}")
-    print(f"  Supplier: {project_data.supplier_name}")
-    print(f"  Customer: {project_data.customer_name}")
-    print(f"  Amount: {project_data.po_amount}")
-    print(f"  Margin: {project_data.gross_profit_margin:.1%}")
-
-    return project_data
+    defaults.update(overrides)
+    return ProjectData(**defaults)
 
 
-def test_state_determination(project_data: ProjectData):
-    """Test: Determine state from project data."""
-    print("\n" + "="*80)
-    print("TEST 3: Project State Determination")
-    print("="*80)
-
-    service = ProjectService()
-    state = service._determine_state(project_data)
-
-    print(f"\n[OK] State determined: {state.value}")
-    print(f"  Delivery status: {project_data.delivery_status}")
-    print(f"  Payment status: {project_data.payment_status}")
-    print(f"  Days until deadline: {(project_data.po_required_delivery_date.date() - datetime.now().date()).days}")
-
-    return state
+def test_state_determination_overdue(service: ProjectService) -> None:
+    """A project past its delivery date with nothing delivered is overdue."""
+    data = _make_project_data(
+        po_required_delivery_date=datetime.now() - timedelta(days=5),
+        actual_delivery_date=None,
+    )
+    state = service._determine_state(data)
+    assert state == ProjectState.DELIVERY_OVERDUE
 
 
-def test_goal_evaluation(project_data: ProjectData, state: ProjectState):
-    """Test: Evaluate goals."""
-    print("\n" + "="*80)
-    print("TEST 4: Goal Evaluation")
-    print("="*80)
-
-    service = ProjectService()
-    goals = service._evaluate_goals(project_data, state)
-
-    print(f"\n[OK] Goals evaluated:")
-    for goal, evaluation in goals.evaluations.items():
-        print(f"  - {goal.value}:")
-        print(f"    Status: {evaluation.status.value}")
-        print(f"    Reason: {evaluation.reason}")
-        print(f"    Confidence: {evaluation.confidence:.0%}")
-
-    return goals
+def test_state_determination_initiated(service: ProjectService) -> None:
+    """A fresh project with no delivery yet and a future deadline is INITIATED."""
+    data = _make_project_data(
+        po_required_delivery_date=datetime.now() + timedelta(days=20),
+        actual_delivery_date=None,
+    )
+    state = service._determine_state(data)
+    assert state == ProjectState.INITIATED
 
 
-def test_decision_generation(project_data: ProjectData, state: ProjectState, goals):
-    """Test: Generate decisions."""
-    print("\n" + "="*80)
-    print("TEST 5: Decision Generation")
-    print("="*80)
-
-    service = ProjectService()
-    decisions = service._generate_decisions(project_data, state, goals)
-
-    print(f"\n[OK] Decisions generated:")
-    if decisions:
-        for i, decision in enumerate(decisions, 1):
-            print(f"  {i}. {decision.decision.value}")
-            print(f"     Priority: {decision.priority}")
-            print(f"     Reason: {decision.reason}")
-            print(f"     Rule: {decision.business_rule}")
-    else:
-        print("  No decisions required (project state optimal)")
-
-    return decisions
+def test_state_determination_completed(service: ProjectService) -> None:
+    """A fully delivered, invoiced, paid, cost/profit-confirmed project with a
+    healthy margin is COMPLETED."""
+    data = _make_project_data(
+        actual_delivery_date=datetime.now() - timedelta(days=2),
+        invoice_date=datetime.now() - timedelta(days=1),
+        actual_payment_date=datetime.now(),
+        cost_confirmed=True,
+        profit_confirmed=True,
+        gross_profit_margin=0.25,
+    )
+    state = service._determine_state(data)
+    assert state == ProjectState.COMPLETED
 
 
-def test_action_generation(project_data: ProjectData, state: ProjectState, decisions: list):
-    """Test: Generate actions."""
-    print("\n" + "="*80)
-    print("TEST 6: Action Generation")
-    print("="*80)
+def test_goal_evaluation_deadline_at_risk(service: ProjectService) -> None:
+    """A project due within 7 days and not yet delivered should flag
+    MEET_DEADLINE as AT_RISK."""
+    data = _make_project_data(
+        po_required_delivery_date=datetime.now() + timedelta(days=3),
+        actual_delivery_date=None,
+    )
+    state = service._determine_state(data)
+    goals = service._evaluate_goals(data, state)
 
-    service = ProjectService()
+    assert goals.evaluations[ProjectGoal.MEET_DEADLINE].status == GoalStatus.AT_RISK
+
+
+def test_goal_evaluation_margin_failed_below_target(service: ProjectService) -> None:
+    """A margin below 15% should mark SECURE_MARGIN as FAILED."""
+    data = _make_project_data(gross_profit_margin=0.08)
+    state = service._determine_state(data)
+    goals = service._evaluate_goals(data, state)
+
+    assert goals.evaluations[ProjectGoal.SECURE_MARGIN].status == GoalStatus.FAILED
+
+
+def test_goal_evaluation_margin_achieved_above_target(service: ProjectService) -> None:
+    """A margin at/above 15% should mark SECURE_MARGIN as ACHIEVED."""
+    data = _make_project_data(gross_profit_margin=0.20)
+    state = service._determine_state(data)
+    goals = service._evaluate_goals(data, state)
+
+    assert goals.evaluations[ProjectGoal.SECURE_MARGIN].status == GoalStatus.ACHIEVED
+
+
+def test_decision_generation_follow_up_on_overdue(service: ProjectService) -> None:
+    """An overdue delivery should trigger a FOLLOW_UP_SUPPLIER decision."""
+    data = _make_project_data(
+        po_required_delivery_date=datetime.now() - timedelta(days=5),
+        actual_delivery_date=None,
+    )
+    state = service._determine_state(data)
+    goals = service._evaluate_goals(data, state)
+    decisions = service._generate_decisions(data, state, goals)
+
+    assert any(d.decision == ProjectDecision.FOLLOW_UP_SUPPLIER for d in decisions)
+
+
+def test_decision_generation_no_decisions_when_healthy(service: ProjectService) -> None:
+    """A comfortably on-track, high-margin project should not trigger
+    urgent decisions."""
+    data = _make_project_data(
+        po_required_delivery_date=datetime.now() + timedelta(days=30),
+        actual_delivery_date=None,
+        gross_profit_margin=0.30,
+        cost_confirmed=True,
+    )
+    state = service._determine_state(data)
+    goals = service._evaluate_goals(data, state)
+    decisions = service._generate_decisions(data, state, goals)
+
+    assert decisions == []
+
+
+def test_action_generation_matches_decisions(service: ProjectService) -> None:
+    """Each generated decision should produce at least one corresponding action,
+    and actions should reference the real purchase_orders table (not a
+    fictional one)."""
+    data = _make_project_data(
+        po_required_delivery_date=datetime.now() - timedelta(days=5),
+        actual_delivery_date=None,
+    )
+    state = service._determine_state(data)
+    goals = service._evaluate_goals(data, state)
+    decisions = service._generate_decisions(data, state, goals)
     trace_id = service._generate_trace_id("test-trace")
-    actions = service._generate_actions(project_data, state, decisions, trace_id)
+    actions = service._generate_actions(data, state, decisions, trace_id)
 
-    print(f"\n[OK] Trace ID: {trace_id}")
-    print(f"[OK] Actions generated: {len(actions)}")
-    if actions:
-        for i, action in enumerate(actions, 1):
-            print(f"\n  Action {i}: {action.title}")
-            print(f"    Type: {action.action_type}")
-            print(f"    Priority: {action.priority}")
-            print(f"    Decision: {action.decision_source.value}")
-            print(f"    Confidence: {action.confidence:.0%}")
-
-    return actions
+    assert len(actions) >= 1
+    for action in actions:
+        assert action.source_tables == ["purchase_orders"]
+        assert "仕入" not in "".join(action.source_tables)
 
 
-def test_complete_aggregate(project_data: ProjectData):
-    """Test: Build complete ProjectAggregate."""
-    print("\n" + "="*80)
-    print("TEST 7: Complete Project Aggregate")
-    print("="*80)
-
-    # Step-by-step build
-    service = ProjectService()
-    state = service._determine_state(project_data)
-    goals = service._evaluate_goals(project_data, state)
-    decisions = service._generate_decisions(project_data, state, goals)
+def test_complete_aggregate_structure(service: ProjectService) -> None:
+    """Building a full ProjectAggregate should produce internally consistent
+    state/goals/decisions/actions, with a usable primary action for an
+    at-risk project."""
+    data = _make_project_data(
+        po_required_delivery_date=datetime.now() - timedelta(days=5),
+        actual_delivery_date=None,
+    )
     trace_id = service._generate_trace_id("agg")
+    events = service._generate_project_events(data, trace_id)
+    state = service._determine_state(data)
+    goals = service._evaluate_goals(data, state)
+    decisions = service._generate_decisions(data, state, goals)
+    actions = service._generate_actions(data, state, decisions, trace_id)
 
-    from domain.project import ProjectAggregate
     aggregate = ProjectAggregate(
-        project_id=project_data.project_id,
-        po_number=project_data.po_number,
+        project_id=data.project_id,
+        po_number=data.po_number,
         trace_id=trace_id,
-        data=project_data,
+        events=events,
+        data=data,
         state=state,
         goal_evaluations=goals,
         decisions=decisions,
-        actions=service._generate_actions(project_data, state, decisions, trace_id),
+        actions=actions,
     )
 
-    print(f"\n[OK] Complete ProjectAggregate built")
-    print(f"  Project: {aggregate.po_number}")
-    print(f"  Trace ID: {aggregate.trace_id}")
-    print(f"  State: {aggregate.state.value}")
-    print(f"  Priority: {aggregate.priority}")
-    print(f"  At-risk goals: {len(aggregate.get_at_risk_goals())}")
-    print(f"  Decisions: {len(aggregate.decisions)}")
-    print(f"  Actions: {len(aggregate.actions)}")
-
-    primary_action = aggregate.get_primary_action()
-    if primary_action:
-        print(f"\n  Primary action: {primary_action.title}")
-
-    return aggregate
-
-
-if __name__ == "__main__":
-    print("\n" + "="*80)
-    print("PROJECT AI DOMAIN MODEL - VERIFICATION TESTS")
-    print("="*80)
-
-    try:
-        # Test 1: Extract real projects
-        real_projects = test_extract_real_projects()
-
-        # Test 2-7: Test domain model with sample data
-        project_data = test_domain_model_structure()
-        state = test_state_determination(project_data)
-        goals = test_goal_evaluation(project_data, state)
-        decisions = test_decision_generation(project_data, state, goals)
-        actions = test_action_generation(project_data, state, decisions)
-        aggregate = test_complete_aggregate(project_data)
-
-        print("\n" + "="*80)
-        print("[OK] ALL TESTS PASSED")
-        print("="*80)
-        print(f"\nSummary:")
-        print(f"  - Domain model: WORKING")
-        print(f"  - Real projects in DB: {len(real_projects)}")
-        print(f"  - State determination: WORKING")
-        print(f"  - Goal evaluation: WORKING")
-        print(f"  - Decision generation: WORKING")
-        print(f"  - Action generation: WORKING")
-        print(f"  - ProjectAggregate: WORKING")
-        print()
-
-    except Exception as e:
-        print(f"\n[ERROR] ERROR: {e}")
-        import traceback
-        traceback.print_exc()
+    assert aggregate.state == ProjectState.DELIVERY_OVERDUE
+    assert len(aggregate.get_at_risk_goals()) >= 1
+    assert aggregate.get_primary_action() is not None
+    assert aggregate.get_primary_action() in actions
