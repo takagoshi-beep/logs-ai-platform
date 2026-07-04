@@ -1,5 +1,13 @@
 # 実装完了レポート：ProjectAggregate API ↔ UI統合テスト
 
+
+<!-- SNAPSHOT-BANNER -->
+> **📌 Point-in-time snapshot.** This document records the state of the
+> project as of the date/phase named in its title or body. It has not been
+> updated since, and may not reflect the current code. Verify claims against
+> the current source before relying on them. For the maintained, current
+> architecture reference, see `docs/architecture.md` and `docs/system_manifest.md`.
+
 **日付：** 2026-06-30  
 **状態：** 実装完了・動作確認済み ✓  
 **統合テスト：** 全て成功 ✓

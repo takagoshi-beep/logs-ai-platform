@@ -1,4 +1,12 @@
 # GOVERNANCE WORKFLOW DESIGN
+
+<!-- SNAPSHOT-BANNER -->
+> **📌 Point-in-time snapshot.** This document records the state of the
+> project as of the date/phase named in its title or body. It has not been
+> updated since, and may not reflect the current code. Verify claims against
+> the current source before relying on them. For the maintained, current
+> architecture reference, see `docs/architecture.md` and `docs/system_manifest.md`.
+
 **Date:** 2026-06-30  
 **Purpose:** Design the Governance layer workflow for Blueprint v1.0 Chapter 8  
 **Status:** Complete detailed specification  

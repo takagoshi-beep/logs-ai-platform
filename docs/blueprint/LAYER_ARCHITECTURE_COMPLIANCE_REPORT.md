@@ -1,5 +1,13 @@
 # Blueprint Compliance Report: AI OS Layer Architecture Addition
 
+
+<!-- SNAPSHOT-BANNER -->
+> **📌 Point-in-time snapshot.** This document records the state of the
+> project as of the date/phase named in its title or body. It has not been
+> updated since, and may not reflect the current code. Verify claims against
+> the current source before relying on them. For the maintained, current
+> architecture reference, see `docs/architecture.md` and `docs/system_manifest.md`.
+
 **Date:** 2026-07-01  
 **Task:** Add Chapter 1 "AI OS Layer Architecture" to Blueprint v0.2 (Draft)  
 **Status:** COMPLETE

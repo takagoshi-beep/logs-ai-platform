@@ -1,5 +1,11 @@
 # AI OS BLUEPRINT v0.1
 
+
+<!-- SNAPSHOT-BANNER -->
+> **📌 Superseded.** This is the v0.1 blueprint. The current draft is
+> `docs/blueprint/AI_OS_BLUEPRINT_v0.2_DRAFT.md`. This file is kept for
+> historical reference only.
+
 **Date:** 2026-06-30  
 **Version:** 0.1 (Initial Release)  
 **Status:** CANONICAL DESIGN STANDARD  

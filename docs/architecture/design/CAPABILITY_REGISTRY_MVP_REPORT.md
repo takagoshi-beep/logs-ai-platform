@@ -1,5 +1,13 @@
 # Capability Registry MVP Implementation Report
 
+
+<!-- SNAPSHOT-BANNER -->
+> **📌 Point-in-time snapshot.** This document records the state of the
+> project as of the date/phase named in its title or body. It has not been
+> updated since, and may not reflect the current code. Verify claims against
+> the current source before relying on them. For the maintained, current
+> architecture reference, see `docs/architecture.md` and `docs/system_manifest.md`.
+
 **Date:** 2026-06-30  
 **Phase:** Phase 4 - MVP Implementation (Days 1-5)  
 **Status:** ✓ Complete - 18/18 Tests Passing

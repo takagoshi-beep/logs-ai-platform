@@ -1,5 +1,13 @@
 # v1.1 Cloud Migration Sprint - Phase 1 Plan
 
+
+<!-- SNAPSHOT-BANNER -->
+> **📌 Point-in-time snapshot.** This document records the state of the
+> project as of the date/phase named in its title or body. It has not been
+> updated since, and may not reflect the current code. Verify claims against
+> the current source before relying on them. For the maintained, current
+> architecture reference, see `docs/architecture.md` and `docs/system_manifest.md`.
+
 ## Scope and Constraints
 - Goal: prepare cloud PostgreSQL support while preserving current SQLite real-data sync behavior.
 - Non-goals for this phase: no implementation, no architecture redesign, no Business Layer behavior changes, no SQLite removal.

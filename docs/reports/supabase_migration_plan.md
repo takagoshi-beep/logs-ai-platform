@@ -1,5 +1,13 @@
 # v1.1 Supabase Migration Sprint - Phase 3 Schema-Separated Implementation
 
+
+<!-- SNAPSHOT-BANNER -->
+> **📌 Point-in-time snapshot.** This document records the state of the
+> project as of the date/phase named in its title or body. It has not been
+> updated since, and may not reflect the current code. Verify claims against
+> the current source before relying on them. For the maintained, current
+> architecture reference, see `docs/architecture.md` and `docs/system_manifest.md`.
+
 ## 1) Scope and Hard Constraints
 - Objective: implement schema-separated Supabase behavior so AI OS uses dedicated PostgreSQL schemas and does not interfere with existing workloads in the same Supabase project.
 - Live Supabase connection is still out of scope for this phase. Implementation is local/code-level only.
