@@ -521,41 +521,153 @@ Remaining candidate work:
   versioning/rollback, and approver authority validation for the
   Governance Queue (Phase D-1 intentionally deferred all of these).
 
-### 13.6 Remaining Mock Endpoints (Phase E scope decision, 2026-07-04)
+### 13.6 Remaining Mock Endpoints (Phase E/F, updated 2026-07-04)
 
 Phase E was scoped down mid-implementation once it became clear the 9
 mock-backed endpoints split into two very different kinds of work: some
 were pure data-plumbing (reuse infrastructure already built in Phases
-A–D), others need real product/business design. Only the first group was
-completed as "Phase E"; the second group is intentionally left as future
-work rather than papered over with a quick fake-to-slightly-less-fake
-swap.
+A–D), others need real product/business design. Phase F then tackled two
+of the "real design" cases after all, once investigation showed the
+design work was smaller than expected.
 
-**Done in Phase E (moved to `services/status_reporting.py`, all backed by
-real Capability/Governance data):** `health`, `history`, `executions/{id}`,
-`evaluation/summary`. `events` turned out to already be real and was just
-relocated.
+**Done (all backed by real Supabase/Capability/Governance data):**
+- `health`, `history`, `executions/{id}`, `evaluation/summary`, `events` —
+  moved to `services/status_reporting.py` (Phase E).
+- `POST /api/chat` — now a thin wrapper around
+  `reasoning_pipeline.reason()` via a new `to_chat_response()` adapter,
+  replacing `mock_store.consult()`'s hardcoded 4-project demo dataset. A
+  new `_q5_project_lookup` pattern was added to `reasoning_pipeline.py`
+  to cover project/customer-name lookup (what `consult()` used to do)
+  using the real `customer_master`/`projects` datasets via
+  `LogsysProvider` (Phase F). This also surfaced and fixed a
+  `"logisys"` vs `"logsys"` provider-name typo that had been silently
+  breaking `sales_lines`/`purchase_lines`/etc. evidence fetches in
+  `data_providers.py` and `evidence_interpreter.py`.
+- `POST /api/tasks/recommend` — now aggregates real `ProjectAction`
+  recommendations across projects via `ProjectService`
+  (`services/status_reporting.recommend_tasks`), replacing
+  `mock_store.recommend_tasks()`'s 3 hardcoded demo tasks (Phase F).
 
-**Still mock, each needing real design work before it's "just" a data
-migration:**
+**Still mock — the only two left, and both genuinely need generative
+logic (LLM or template-based document assembly) that doesn't exist
+anywhere in this codebase yet:**
+- `POST /api/proposals/draft`
+- `POST /api/documents/draft`
 
-- `POST /api/chat` (`mock_store.consult`) — a separate, hardcoded
-  4-project demo dataset (Fanatics/BEAMS/GOLDWIN/newhattan) that doesn't
-  touch Supabase at all. It overlaps conceptually with
-  `reasoning_pipeline.py`, which does read real data — but they answer
-  different *shapes* of question (chat wants a conversational
-  project-status answer; reasoning wants a structured KPI breakdown).
-  Whether `/api/chat` should call `reasoning_pipeline.reason()`, a new
-  capability, or something else is a real product decision, not a
-  plumbing task.
-- `POST /api/tasks/recommend` (`mock_store.recommend_tasks`) — no rule
-  yet exists for what makes a task "recommended" from real project data;
-  this needs the same kind of rule design `ProjectService`'s
-  decision/action generation already went through, not just a data
-  source swap.
-- `POST /api/proposals/draft`, `POST /api/documents/draft` — both need
-  actual generative logic (LLM or template-based document assembly),
-  which doesn't exist anywhere in this codebase yet.
+## 14) app/ vs backend/ Duplication — Investigation and Decision (2026-07-04)
+
+### 14.1 Investigation
+
+Prompted by the Blueprint work above, `app/` (the original layered AI OS,
+port 8001) was checked against `backend/` (port 8000) for whether the
+duplication identified earlier in this document (separate `business/`,
+`services/`, `domain/`, `ProjectService` at repo root vs under `backend/`)
+still matters in practice. Three checks, in order of decisiveness:
+
+1. **Commit history:** `app/`'s last commit (`60916d6`, 2026-07-01) is
+   titled "complete Sprint 2 walking skeleton and prepare product
+   review." Every commit since then — 19 in a row as of this writing —
+   touches only `backend/` (or docs). `app/` has not participated in any
+   of the real-data migration or Blueprint work described in this
+   document.
+2. **Frontend wiring (decisive):** `frontend/lib/api-client.ts` and
+   `frontend/hooks/use-product-event.ts` both default
+   `NEXT_PUBLIC_API_BASE` to `http://localhost:8000` — `backend/`'s port.
+   A full search of `frontend/` for `8001` (`app/`'s port) returns zero
+   matches. The real, user-facing Next.js frontend never talks to `app/`.
+3. **Streamlit:** README states Streamlit is debug-only, never production
+   UI. The actual Streamlit app lives under `reference/03_application/`
+   (last touched 2026-06-30, a single "initialize product foundation"
+   commit), not under `app/` — another indicator that `app/` isn't the
+   locus of any current usage.
+
+**Conclusion:** `app/` is a frozen reference implementation, not an
+active production surface. `backend/` is where real usage and real
+development both happen.
+
+### 14.2 What app/ has that backend/ doesn't: a self-improvement loop
+
+Before treating this as "just delete `app/`," its `learning/` (10 files,
+1126 lines) and `change_management/` (193 lines) packages were reviewed,
+since they implement something `backend/` genuinely lacks: a
+propose-review-approve loop for the AI system's *own* behavior, not just
+for business-rule knowledge candidates (which is what Phase D-1's
+`governance_store.py` handles).
+
+- `learning/query_log.py` + `feedback.py` + `classifier.py` +
+  `improvements.py` log questions/answers, collect feedback, classify
+  issues, and turn recurring issues into "improvement" proposals.
+- `learning/improvements.py` hands each improvement to
+  `change_management.repository.create_change_request(...)`, which
+  tracks it through a draft → review → approved → implemented → validated
+  → released lifecycle (`change_management/lifecycle.py`).
+- Both are in-memory only (`_IMPROVEMENTS`, `_CHANGE_REQUESTS` module-level
+  lists) — the same "MVP, no persistence" pattern this document already
+  flagged and fixed twice this session (`trace_store.py` for traces,
+  `capability_instance.py`'s persistence hook for Capability execution
+  history). No reason to believe `change_management/`'s persistence gap
+  is any less real, or that it has been exercised recently given `app/`'s
+  3-day-frozen status.
+
+**This is conceptually distinct from Phase D-1's Governance Queue.**
+`governance_store.py` approves *business-rule knowledge candidates*
+(e.g. "which date column should 'this month's sales' use"). `learning/` +
+`change_management/` approve *changes to the AI system's own code/logic*
+in response to observed usage problems. Both are legitimate and both
+matter — they are not the same feature under two names.
+
+### 14.3 Decision: rebuild in backend/, do not port app/'s code as-is
+
+Rationale (discussed with Noritsugu 2026-07-04):
+
+1. Porting unverified, 3-day-frozen code would reintroduce exactly the
+   class of bug this session spent most of its time fixing (silent typos,
+   dead code, unpersisted state) — see the `"logisys"`/`"logsys"` typo
+   (13.6) and the pre-Phase-A dead `get_home_payload`/`get_trace` in
+   `mock_store.py` as concrete examples from *today alone*.
+2. Maintaining two parallel self-improvement systems (one for `app/`, a
+   new one for `backend/`) would recreate the same duplication problem
+   this document exists to track and resolve.
+3. The Blueprint groundwork for tiered approval already exists and is
+   unused: `capability/domain.py`'s `GovernanceLevel` enum
+   (`LOW`/`MEDIUM`/`HIGH`/`ADMIN_APPROVED_REQUIRED`) is already a field on
+   every registered `Capability`, but Phase D-1's `governance_store.py`
+   deliberately ignored it, routing every proposal through a single
+   manual-approval path regardless of level. Wiring `submit_proposal` to
+   branch on `GovernanceLevel` (auto-approve `LOW` + high confidence,
+   require human review otherwise) reuses what's already there instead of
+   porting `app/`'s parallel machinery.
+
+**`app/` itself is a deletion candidate**, pending nothing further than
+archiving this investigation (done, here) — no code from it should be
+copied into `backend/` verbatim.
+
+### 14.4 Phase G (planned, not started): tiered Governance + real
+proposals/documents
+
+Captured here so the next session can start directly rather than
+re-deriving this plan:
+
+1. Extend `governance_store.submit_proposal` (or a new function) to
+   accept/read a `GovernanceLevel` and branch: `LOW` + confidence above
+   threshold → auto-approve immediately (still creating a full audit
+   trail entry, just skipping the human wait); `MEDIUM`/`HIGH`/
+   `ADMIN_APPROVED_REQUIRED` → today's manual queue behavior.
+2. Implement `POST /api/proposals/draft` and `POST /api/documents/draft`
+   for real (Phase E/F left these as the only remaining mock endpoints —
+   see 13.6) as Capabilities with an assigned `GovernanceLevel`: routine,
+   template-shaped requests ("generate this Excel format from this
+   reference data") are `LOW`; requests that would establish or change a
+   business rule are `HIGH`/`ADMIN_APPROVED_REQUIRED`. This was the
+   concrete motivating example from Noritsugu's 2026-07-04 discussion.
+3. Design (not port) a `backend/`-native equivalent of `learning/`'s
+   query-log → feedback → improvement loop, shaped around
+   `reasoning_pipeline.py`'s structured output rather than `app/`'s
+   Memory/Context model.
+4. Once 1–3 land and are verified against real data (same discipline as
+   every phase in this document), revisit deleting `app/`,
+   `reference/03_application/`, and the root-level `business/`/
+   `services/`/`domain/` packages it alone depends on.
 
 ## Constraints
 
