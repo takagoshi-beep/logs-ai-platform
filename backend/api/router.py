@@ -9,13 +9,13 @@ from business.today_actions import get_home_payload as get_home_payload_business
 from services.mock_store import (
     draft_document,
     draft_proposal,
-    recommend_tasks,
 )
 from services.status_reporting import (
     get_evaluation_summary,
     get_execution,
     get_health,
     get_history,
+    recommend_tasks,
     store_event,
 )
 from services.trace_store import get_trace

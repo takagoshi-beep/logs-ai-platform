@@ -12,28 +12,25 @@ dead `get_trace()` (superseded by `services/trace_store.py`) were also
 removed as unused duplication.
 
 NOTE (2026-07-04, Phase F): `consult()` and its hardcoded demo dataset
-(`_projects`, `_consult_knowledge`, `_find_project_for_message`) were
-removed. `/api/chat` now calls `services.reasoning_pipeline.reason()` +
-`to_chat_response()` instead — real Supabase data via the same Provider
-abstraction `reasoning_pipeline.py` already used, including a new
-`_q5_project_lookup` pattern added specifically to cover what `consult()`
-used to do (project/customer name lookup), but against real
-`purchase_orders`/`customers` data instead of 4 hardcoded demo projects.
+were removed. `/api/chat` now calls `services.reasoning_pipeline.reason()`
++ `to_chat_response()` instead — real Supabase data via the same Provider
+abstraction `reasoning_pipeline.py` already used.
+
+NOTE (2026-07-04, Phase F continued): `recommend_tasks()` and its 3
+hardcoded demo tasks were also removed and replaced by a real
+implementation in `services/status_reporting.py`, which aggregates the
+`ProjectAction` recommendations `ProjectService` already generates from
+real Supabase `purchase_orders` data — the same kind of duplication as
+`consult()`, just discovered one endpoint later.
+
+What remains here — `draft_proposal`, `draft_document` — genuinely need
+generative logic (LLM or template-based document assembly) that doesn't
+exist anywhere in this codebase yet; that's real product/design work, not
+a data source swap.
 """
 from __future__ import annotations
 
 from typing import Any
-
-_task_recommendations = [
-    {"id": "t1", "project": "Fanatics OEM", "title": "Confirm delay root cause", "due": "today", "priority": "high", "status": "open"},
-    {"id": "t2", "project": "BEAMS Retail", "title": "Review proposal deck", "due": "tomorrow", "priority": "high", "status": "in_progress"},
-    {"id": "t3", "project": "GOLDWIN Campaign", "title": "Prepare quote response", "due": "this_week", "priority": "medium", "status": "open"},
-]
-
-
-def recommend_tasks() -> list[dict[str, Any]]:
-    return _task_recommendations
-
 
 _proposal_draft = {
     "id": "pd-101",
