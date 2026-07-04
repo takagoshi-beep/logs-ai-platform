@@ -15,6 +15,7 @@ from services.evidence_interpreter import interpret_evidence
 from services.knowledge_registry import find_rule
 from services.semantic_registry import find_semantic
 from services.trace_store import save_trace
+from services import governance_store
 
 REASONING_CAPABILITY = Capability(
     capability_id="business_question_reasoning",
@@ -556,7 +557,7 @@ def reason(question: str) -> dict[str, Any]:
     )
 
     try:
-        result = _reason_impl(question)
+        result = _reason_impl(question, trace_id=trace_id)
     except Exception as e:
         capability_registry.record_execution_result(
             execution_id=execution.execution_id,
@@ -582,7 +583,7 @@ def reason(question: str) -> dict[str, Any]:
     return result
 
 
-def _reason_impl(question: str) -> dict[str, Any]:
+def _reason_impl(question: str, trace_id: str = "") -> dict[str, Any]:
     """Rule-based Reasoning Pipeline: reproduce the LOGS staff thought process.
 
     **Phase 9以降: Semantic-First Architecture**
@@ -627,6 +628,21 @@ def _reason_impl(question: str) -> dict[str, Any]:
         interpretation = _interpret_facts(facts)
         hypotheses = _generate_hypotheses_from_facts(facts, interpretation)
         candidates = _create_knowledge_candidates(hypotheses)
+
+        for candidate in candidates:
+            if candidate.get("po_review_status") == "PENDING":
+                try:
+                    governance_store.submit_proposal(
+                        source_capability_id=REASONING_CAPABILITY.capability_id,
+                        concept=candidate.get("concept", ""),
+                        ai_hypothesis=candidate.get("ai_hypothesis", ""),
+                        confidence_score=candidate.get("confidence", 0.0),
+                        trace_id=trace_id,
+                        proposal_id=candidate.get("hypothesis_id"),
+                    )
+                except Exception:
+                    # Governance submission must never block the response.
+                    pass
 
         payload["phase_13"] = {
             "facts": facts,

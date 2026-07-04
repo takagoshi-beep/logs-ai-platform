@@ -1,0 +1,2 @@
+{"audit_id": "audit-1a159f9c", "approval_id": "gov-db38b7ce", "action": "PROPOSAL_RECEIVED", "timestamp": "2026-07-04T08:26:08.700883+00:00", "actor": "system", "details": {"concept": "売上集計における期間基準日の定義"}}
+{"audit_id": "audit-bafe5d58", "approval_id": "gov-db38b7ce", "action": "APPROVED", "timestamp": "2026-07-04T08:26:39.752530+00:00", "actor": "po-takagoshi", "details": {"reason": "会社ルールとして確定"}}
