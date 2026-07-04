@@ -496,16 +496,20 @@ fastest way to check current status without re-auditing from scratch.
 
 | Principle | Status in `backend/` | Notes |
 |---|---|---|
-| 2, 4, 5, 12 (Capability Driven) | Partial | `capability_router.py` is mounted and reachable (Phase A). `ProjectService.build_project_aggregate` is tracked as Capability `project_aggregate_analysis` (Phase C-1). `reasoning_pipeline.py` is **not yet** wired — still an untracked ad-hoc function. |
-| 6, 10 (Transparent AI / Trace Everything) | Done for `ProjectService` | `trace_id` is persisted to `backend/data/traces.jsonl` and `GET /api/debug/trace/{id}` returns real data (Phase B). `reasoning_pipeline.py` does not generate/persist a trace_id at all. |
-| 3, 5 (Human Governed / Governed Learning) | Not started | No governance/change_management wiring exists in `backend/`. `capability.registry.CapabilityRegistry` is in-memory only (no persistence) — capability definitions and metrics are lost on every restart. |
+| 2, 4, 5, 12 (Capability Driven) | Mostly done | `capability_router.py` is mounted and reachable (Phase A). Both `ProjectService.build_project_aggregate` (`project_aggregate_analysis`, Phase C-1) and `reasoning_pipeline.reason` (`business_question_reasoning`, Phase C-2) are tracked Capability executions via the shared registry in `services/capability_instance.py`. Remaining mock-backed endpoints (`chat`, `tasks/recommend`, `proposals/draft`, `documents/draft`) are not yet wired (Phase E). |
+| 6, 10 (Transparent AI / Trace Everything) | Done for `ProjectService` and `reasoning_pipeline` | Both generate and persist a `trace_id` to `backend/data/traces.jsonl`, retrievable via `GET /api/debug/trace/{id}` (Phase B, extended in Phase C-2). |
+| 3, 5 (Human Governed / Governed Learning) | Not started | No governance/change_management wiring exists in `backend/`. `capability.registry.CapabilityRegistry` is in-memory only (no persistence) — capability *definitions* re-register idempotently on each use, but *execution history/metrics* (success_rate, confidence, past executions) are still lost on every restart, unlike traces. |
 
-Remaining candidate work (not yet scheduled): wire `reasoning_pipeline.py`
-through the same Capability pattern as `ProjectService`; give
-`CapabilityRegistry` durable storage (it has the same in-memory-only
-limitation `trace_store.py` solved for traces); build a governance
-approval loop for `backend/`, mirroring what `app/`'s Learning system does
-partially (see `docs/review/KNOWN_ISSUES.md`).
+Remaining candidate work:
+- Give `CapabilityRegistry` durable storage for execution history/metrics —
+  it has the same in-memory-only limitation `trace_store.py` solved for
+  traces, but for a different kind of data (aggregated metrics, not
+  individual records), so it isn't a copy-paste of that solution.
+- Build a governance approval loop for `backend/`, mirroring what `app/`'s
+  Learning system does partially (see `docs/review/KNOWN_ISSUES.md`).
+- Wire the remaining mock-backed endpoints in `backend/api/router.py`
+  through the Capability pattern as they get real implementations
+  (Phase E).
 
 ## Constraints
 
