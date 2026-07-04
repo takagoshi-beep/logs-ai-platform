@@ -452,20 +452,20 @@ work (Supabase `public` schema).
 
 | Route | Backing | Status |
 |---|---|---|
-| `GET /api/health` | `mock_store.get_health` | mock |
+| `GET /api/health` | `services.status_reporting.get_health` | real (reports live Capability/Governance registry state) — updated 2026-07-04, was mock |
 | `GET /api/home` | `business.today_actions.get_home_payload` | real (Supabase) |
-| `POST /api/chat` | `mock_store.consult` | mock |
-| `POST /api/reasoning` | `services.reasoning_pipeline.reason` | real (Supabase) |
+| `POST /api/chat` | `mock_store.consult` | mock (separate hardcoded demo dataset; overlaps conceptually with `reasoning_pipeline.py` — reconciling the two is future work, see 13.5/13.6) |
+| `POST /api/reasoning` | `services.reasoning_pipeline.reason` | real (Supabase); tracked Capability `business_question_reasoning` |
 | `GET /api/knowledge/documents` | `services.knowledge_loader.load_documents` | real (local knowledge files) |
 | `GET /api/knowledge/registry` | `services.knowledge_registry.get_registry` | real (local knowledge files) |
 | `POST /api/tasks/recommend` | `mock_store.recommend_tasks` | mock |
 | `POST /api/proposals/draft` | `mock_store.draft_proposal` | mock |
 | `POST /api/documents/draft` | `mock_store.draft_document` | mock |
-| `GET /api/history` | `mock_store.get_history` | mock |
-| `GET /api/executions/{id}` | `mock_store.get_execution` | mock |
-| `GET /api/evaluation/summary` | `mock_store.get_evaluation_summary` | mock |
+| `GET /api/history` | `services.status_reporting.get_history` | real (merges Capability execution history + Governance decisions) — updated 2026-07-04, was mock |
+| `GET /api/executions/{id}` | `services.status_reporting.get_execution` | real (Capability execution record) — updated 2026-07-04, was mock |
+| `GET /api/evaluation/summary` | `services.status_reporting.get_evaluation_summary` | real (aggregated Capability success rates) — updated 2026-07-04, was mock |
 | `GET /api/debug/trace/{id}` | `services.trace_store.get_trace` | real (JSONL: `backend/data/traces.jsonl`) — updated 2026-07-04, was mock |
-| `POST /api/events` | `mock_store.store_event` | mock |
+| `POST /api/events` | `services.status_reporting.store_event` | real (was already real; relocated 2026-07-04 out of `mock_store.py` where it was misclassified alongside genuinely-mock functions) |
 | `GET /api/projects`, `GET /api/projects/{id}`, `GET /api/projects/{id}/trace` | `services.project_service.ProjectService` | real (Supabase `purchase_orders`); executed as tracked Capability `project_aggregate_analysis` (updated 2026-07-04) |
 | `GET /api/today-actions` | `business.today_actions` | real (Supabase) |
 
@@ -475,15 +475,20 @@ work (Supabase `public` schema).
 
 ### 13.3 Real vs Mock Boundary
 
-`backend/services/mock_store.py` intentionally backs several endpoints
-(`chat`, `tasks/recommend`, `proposals/draft`, `documents/draft`, `history`,
-`executions`, `evaluation/summary`, `events`, `health`). `debug/trace` was
-migrated off mock_store to `services.trace_store` on 2026-07-04 (Phase B).
-This is a deliberate placeholder boundary for the rest, not an oversight —
-but as real-data migration continues (see git history: Home/Workspace/
-ProjectService/Phase13 were all migrated from mock to real Supabase queries
-in recent commits), this table is the fastest way to check what remains
-mock at any point in time.
+`backend/services/mock_store.py` now only backs 4 endpoints that
+genuinely need business/product design work, not just data plumbing:
+`chat` (`consult`), `tasks/recommend`, `proposals/draft`,
+`documents/draft`. `health`, `history`, `executions`, `evaluation/summary`,
+and `events` were migrated to `services/status_reporting.py` (real, backed
+by the Capability/Governance data built in Phases A–D) on 2026-07-04; the
+`events` function turned out to already be real (writing to
+`backend/data/events.jsonl`) and was simply misplaced. `debug/trace` was
+migrated to `services.trace_store` on 2026-07-04 (Phase B).
+
+The remaining 4 mock functions are a deliberate placeholder boundary, not
+an oversight — see 13.6 for why each one needs actual design work before
+it can be "just" made real. This table is the fastest way to check what
+remains mock at any point in time.
 
 ### 13.4 Data Flow (real-data path)
 
@@ -510,12 +515,47 @@ fastest way to check current status without re-auditing from scratch.
 | 3, 5 (Human Governed / Governed Learning) | Mostly done (reduced scope) | Phase D-1 added a minimal Governance Queue (`services/governance_store.py`, `/governance` API): `reasoning_pipeline.py`'s Phase 13 knowledge candidates auto-submit as `QUEUED_FOR_REVIEW`, and a human must call `POST /governance/{id}/decide` (approve/reject + reason) before anything is considered approved — durably audited (`backend/data/governance_approvals.jsonl`, `governance_audit.jsonl`). Deliberately NOT implemented: the Blueprint's 4-tier approval levels, auto-approval by confidence threshold, PolicyRule creation/activation/rollback, and approver authority checks (`decide()` trusts whatever `approver_id` is passed). Approving a proposal here does not yet edit any `knowledge/` file automatically — that "apply the rule" step is still manual. |
 
 Remaining candidate work:
-- Wire the remaining mock-backed endpoints in `backend/api/router.py`
-  through the Capability pattern as they get real implementations
-  (Phase E).
+- See 13.6 for the 4 mock endpoints still remaining after Phase E's
+  reduced scope (2026-07-04), and why each needs real design work first.
 - If/when needed: approval levels + auto-approve thresholds, PolicyRule
   versioning/rollback, and approver authority validation for the
   Governance Queue (Phase D-1 intentionally deferred all of these).
+
+### 13.6 Remaining Mock Endpoints (Phase E scope decision, 2026-07-04)
+
+Phase E was scoped down mid-implementation once it became clear the 9
+mock-backed endpoints split into two very different kinds of work: some
+were pure data-plumbing (reuse infrastructure already built in Phases
+A–D), others need real product/business design. Only the first group was
+completed as "Phase E"; the second group is intentionally left as future
+work rather than papered over with a quick fake-to-slightly-less-fake
+swap.
+
+**Done in Phase E (moved to `services/status_reporting.py`, all backed by
+real Capability/Governance data):** `health`, `history`, `executions/{id}`,
+`evaluation/summary`. `events` turned out to already be real and was just
+relocated.
+
+**Still mock, each needing real design work before it's "just" a data
+migration:**
+
+- `POST /api/chat` (`mock_store.consult`) — a separate, hardcoded
+  4-project demo dataset (Fanatics/BEAMS/GOLDWIN/newhattan) that doesn't
+  touch Supabase at all. It overlaps conceptually with
+  `reasoning_pipeline.py`, which does read real data — but they answer
+  different *shapes* of question (chat wants a conversational
+  project-status answer; reasoning wants a structured KPI breakdown).
+  Whether `/api/chat` should call `reasoning_pipeline.reason()`, a new
+  capability, or something else is a real product decision, not a
+  plumbing task.
+- `POST /api/tasks/recommend` (`mock_store.recommend_tasks`) — no rule
+  yet exists for what makes a task "recommended" from real project data;
+  this needs the same kind of rule design `ProjectService`'s
+  decision/action generation already went through, not just a data
+  source swap.
+- `POST /api/proposals/draft`, `POST /api/documents/draft` — both need
+  actual generative logic (LLM or template-based document assembly),
+  which doesn't exist anywhere in this codebase yet.
 
 ## Constraints
 
