@@ -24,9 +24,14 @@ from domain.project import (
     ProjectHealth,
     ProjectState,
 )
-from services.supabase_client import get_connection
+from capability.domain import ExecutionStatus
 from services.supabase_client import get_connection
 from services.trace_store import save_trace
+from services.capability_instance import (
+    PROJECT_AGGREGATE_CAPABILITY,
+    ensure_registered,
+    registry as capability_registry,
+)
 
 
 class ProjectService:
@@ -685,7 +690,48 @@ class ProjectService:
         return FocusRecommendationRule.recommend(health_score, risk_score, opportunity_score)
 
     def build_project_aggregate(self, project_id: str) -> ProjectAggregate | None:
-        """Build complete ProjectAggregate for a single project."""
+        """Build complete ProjectAggregate for a single project.
+
+        This is recorded as a Blueprint Capability execution (Principle 2:
+        Capability Driven) via the shared registry in
+        `services.capability_instance`, so it is visible/measurable through
+        the `/capabilities` API — not just an ad-hoc function call.
+        """
+        ensure_registered(PROJECT_AGGREGATE_CAPABILITY)
+        trace_id = self._generate_trace_id(project_id)
+        execution = capability_registry.execute_capability(
+            capability_id=PROJECT_AGGREGATE_CAPABILITY.capability_id,
+            inputs={"project_id": str(project_id)},
+            user_id="system",
+            project_id=str(project_id),
+            trace_id=trace_id,
+        )
+
+        try:
+            aggregate = self._build_project_aggregate_impl(project_id)
+        except Exception as e:
+            capability_registry.record_execution_result(
+                execution_id=execution.execution_id,
+                outputs={},
+                status=ExecutionStatus.FAILED,
+                error_message=str(e),
+            )
+            raise
+
+        capability_registry.record_execution_result(
+            execution_id=execution.execution_id,
+            outputs={
+                "found": aggregate is not None,
+                "state": aggregate.state.value if aggregate else None,
+                "priority": aggregate.priority if aggregate else None,
+            },
+            status=ExecutionStatus.COMPLETED if aggregate else ExecutionStatus.FAILED,
+            error_message=None if aggregate else "project not found",
+        )
+        return aggregate
+
+    def _build_project_aggregate_impl(self, project_id: str) -> ProjectAggregate | None:
+        """Build complete ProjectAggregate for a single project (unwrapped)."""
         data = self._build_project_data(project_id)
         if not data:
             return None

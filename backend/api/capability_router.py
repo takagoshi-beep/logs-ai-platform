@@ -11,10 +11,10 @@ from datetime import datetime
 
 from capability.registry import CapabilityRegistry, CapabilityExecution
 from capability.domain import CapabilityStatus
+from services.capability_instance import registry
 
-# Initialize router and registry
+# Initialize router
 router = APIRouter(prefix="/capabilities", tags=["capabilities"])
-registry = CapabilityRegistry()  # TODO: Inject from app context
 
 
 class CapabilityResponse(BaseModel):
