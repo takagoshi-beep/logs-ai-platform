@@ -5,12 +5,38 @@ from datetime import date
 from typing import Any
 import sqlite3
 import json
+import uuid
 
+from capability.domain import Capability, CapabilityStatus, ExecutionStatus, GovernanceLevel
+from services.capability_instance import ensure_registered, registry as capability_registry
 from services.data_providers import fetch_required_data
 from services.evidence_integration import integrate_evidence
 from services.evidence_interpreter import interpret_evidence
 from services.knowledge_registry import find_rule
 from services.semantic_registry import find_semantic
+from services.trace_store import save_trace
+
+REASONING_CAPABILITY = Capability(
+    capability_id="business_question_reasoning",
+    name="Business Question Reasoning",
+    category="business",
+    description=(
+        "Rule-based reasoning pipeline that answers structured business "
+        "questions (OEM gross profit, Fanatics status, priority projects, "
+        "top customer sales) using real Supabase data, with Phase 13 "
+        "fact/interpretation/hypothesis/knowledge-candidate extraction for "
+        "OEM gross profit questions."
+    ),
+    owner_team="AI OS",
+    owner_user_id="system",
+    team_id="ai-os",
+    status=CapabilityStatus.DEPLOYED,
+    version="1.0.0",
+    supported_inputs=["question"],
+    supported_outputs=["reasoning_payload"],
+    required_context=["sales", "purchase_orders"],
+    governance_level=GovernanceLevel.LOW,
+)
 
 
 def _semantic_ref(name: str) -> str:
@@ -510,6 +536,53 @@ def _q4_top_customer_sales() -> dict[str, Any]:
 
 
 def reason(question: str) -> dict[str, Any]:
+    """Public entrypoint for the reasoning pipeline.
+
+    Wraps `_reason_impl` as a Blueprint Capability execution (Principle 2:
+    Capability Driven) via the shared registry in
+    `services.capability_instance`, and persists a trace_id for this call
+    (Principle 6/10: Transparent AI / Trace Everything) so it is retrievable
+    through `GET /api/debug/trace/{id}` — previously this pipeline had
+    neither, unlike `ProjectService`.
+    """
+    ensure_registered(REASONING_CAPABILITY)
+    trace_id = f"reasoning-{uuid.uuid4().hex[:8]}"
+    execution = capability_registry.execute_capability(
+        capability_id=REASONING_CAPABILITY.capability_id,
+        inputs={"question": question},
+        user_id="system",
+        project_id="",
+        trace_id=trace_id,
+    )
+
+    try:
+        result = _reason_impl(question)
+    except Exception as e:
+        capability_registry.record_execution_result(
+            execution_id=execution.execution_id,
+            outputs={},
+            status=ExecutionStatus.FAILED,
+            error_message=str(e),
+        )
+        raise
+
+    result["trace_id"] = trace_id
+
+    try:
+        save_trace(trace_id, result)
+    except Exception:
+        # Trace persistence must never block the actual response.
+        pass
+
+    capability_registry.record_execution_result(
+        execution_id=execution.execution_id,
+        outputs={"question": question, "has_phase_13": "phase_13" in result},
+        status=ExecutionStatus.COMPLETED,
+    )
+    return result
+
+
+def _reason_impl(question: str) -> dict[str, Any]:
     """Rule-based Reasoning Pipeline: reproduce the LOGS staff thought process.
 
     **Phase 9以降: Semantic-First Architecture**
