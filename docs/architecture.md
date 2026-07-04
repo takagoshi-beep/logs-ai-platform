@@ -399,8 +399,10 @@ work (Supabase `public` schema).
 
 ### 13.1 Directory Inventory
 
-- `backend/api/` — route definitions (`router.py`, `capability_router.py`,
-  `schemas.py`). All routes are mounted under the `/api` prefix.
+- `backend/api/` — route definitions. `router.py` mounts business/project
+  routes under the `/api` prefix; `capability_router.py` mounts the
+  Capability REST API separately under its own `/capabilities` prefix (not
+  `/api`). Both are registered in `backend/main.py`.
 - `backend/business/` — business-rule helpers specific to the frontend
   surface (`today_actions.py`, `evaluation_rules.py`). Distinct from the
   top-level `business/` package used by `app/`.
@@ -413,14 +415,22 @@ work (Supabase `public` schema).
     customers, products).
   - `reasoning_pipeline.py` — the Fact/Interpretation/Hypothesis/Knowledge-
     Candidate reasoning flow (Phase 8–13 work); reads real data through
-    `supabase_client`.
+    `supabase_client`. Not yet wired through the Capability framework (see
+    13.5).
   - `evidence_integration.py`, `evidence_interpreter.py` — supporting
     evidence-handling logic for the reasoning pipeline.
   - `knowledge_loader.py`, `knowledge_registry.py`, `semantic_registry.py` —
     knowledge/semantic lookups specific to this surface (separate from the
     top-level `knowledge/` package).
+  - `capability_instance.py` — the single shared `CapabilityRegistry`
+    instance used by both `capability_router.py` and any business logic
+    that wants its work tracked as a Capability (e.g.
+    `project_service.py`). Import `registry` from here rather than
+    constructing a new `CapabilityRegistry()` — a previous bug had
+    `capability_router.py` construct its own, disconnected instance.
   - `project_service.py` — builds project state from real `purchase_orders`
-    data.
+    data. `build_project_aggregate` is recorded as a Capability execution
+    (`project_aggregate_analysis`) via `capability_instance.registry`.
   - `mock_store.py` — **intentional mock implementation** backing several
     endpoints that have not yet been migrated to real data (see 13.3).
 - `backend/connectors/`, `backend/runtime/` — currently placeholder
@@ -445,9 +455,9 @@ work (Supabase `public` schema).
 | `GET /api/history` | `mock_store.get_history` | mock |
 | `GET /api/executions/{id}` | `mock_store.get_execution` | mock |
 | `GET /api/evaluation/summary` | `mock_store.get_evaluation_summary` | mock |
-| `GET /api/debug/trace/{id}` | `mock_store.get_trace` | mock |
+| `GET /api/debug/trace/{id}` | `services.trace_store.get_trace` | real (JSONL: `backend/data/traces.jsonl`) — updated 2026-07-04, was mock |
 | `POST /api/events` | `mock_store.store_event` | mock |
-| `GET /api/projects`, `GET /api/projects/{id}`, `GET /api/projects/{id}/trace` | `services.project_service.ProjectService` | real (Supabase `purchase_orders`) |
+| `GET /api/projects`, `GET /api/projects/{id}`, `GET /api/projects/{id}/trace` | `services.project_service.ProjectService` | real (Supabase `purchase_orders`); executed as tracked Capability `project_aggregate_analysis` (updated 2026-07-04) |
 | `GET /api/today-actions` | `business.today_actions` | real (Supabase) |
 
 > **Note:** this table should be re-verified whenever `backend/api/router.py`
@@ -458,12 +468,13 @@ work (Supabase `public` schema).
 
 `backend/services/mock_store.py` intentionally backs several endpoints
 (`chat`, `tasks/recommend`, `proposals/draft`, `documents/draft`, `history`,
-`executions`, `evaluation/summary`, `debug/trace`, `events`, `health`). This
-is a deliberate placeholder boundary, not an oversight — but as real-data
-migration continues (see git history: Home/Workspace/ProjectService/Phase13
-were all migrated from mock to real Supabase queries in recent commits),
-this table is the fastest way to check what remains mock at any point in
-time.
+`executions`, `evaluation/summary`, `events`, `health`). `debug/trace` was
+migrated off mock_store to `services.trace_store` on 2026-07-04 (Phase B).
+This is a deliberate placeholder boundary for the rest, not an oversight —
+but as real-data migration continues (see git history: Home/Workspace/
+ProjectService/Phase13 were all migrated from mock to real Supabase queries
+in recent commits), this table is the fastest way to check what remains
+mock at any point in time.
 
 ### 13.4 Data Flow (real-data path)
 
@@ -474,6 +485,27 @@ flowchart LR
   SVC --> SBC[supabase_client.py]
   SBC --> DB[(Supabase public schema)]
 ```
+
+### 13.5 Blueprint Constitution Integration Status (backend/)
+
+`docs/blueprint/AI_OS_BLUEPRINT_v0.2_DRAFT.md`'s 12-principle AI Constitution
+was found (2026-07-04 audit) to be largely *not* wired into `backend/`,
+despite being partially proven out in `app/`. Work to close this gap is
+tracked here rather than only in commit messages, since this table is the
+fastest way to check current status without re-auditing from scratch.
+
+| Principle | Status in `backend/` | Notes |
+|---|---|---|
+| 2, 4, 5, 12 (Capability Driven) | Partial | `capability_router.py` is mounted and reachable (Phase A). `ProjectService.build_project_aggregate` is tracked as Capability `project_aggregate_analysis` (Phase C-1). `reasoning_pipeline.py` is **not yet** wired — still an untracked ad-hoc function. |
+| 6, 10 (Transparent AI / Trace Everything) | Done for `ProjectService` | `trace_id` is persisted to `backend/data/traces.jsonl` and `GET /api/debug/trace/{id}` returns real data (Phase B). `reasoning_pipeline.py` does not generate/persist a trace_id at all. |
+| 3, 5 (Human Governed / Governed Learning) | Not started | No governance/change_management wiring exists in `backend/`. `capability.registry.CapabilityRegistry` is in-memory only (no persistence) — capability definitions and metrics are lost on every restart. |
+
+Remaining candidate work (not yet scheduled): wire `reasoning_pipeline.py`
+through the same Capability pattern as `ProjectService`; give
+`CapabilityRegistry` durable storage (it has the same in-memory-only
+limitation `trace_store.py` solved for traces); build a governance
+approval loop for `backend/`, mirroring what `app/`'s Learning system does
+partially (see `docs/review/KNOWN_ISSUES.md`).
 
 ## Constraints
 
