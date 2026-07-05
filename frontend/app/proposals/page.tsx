@@ -31,7 +31,9 @@ interface ProposalResult {
 
 interface FieldMapping {
   field_name: string;
+  label_cell: string;
   input_cell: string;
+  direction: string;
   confidence: number;
 }
 
@@ -374,7 +376,51 @@ export default function ProposalBuilderPage() {
 
               {fmt.status === "QUEUED_FOR_REVIEW" && (
                 <div className="mt-3 border-t border-slate-200 pt-3">
-                  <label className="block text-xs font-medium text-sub">
+                  <p className="text-xs font-medium text-sub">
+                    検出内容（確信度の低い順に表示。誤検出がないか確認してください）
+                  </p>
+                  <div className="mt-2 max-h-64 overflow-y-auto rounded border border-slate-200">
+                    <table className="w-full text-left text-xs">
+                      <thead className="sticky top-0 bg-slate-50">
+                        <tr>
+                          <th className="px-2 py-1 font-medium text-sub">項目名</th>
+                          <th className="px-2 py-1 font-medium text-sub">見出しセル</th>
+                          <th className="px-2 py-1 font-medium text-sub">入力先セル</th>
+                          <th className="px-2 py-1 font-medium text-sub">確信度</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...(fmt.field_mappings || [])]
+                          .sort((a, b) => a.confidence - b.confidence)
+                          .map((mapping, idx) => (
+                            <tr
+                              key={idx}
+                              className={
+                                mapping.confidence < 0.6
+                                  ? "bg-amber-50"
+                                  : idx % 2 === 0
+                                  ? "bg-white"
+                                  : "bg-slate-50/50"
+                              }
+                            >
+                              <td className="px-2 py-1 text-ink">{mapping.field_name}</td>
+                              <td className="px-2 py-1 text-sub">{mapping.label_cell}</td>
+                              <td className="px-2 py-1 text-sub">
+                                {mapping.input_cell}（{mapping.direction === "right" ? "右" : "下"}）
+                              </td>
+                              <td className="px-2 py-1 text-sub">
+                                {Math.round(mapping.confidence * 100)}%
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="mt-1 text-xs text-sub">
+                    黄色でハイライトされている行は確信度が低く（60%未満）、誤検出の可能性があります。
+                  </p>
+
+                  <label className="mt-3 block text-xs font-medium text-sub">
                     承認・却下の理由（任意）
                   </label>
                   <input

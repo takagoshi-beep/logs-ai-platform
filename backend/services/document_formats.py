@@ -103,11 +103,23 @@ def infer_structure(worksheet) -> list[dict[str, Any]]:
     presumed input location for that label. Labels ending in "："/":"
     score higher confidence, since that's a strong signal of "this is a
     form field," not incidental text.
+
+    Formula cells are explicitly excluded from being treated as labels
+    (fixed 2026-07-05, found via real testing on a complex real-world
+    invoice template): without `data_only=True`, `cell.value` for a
+    formula cell is the formula *string itself* (e.g. "=SUM(L32:L33)"),
+    which is a `str` and was passing the "is this a label?" check,
+    polluting detected fields with formula text. `cell.data_type == "f"`
+    is openpyxl's own signal for "this cell holds a formula" — checked
+    first since it's authoritative; the `startswith("=")` check is a
+    defensive fallback in case `data_type` isn't set as expected.
     """
     mappings: list[dict[str, Any]] = []
     for row in worksheet.iter_rows():
         for cell in row:
             if not isinstance(cell.value, str):
+                continue
+            if getattr(cell, "data_type", None) == "f" or cell.value.strip().startswith("="):
                 continue
             label = cell.value.strip()
             if not label:

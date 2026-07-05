@@ -865,6 +865,104 @@ all — likely also disconnected, not yet investigated), `/workspace`,
 pages are real vs. decorative) is worth doing before assuming any
 unverified page works.
 
+## 14.7 Document-formats becomes fully usable in-app; image generation
+disabled (2026-07-05, continued)
+
+Four related changes, made after Noritsugu pointed out `/proposals`'
+image-generation checkbox should be removed (business decision: users
+should use their own generative-AI tools individually, not this
+platform) and that the upload-only `/document-formats` UI wasn't
+actually a complete, self-contained flow.
+
+**Image generation disabled, not deleted.** `draft_proposal`'s
+`include_image` parameter now does nothing — `image_path` is always
+`None` regardless of what's passed. `generate_image()` in
+`llm_client.py` and `GENERATED_IMAGES_DIR` are left in place for
+possible future re-enablement. The frontend checkbox was removed
+entirely (`/proposals` only offers `外部調査（Web検索）も行う` now).
+
+**`/document-formats` given a complete, self-contained UI** inside the
+`資料作成` (`/proposals`) page — upload, list, Governance
+approve/reject, and generate were previously only reachable via
+`curl`/PowerShell:
+- Upload form (name + generic file input — deliberately not restricted
+  to `.xlsx` client-side, so widening backend format support later needs
+  no frontend change) with a real success/failure message and a
+  `key`-based reset trick to visibly clear the file picker after a
+  successful upload (browsers don't clear a native file input's displayed
+  name just because the underlying React state was reset).
+- **In-app approve/reject buttons**, calling the same
+  `POST /governance/{id}/decide` endpoint that was previously only
+  reachable outside the app. Explicitly **not** a real authorization
+  system: `approverId` is hardcoded to `"u-demo"` client-side, and the
+  backend still accepts any `approver_id` (`docs/architecture.md` 13.5's
+  known gap, unchanged today — this only makes that gap reachable via a
+  one-click UI button instead of an API call). Accepted as reasonable
+  given the current small internal user base; flagged again here so it
+  isn't forgotten if the user base grows.
+- **Field-by-field generation form**, replacing an initial raw-JSON
+  textarea after Noritsugu clarified the actual want: one labeled input
+  per detected `field_mapping`, not hand-written JSON. Empty fields are
+  simply omitted from `user_data`, letting `services/document_formats.py`'s
+  existing project-ID auto-fill logic (Phase G-2) fill them from real
+  Supabase data when possible — user-typed values still take precedence
+  on overlap, unchanged from before.
+- **Full "confirm before approving" review**: the approval list now
+  shows every detected field (name, label cell, input cell, confidence),
+  sorted lowest-confidence-first with sub-60%-confidence rows
+  highlighted, in a scrollable table — replacing a field-count-only
+  summary that gave no way to actually review what would be approved.
+  This directly caught a real bug (next item) the very first time it was
+  used on real data.
+
+**Bug found via the new review table, same day: formula cells were
+being misread as labels.** `infer_structure()` didn't check
+`cell.data_type` before treating a string cell as a label; without
+`data_only=True`, a formula cell's `.value` is the formula text itself
+(e.g. `"=SUM(L32:L33)"`), which is a `str` and passed every check. On a
+simple test template (no formulas) this never surfaced; on a real,
+formula-heavy customer invoice template it produced formula strings as
+detected "field names," inflating the detected-field count from 81 to
+256 with page-formula noise. Fixed by skipping cells where
+`cell.data_type == "f"` (or, defensively, where the value starts with
+`"="`). Verified against the real file: 256 → 81 detected fields, zero
+formula strings among them. **Lesson reinforced (third time this
+session, after the `"logisys"` typo and the evidence-dedup bypass):
+build the "can a human actually see what's about to happen" UI *before*
+trusting a heuristic on real data — the review table surfaced this bug
+on first real use, where a count-only summary had hidden it.**
+
+**Residual limitation, not yet fixed:** even after the formula fix, the
+same real invoice template's detected fields include values that look
+like reference/master data (e.g. `"FRAY I.D"`, `"日本"`,
+`"伊藤忠モードパル（株）"`, `"006186"`) rather than genuine form labels —
+likely a lookup table embedded elsewhere in the sheet, misread the same
+way a title cell was in the original test template (13.6). This is a
+real limit of a purely positional (right/below-empty-cell) heuristic on
+visually complex real-world spreadsheets, not something today's fix
+addresses. A human reviewer using the new confirmation table can still
+catch this before approving (as intended), but the false-positive rate
+on complex templates should be expected to stay meaningfully above zero.
+
+**Still not implemented — "flow gap 2" Noritsugu identified:** feeding
+input data via an uploaded file (e.g. a real invoice/packing-list) or
+via a chat instruction, as opposed to typing values into the generated
+per-field form. Today's generation form only accepts direct text input
+per field plus an optional `project_id` for internal auto-fill.
+
+**Process lesson from today, stated plainly:** this session repeatedly
+lost uncommitted local edits to mid-task `git reset --hard HEAD`
+operations, and separately, a browser Downloads-folder filename
+collision (repeatedly presenting a file as `proposals-page.tsx`) led to
+an old version being applied instead of the latest one — silently
+undoing the Governance approve/reject feature for one full round-trip
+before being caught. Two changes going forward: (1) never `git reset`
+mid-task once local edits exist that haven't been committed yet — reset
+only at the start of a fresh task once prior work is confirmed pushed;
+(2) give every presented file a version-numbered, task-specific name
+(e.g. `proposals-page_v4_review-detail.tsx`) rather than reusing the same
+generic name across turns.
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.
