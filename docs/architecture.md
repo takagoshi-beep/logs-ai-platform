@@ -510,9 +510,9 @@ fastest way to check current status without re-auditing from scratch.
 
 | Principle | Status in `backend/` | Notes |
 |---|---|---|
-| 2, 4, 5, 12 (Capability Driven) | Mostly done | `capability_router.py` is mounted and reachable (Phase A). Both `ProjectService.build_project_aggregate` (`project_aggregate_analysis`, Phase C-1) and `reasoning_pipeline.reason` (`business_question_reasoning`, Phase C-2) are tracked Capability executions via the shared registry in `services/capability_instance.py`. Remaining mock-backed endpoints (`chat`, `tasks/recommend`, `proposals/draft`, `documents/draft`) are not yet wired (Phase E). |
+| 2, 4, 5, 12 (Capability Driven) | Mostly done | `capability_router.py` is mounted and reachable (Phase A). `ProjectService.build_project_aggregate` (`project_aggregate_analysis`, Phase C-1), `reasoning_pipeline.reason` (`business_question_reasoning`, Phase C-2), `document_format_structure_inference`, and `document_generation` (Phase G-2, 2026-07-05) are all tracked Capability executions via the shared registry in `services/capability_instance.py`. Remaining mock-backed endpoints (`chat`, `tasks/recommend` — both migrated to real data in Phase F) are down to just `proposals/draft` (still mock; needs real generative AI — see 14.5). `documents/draft` was superseded by the `/document-formats` flow (Phase G-2), which is fully real. |
 | 6, 10 (Transparent AI / Trace Everything) | Done for `ProjectService` and `reasoning_pipeline` | Both generate and persist a `trace_id` to `backend/data/traces.jsonl`, retrievable via `GET /api/debug/trace/{id}` (Phase B, extended in Phase C-2). |
-| 3, 5 (Human Governed / Governed Learning) | Mostly done (reduced scope) | Phase D-1 added a minimal Governance Queue (`services/governance_store.py`, `/governance` API): `reasoning_pipeline.py`'s Phase 13 knowledge candidates auto-submit as `QUEUED_FOR_REVIEW`, and a human must call `POST /governance/{id}/decide` (approve/reject + reason) before anything is considered approved — durably audited (`backend/data/governance_approvals.jsonl`, `governance_audit.jsonl`). Deliberately NOT implemented: the Blueprint's 4-tier approval levels, auto-approval by confidence threshold, PolicyRule creation/activation/rollback, and approver authority checks (`decide()` trusts whatever `approver_id` is passed). Approving a proposal here does not yet edit any `knowledge/` file automatically — that "apply the rule" step is still manual. |
+| 3, 5 (Human Governed / Governed Learning) | Mostly done | Phase D-1 added a minimal Governance Queue (`services/governance_store.py`, `/governance` API): `reasoning_pipeline.py`'s Phase 13 knowledge candidates and `document_formats.py`'s structure-inference proposals submit for review, and a human must call `POST /governance/{id}/decide` (approve/reject + reason) before anything is considered approved — durably audited (`backend/data/governance_approvals.jsonl`, `governance_audit.jsonl`). Phase G-1 (2026-07-05) implemented the Blueprint Chapter 11 Approval Levels table's auto-approval rule: `submit_proposal(..., governance_level=...)` auto-approves only when `governance_level == "low"` and `confidence_score > 0.85` (`AUTO_APPROVE_THRESHOLD`); `medium`/`high`/`admin_approved_required` always require manual review regardless of confidence, matching the Blueprint table exactly. Still NOT implemented: PolicyRule creation/activation/rollback, and approver authority checks (`decide()` trusts whatever `approver_id` is passed — no auth). Approving a proposal here does not automatically edit any `knowledge/` file — that "apply the rule" step is still manual by design (see `governance_store.py` module docstring). |
 
 Remaining candidate work:
 - See 13.6 for the 4 mock endpoints still remaining after Phase E's
@@ -642,32 +642,105 @@ Rationale (discussed with Noritsugu 2026-07-04):
 archiving this investigation (done, here) — no code from it should be
 copied into `backend/` verbatim.
 
-### 14.4 Phase G (planned, not started): tiered Governance + real
-proposals/documents
+### 14.4 Phase G (done 2026-07-05): tiered Governance + document formats
 
-Captured here so the next session can start directly rather than
-re-deriving this plan:
+Implemented across two sessions:
 
-1. Extend `governance_store.submit_proposal` (or a new function) to
-   accept/read a `GovernanceLevel` and branch: `LOW` + confidence above
-   threshold → auto-approve immediately (still creating a full audit
-   trail entry, just skipping the human wait); `MEDIUM`/`HIGH`/
-   `ADMIN_APPROVED_REQUIRED` → today's manual queue behavior.
-2. Implement `POST /api/proposals/draft` and `POST /api/documents/draft`
-   for real (Phase E/F left these as the only remaining mock endpoints —
-   see 13.6) as Capabilities with an assigned `GovernanceLevel`: routine,
-   template-shaped requests ("generate this Excel format from this
-   reference data") are `LOW`; requests that would establish or change a
-   business rule are `HIGH`/`ADMIN_APPROVED_REQUIRED`. This was the
-   concrete motivating example from Noritsugu's 2026-07-04 discussion.
-3. Design (not port) a `backend/`-native equivalent of `learning/`'s
-   query-log → feedback → improvement loop, shaped around
-   `reasoning_pipeline.py`'s structured output rather than `app/`'s
-   Memory/Context model.
-4. Once 1–3 land and are verified against real data (same discipline as
-   every phase in this document), revisit deleting `app/`,
-   `reference/03_application/`, and the root-level `business/`/
-   `services/`/`domain/` packages it alone depends on.
+**Phase G-1 — tiered Governance approval.** `governance_store.submit_proposal`
+now accepts `governance_level` (a `capability.domain.GovernanceLevel` value)
+and implements the Blueprint Chapter 11 Approval Levels table's
+auto-approval rule exactly: `governance_level == "low"` and
+`confidence_score > AUTO_APPROVE_THRESHOLD` (0.85) auto-approves
+immediately (full audit trail entry, actor `system:auto-approved`);
+anything else — regardless of confidence — lands in the manual
+`QUEUED_FOR_REVIEW` queue, matching the Blueprint table's "Auto-Approve?
+NO" for MEDIUM/HIGH/ADMIN_APPROVED_REQUIRED.
+
+**Phase G-2 — real `documents/draft`, replacing the mock.** After
+discussion with Noritsugu (2026-07-05) distinguishing the two mock
+endpoints by what they actually need:
+- `proposals/draft` (customer-facing sales proposals: internal history +
+  external trend research + customer research + images + illustrations +
+  copy) genuinely needs full generative AI infrastructure that doesn't
+  exist in this codebase — deferred, see 14.5.
+- `documents/draft` (customer-specific delivery-note-style documents:
+  map internal data + user-supplied data like invoices/packing
+  lists/shipping details onto a customer-provided Excel format) is a
+  structured-mapping problem, not a free-text-generation problem — a
+  good fit for this codebase's existing Provider/Capability/Governance
+  patterns rather than new LLM infrastructure.
+
+`documents/draft` was implemented as a new `/document-formats` API
+(`services/document_formats.py`, `api/document_formats_router.py`),
+covering the 8-step flow Noritsugu described:
+
+1. **Upload** (`POST /document-formats`, multipart: name + .xlsx file) —
+   stores the template under `backend/data/document_templates/`.
+2. **AI infers structure** (`infer_structure()`): a heuristic scans every
+   text cell; if the cell to its right (preferred) or below is empty,
+   that empty cell is guessed as the input target for that label.
+   Labels ending in "："/":" score higher confidence (0.7 vs 0.5) — a
+   real, useful signal, not a guarantee (e.g. a title cell like "納品書"
+   with an empty cell to its right also gets flagged, at the lower
+   confidence, precisely so a human catches it in review rather than the
+   system silently trusting it).
+3. **Human confirms via Governance, once, for the whole template** — not
+   per-field. `create_format()` submits a *single* proposal containing
+   the entire field-mapping list as `ai_hypothesis` (JSON), at
+   `governance_level="medium"` (`DOCUMENT_FORMAT_CAPABILITY`) — this is
+   deliberately never auto-approvable regardless of confidence, since a
+   wrong structural guess could misplace real business data in every
+   future document generated from it.
+4. A format's status is never stored redundantly: `get_format`/
+   `list_formats` resolve status live from `governance_store` by
+   `governance_approval_id` — there is exactly one place a format's
+   approval state lives.
+5. **Generation** (`POST /document-formats/{id}/generate`) merges real
+   internal data — via `ProjectService.build_project_aggregate`, mapped
+   from Japanese field labels to `ProjectData` attributes through an
+   explicit, small `_INTERNAL_FIELD_MAP` (unmapped labels are simply not
+   auto-filled, never guessed) — with user-supplied `user_data`, which
+   takes precedence on overlap. Verified against real Supabase data
+   2026-07-05: a real project's actual `顧客名` was correctly
+   auto-filled, while `出荷日` correctly stayed empty (in
+   `missing_fields`) for a project whose delivery hadn't actually
+   happened yet (`actual_delivery_date` was `None`) — the system did not
+   fabricate a plausible-looking date.
+6. Generation is refused outright (`ValueError` → HTTP 400) for any
+   format not in `APPROVED` status — you cannot generate real documents
+   from an unconfirmed structural guess.
+7. Each generation is tracked as a `document_generation` Capability
+   execution (`governance_level="low"`, no per-generation approval
+   needed — the risky part, structure inference, was already gated once
+   at step 3; mechanically repeating an approved structure is routine).
+8. **Reuse** (step ⑦ in Noritsugu's flow): `GET /document-formats`
+   lists all formats with live-resolved status by name — an approved
+   "フォーマットA" is simply reusable via its `format_id` going forward.
+   Adding "フォーマットB, C, D..." (step ⑧) requires no further design —
+   each is just another call to step 1.
+
+Not implemented in this pass: natural-language ("via chat") input for
+step ③ — only structured JSON `user_data` is supported; parsing
+free-form chat instructions or uploaded invoice/packing-list *files*
+(as opposed to pre-structured JSON) is future work.
+
+### 14.5 Remaining: `proposals/draft` (real generative AI, not started)
+
+Unlike `documents/draft`, `proposals/draft` was confirmed (2026-07-05
+discussion with Noritsugu) to need actual generative AI capability that
+does not exist anywhere in this codebase: internal history + external
+trend/customer research + image sourcing/illustration + composed prose.
+This requires new infrastructure (an LLM client, plus likely web-search
+and image-generation tool access), not a data-source swap — it's the
+last remaining mock endpoint, and the only one that couldn't be
+"discovered to be smaller than expected" the way `chat`/`tasks/recommend`
+(Phase F) and `documents/draft` (Phase G-2) were.
+
+Also still pending from 14.3/14.4: designing (not porting) a
+`backend/`-native equivalent of `learning/`'s query-log → feedback →
+improvement loop, and revisiting deletion of `app/`,
+`reference/03_application/`, and the root-level `business/`/`services/`/
+`domain/` packages once the above lands.
 
 ## Constraints
 
