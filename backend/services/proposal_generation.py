@@ -45,8 +45,12 @@ from services import governance_store
 from services.data_providers import fetch_required_data
 from services.evidence_integration import integrate_evidence
 from services.evidence_interpreter import interpret_evidence
-from services.llm_client import generate_text, generate_text_with_web_search
+from services.llm_client import generate_text, generate_text_with_web_search, generate_image
 from services.trace_store import save_trace
+
+from pathlib import Path
+
+GENERATED_IMAGES_DIR = Path(__file__).resolve().parents[1] / "data" / "generated_proposal_images"
 
 PROPOSAL_DRAFT_CAPABILITY = Capability(
     capability_id="proposal_draft_generation",
@@ -108,7 +112,9 @@ def _gather_internal_history(customer: str) -> str:
         return f"社内履歴の取得に失敗しました（エラー: {e}）。このドラフトは履歴データなしで作成されています。"
 
 
-def draft_proposal(customer: str, purpose: str, include_external: bool = False) -> dict[str, Any]:
+def draft_proposal(
+    customer: str, purpose: str, include_external: bool = False, include_image: bool = False,
+) -> dict[str, Any]:
     """Generate a proposal draft and submit it for Governance review.
 
     Returns immediately with the draft text and a `governance_approval_id`
@@ -124,12 +130,24 @@ def draft_proposal(customer: str, purpose: str, include_external: bool = False) 
     (`external_sources`) — a human reviewing the draft can see exactly
     which URLs were used and judge them, rather than trusting prose that
     doesn't say where a claim came from.
+
+    `include_image=True` generates one supporting image via OpenAI's
+    `gpt-image-1` (2026-07-05), derived from the customer/purpose text.
+    The image is saved to disk (not embedded as base64 in the response —
+    that string is enormous and useless to pass around); only its path is
+    returned. This is a simple v1: no attempt is made to match the image
+    to the drafted text's actual content, and no OCR/vision check
+    confirms it's on-topic — a human reviewing the draft should look at
+    the image itself, not just trust that it's relevant.
     """
     ensure_registered(PROPOSAL_DRAFT_CAPABILITY)
     trace_id = f"proposal-{uuid4().hex[:8]}"
     execution = capability_registry.execute_capability(
         capability_id=PROPOSAL_DRAFT_CAPABILITY.capability_id,
-        inputs={"customer": customer, "purpose": purpose, "include_external": include_external},
+        inputs={
+            "customer": customer, "purpose": purpose,
+            "include_external": include_external, "include_image": include_image,
+        },
         user_id="system",
         project_id="",
         trace_id=trace_id,
@@ -141,7 +159,7 @@ def draft_proposal(customer: str, purpose: str, include_external: bool = False) 
         "外部の業界動向・市場トレンド・顧客企業の公開情報について、Web検索で調査し、"
         "提案書に反映してください。調査した内容には必ず出典（検索結果）が伴います。"
         if include_external else
-        "外部トレンド調査・顧客の業界動向・画像/写真は現時点で未対応です。含めないでください。"
+        "外部トレンド調査・顧客の業界動向は現時点で未対応です。含めないでください。"
     )
 
     prompt = f"""あなたはB2B営業支援AIです。以下の情報をもとに、顧客向け提案書のドラフトを作成してください。
@@ -175,9 +193,26 @@ def draft_proposal(customer: str, purpose: str, include_external: bool = False) 
         )
         raise
 
+    image_path: str | None = None
+    if include_image:
+        try:
+            image_prompt = (
+                f"{purpose}に関する、{customer}向けのプロフェッショナルなビジネス系イラスト。"
+                "シンプルで清潔感のあるデザイン、企業の提案書に使える品質。文字やロゴは含めない。"
+            )
+            output_path = GENERATED_IMAGES_DIR / f"{trace_id}.png"
+            image_path = generate_image(image_prompt, output_path)
+        except Exception:
+            # 画像生成の失敗はテキストドラフト自体を止めない。
+            image_path = None
+
     capability_registry.record_execution_result(
         execution_id=execution.execution_id,
-        outputs={"draft_length": len(draft_text), "external_sources_count": len(external_sources)},
+        outputs={
+            "draft_length": len(draft_text),
+            "external_sources_count": len(external_sources),
+            "image_generated": image_path is not None,
+        },
         status=ExecutionStatus.COMPLETED,
     )
 
@@ -185,7 +220,7 @@ def draft_proposal(customer: str, purpose: str, include_external: bool = False) 
         save_trace(trace_id, {
             "customer": customer, "purpose": purpose, "include_external": include_external,
             "internal_history": internal_history, "draft_text": draft_text,
-            "external_sources": external_sources,
+            "external_sources": external_sources, "image_path": image_path,
         })
     except Exception:
         pass
@@ -199,18 +234,22 @@ def draft_proposal(customer: str, purpose: str, include_external: bool = False) 
         governance_level=PROPOSAL_DRAFT_CAPABILITY.governance_level.value,
     )
 
+    note_parts = ["このドラフトはAI生成です。"]
+    if not include_external:
+        note_parts.append("外部調査は含まれていません。")
+    if not include_image:
+        note_parts.append("画像は含まれていません。")
+    note_parts.append("Governance承認前は顧客への送付不可です。")
+
     return {
         "customer": customer,
         "purpose": purpose,
         "draft_text": draft_text,
         "internal_history_used": internal_history,
         "external_sources": external_sources,
+        "image_path": image_path,
         "trace_id": trace_id,
         "governance_approval_id": approval.approval_id,
         "status": approval.status,
-        "note": (
-            "このドラフトはAI生成です。"
-            + ("画像は含まれていません。" if include_external else "外部調査・画像は含まれていません。")
-            + "Governance承認前は顧客への送付不可です。"
-        ),
+        "note": "".join(note_parts),
     }

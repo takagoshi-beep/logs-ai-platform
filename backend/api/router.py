@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 
 from api.schemas import ChatRequest, ProductEvent, ProposalDraftRequest, TasksRecommendRequest
 from business.today_actions import get_home_payload as get_home_payload_business
@@ -87,7 +88,10 @@ def proposals_draft(req: ProposalDraftRequest) -> dict:
     auto-approved) and is not sendable to a customer until approved via
     POST /governance/{id}/decide.
     """
-    return draft_proposal(req.customer, req.purpose, include_external=req.include_external)
+    return draft_proposal(
+        req.customer, req.purpose,
+        include_external=req.include_external, include_image=req.include_image,
+    )
 
 
 @router.get("/history")
@@ -299,3 +303,11 @@ def get_today_actions(limit: int = 20) -> dict:
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/proposals/images/{trace_id}/download")
+def download_proposal_image(trace_id: str):
+    from services.proposal_generation import GENERATED_IMAGES_DIR
+    path = GENERATED_IMAGES_DIR / f"{trace_id}.png"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Generated image not found")
+    return FileResponse(path, media_type="image/png", filename=f"{trace_id}.png")

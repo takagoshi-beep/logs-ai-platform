@@ -25,6 +25,7 @@ class ProposalDraftRequest(BaseModel):
     customer: str
     purpose: str
     include_external: bool = True
+    include_image: bool = False
 
 
 class DocumentDraftRequest(BaseModel):
