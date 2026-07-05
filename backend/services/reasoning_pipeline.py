@@ -712,6 +712,7 @@ def _reason_impl(question: str, trace_id: str = "") -> dict[str, Any]:
                         confidence_score=candidate.get("confidence", 0.0),
                         trace_id=trace_id,
                         proposal_id=candidate.get("hypothesis_id"),
+                        governance_level=REASONING_CAPABILITY.governance_level.value,
                     )
                 except Exception:
                     # Governance submission must never block the response.

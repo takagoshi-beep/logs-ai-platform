@@ -53,6 +53,7 @@ class GovernanceApproval:
     ai_hypothesis: str
     confidence_score: float
     trace_id: str
+    governance_level: str = "medium"
     status: str = "QUEUED_FOR_REVIEW"  # QUEUED_FOR_REVIEW | APPROVED | REJECTED
     decision: Optional[str] = None
     approver_id: Optional[str] = None
@@ -101,6 +102,12 @@ def _record_audit(approval_id: str, action: str, actor: str, details: dict[str, 
     })
 
 
+AUTO_APPROVE_THRESHOLD = 0.85
+"""Blueprint Chapter 11 "Approval Levels" table: LOW governance level
+auto-approves only if confidence > 0.85. MEDIUM/HIGH/ADMIN_APPROVED_REQUIRED
+never auto-approve regardless of confidence, per the same table."""
+
+
 def submit_proposal(
     source_capability_id: str,
     concept: str,
@@ -108,15 +115,28 @@ def submit_proposal(
     confidence_score: float,
     trace_id: str,
     proposal_id: Optional[str] = None,
+    governance_level: str = "medium",
 ) -> GovernanceApproval:
     """Submit a Learning-derived candidate for Governance review.
 
-    Every call creates a *new* QUEUED_FOR_REVIEW record. Callers that want
-    to avoid duplicate queue entries for the same underlying proposal
-    should pass a stable `proposal_id` (e.g. the originating
-    `hypothesis_id`) and check `list_queue()` first — this is not enforced
-    here, to keep this reduced implementation simple.
+    Every call creates a *new* record. Callers that want to avoid
+    duplicate queue entries for the same underlying proposal should pass a
+    stable `proposal_id` (e.g. the originating `hypothesis_id`) and check
+    `list_queue()` first — this is not enforced here, to keep this reduced
+    implementation simple.
+
+    `governance_level` (one of `capability.domain.GovernanceLevel`'s
+    values: "low"/"medium"/"high"/"admin_approved_required") determines
+    whether this can auto-approve. Per the Blueprint's Chapter 11 Approval
+    Levels table, only "low" + confidence > `AUTO_APPROVE_THRESHOLD`
+    auto-approves; everything else always lands in the manual queue
+    (`QUEUED_FOR_REVIEW`) regardless of confidence.
     """
+    auto_approved = (
+        governance_level == "low" and confidence_score > AUTO_APPROVE_THRESHOLD
+    )
+    now = _now()
+
     approval = GovernanceApproval(
         approval_id=f"gov-{uuid4().hex[:8]}",
         proposal_id=proposal_id or f"proposal-{uuid4().hex[:8]}",
@@ -125,11 +145,23 @@ def submit_proposal(
         ai_hypothesis=ai_hypothesis,
         confidence_score=confidence_score,
         trace_id=trace_id,
+        governance_level=governance_level,
+        status="APPROVED" if auto_approved else "QUEUED_FOR_REVIEW",
+        decision="APPROVED" if auto_approved else None,
+        approver_id="system:auto-approved" if auto_approved else None,
+        approval_reason=(
+            f"Auto-approved: governance_level=low and confidence "
+            f"{confidence_score:.2f} > {AUTO_APPROVE_THRESHOLD} "
+            f"(Blueprint Chapter 11 Approval Levels table)"
+        ) if auto_approved else None,
+        decided_at=now if auto_approved else None,
     )
     _append_jsonl(APPROVALS_PATH, approval.to_dict())
     _record_audit(
-        approval.approval_id, "PROPOSAL_RECEIVED", actor="system",
-        details={"concept": concept},
+        approval.approval_id,
+        "AUTO_APPROVED" if auto_approved else "PROPOSAL_RECEIVED",
+        actor="system",
+        details={"concept": concept, "governance_level": governance_level, "confidence_score": confidence_score},
     )
     return approval
 
