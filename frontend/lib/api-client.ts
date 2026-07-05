@@ -215,6 +215,27 @@ export function getGeneratedDocumentUrl(outputId: string) {
   return `${API_BASE}/document-formats/generated/${outputId}/download`;
 }
 
+/**
+ * Approve or reject a Governance queue item (e.g. a document format's
+ * structure inference). This calls the same endpoint that was previously
+ * only reachable via `/governance/queue` outside the app — wiring it
+ * into the UI lets a user complete the upload→approve→generate flow
+ * without leaving the page. Note: this backend has no real
+ * authorization check on `approverId` yet (see docs/architecture.md
+ * 13.5) — anyone using the app can approve anything.
+ */
+export async function decideGovernance(
+  approvalId: string,
+  decision: "APPROVED" | "REJECTED",
+  approverId: string,
+  reason: string
+) {
+  return apiCall(`/governance/${approvalId}/decide`, {
+    method: "POST",
+    body: JSON.stringify({ decision, approver_id: approverId, reason }),
+  });
+}
+
 export async function getProject(projectId: string) {
   return apiCall(`/api/projects/${projectId}`);
 }

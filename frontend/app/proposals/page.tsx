@@ -9,6 +9,7 @@ import {
   listDocumentFormats,
   generateDocument,
   getGeneratedDocumentUrl,
+  decideGovernance,
 } from "@/lib/api-client";
 
 const suggestions = [
@@ -40,6 +41,7 @@ interface DocumentFormat {
   status: string;
   approver_id: string | null;
   approval_reason: string | null;
+  governance_approval_id: string;
   field_mappings: FieldMapping[];
 }
 
@@ -96,10 +98,36 @@ export default function ProposalBuilderPage() {
 
   const [selectedFormatId, setSelectedFormatId] = useState<string | null>(null);
   const [genProjectId, setGenProjectId] = useState("");
-  const [genUserDataText, setGenUserDataText] = useState("{}");
+  const [genFieldValues, setGenFieldValues] = useState<Record<string, string>>({});
   const [genLoading, setGenLoading] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
   const [genResult, setGenResult] = useState<GenerateResult | null>(null);
+
+  const [reviewReasons, setReviewReasons] = useState<Record<string, string>>({});
+  const [reviewLoadingId, setReviewLoadingId] = useState<string | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+
+  async function handleReview(
+    governanceApprovalId: string,
+    decision: "APPROVED" | "REJECTED"
+  ) {
+    setReviewLoadingId(governanceApprovalId);
+    setReviewError(null);
+    try {
+      const reason =
+        reviewReasons[governanceApprovalId] ||
+        (decision === "APPROVED" ? "内容を確認し、問題なし" : "内容を確認し、却下");
+      const response = await decideGovernance(governanceApprovalId, decision, "u-demo", reason);
+      if (response.success === false) {
+        throw new Error(response.error || "承認処理に失敗しました");
+      }
+      await refreshFormats();
+    } catch (err) {
+      setReviewError(err instanceof Error ? err.message : "承認処理に失敗しました");
+    } finally {
+      setReviewLoadingId(null);
+    }
+  }
 
   async function refreshFormats() {
     setFormatsLoading(true);
@@ -147,11 +175,14 @@ export default function ProposalBuilderPage() {
     setGenError(null);
     setGenResult(null);
     try {
-      let userData: Record<string, any> = {};
-      try {
-        userData = JSON.parse(genUserDataText || "{}");
-      } catch {
-        throw new Error('追加データはJSON形式で入力してください（例: {"担当者": "高越"}）');
+      // 空欄のフィールドはuserDataに含めない
+      // → 案件IDからの自動反映（内部データ）が優先して使われるようにするため。
+      // 何か入力されているフィールドだけ、その値で上書きする。
+      const userData: Record<string, any> = {};
+      for (const [fieldName, value] of Object.entries(genFieldValues)) {
+        if (value.trim() !== "") {
+          userData[fieldName] = value;
+        }
       }
       const response = await generateDocument(formatId, genProjectId, userData);
       if (response.success === false) {
@@ -163,6 +194,23 @@ export default function ProposalBuilderPage() {
     } finally {
       setGenLoading(false);
     }
+  }
+
+  function openGeneratePanel(fmt: DocumentFormat) {
+    if (selectedFormatId === fmt.format_id) {
+      setSelectedFormatId(null);
+      return;
+    }
+    setSelectedFormatId(fmt.format_id);
+    setGenProjectId("");
+    setGenResult(null);
+    setGenError(null);
+    // 検出済みフィールドごとに空の入力欄を用意する
+    const initialValues: Record<string, string> = {};
+    for (const mapping of fmt.field_mappings || []) {
+      initialValues[mapping.field_name] = "";
+    }
+    setGenFieldValues(initialValues);
   }
 
   return (
@@ -298,6 +346,7 @@ export default function ProposalBuilderPage() {
 
       <Card>
         <SectionHeader title="登録済みフォーマット一覧" />
+        {reviewError && <p className="mt-2 text-sm text-red-700">{reviewError}</p>}
         {formatsLoading && <p className="mt-3 text-sm text-sub">読み込み中...</p>}
         {!formatsLoading && formats.length === 0 && (
           <p className="mt-3 text-sm text-sub">まだフォーマットが登録されていません。</p>
@@ -314,27 +363,53 @@ export default function ProposalBuilderPage() {
                   </p>
                 </div>
                 {fmt.status === "APPROVED" && (
-                  <Button
-                    tone="ghost"
-                    size="sm"
-                    onClick={() =>
-                      setSelectedFormatId(selectedFormatId === fmt.format_id ? null : fmt.format_id)
-                    }
-                  >
+                  <Button tone="ghost" size="sm" onClick={() => openGeneratePanel(fmt)}>
                     {selectedFormatId === fmt.format_id ? "閉じる" : "このフォーマットで生成"}
                   </Button>
                 )}
                 {fmt.status === "QUEUED_FOR_REVIEW" && (
-                  <span className="text-xs text-amber-700">
-                    Governanceでの承認待ちです（/governance/queue から承認してください）
-                  </span>
+                  <span className="text-xs text-amber-700">承認待ち</span>
                 )}
               </div>
+
+              {fmt.status === "QUEUED_FOR_REVIEW" && (
+                <div className="mt-3 border-t border-slate-200 pt-3">
+                  <label className="block text-xs font-medium text-sub">
+                    承認・却下の理由（任意）
+                  </label>
+                  <input
+                    value={reviewReasons[fmt.governance_approval_id] || ""}
+                    onChange={(e) =>
+                      setReviewReasons((prev) => ({
+                        ...prev,
+                        [fmt.governance_approval_id]: e.target.value,
+                      }))
+                    }
+                    placeholder="例: フォーマットの内容を確認し、問題ありません"
+                    className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                  />
+                  <div className="mt-3 flex gap-2">
+                    <Button
+                      onClick={() => handleReview(fmt.governance_approval_id, "APPROVED")}
+                      className={reviewLoadingId === fmt.governance_approval_id ? "opacity-60" : ""}
+                    >
+                      承認する
+                    </Button>
+                    <Button
+                      tone="ghost"
+                      onClick={() => handleReview(fmt.governance_approval_id, "REJECTED")}
+                      className={reviewLoadingId === fmt.governance_approval_id ? "opacity-60" : ""}
+                    >
+                      却下する
+                    </Button>
+                  </div>
+                </div>
+              )}
 
               {selectedFormatId === fmt.format_id && (
                 <div className="mt-3 border-t border-slate-200 pt-3">
                   <label className="block text-xs font-medium text-sub">
-                    案件ID（任意・実案件データを自動反映します）
+                    案件ID（任意・実案件データを自動反映します。下で個別に入力した項目が優先されます）
                   </label>
                   <input
                     value={genProjectId}
@@ -343,15 +418,24 @@ export default function ProposalBuilderPage() {
                     className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
                   />
 
-                  <label className="mt-3 block text-xs font-medium text-sub">
-                    追加データ（JSON形式。案件データより優先されます）
-                  </label>
-                  <textarea
-                    value={genUserDataText}
-                    onChange={(e) => setGenUserDataText(e.target.value)}
-                    rows={3}
-                    className="mt-1 w-full rounded border border-slate-300 px-3 py-2 font-mono text-xs"
-                  />
+                  <p className="mt-4 text-xs font-medium text-sub">検出された項目（空欄でも構いません）</p>
+                  <div className="mt-2 space-y-2">
+                    {(fmt.field_mappings || []).map((mapping) => (
+                      <div key={mapping.field_name}>
+                        <label className="block text-xs text-sub">{mapping.field_name}</label>
+                        <input
+                          value={genFieldValues[mapping.field_name] ?? ""}
+                          onChange={(e) =>
+                            setGenFieldValues((prev) => ({
+                              ...prev,
+                              [mapping.field_name]: e.target.value,
+                            }))
+                          }
+                          className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                        />
+                      </div>
+                    ))}
+                  </div>
 
                   <div className="mt-3">
                     <Button
