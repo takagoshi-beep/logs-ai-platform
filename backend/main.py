@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.router import router
 from api.capability_router import router as capability_router
 from api.governance_router import router as governance_router
+from api.document_formats_router import router as document_formats_router
 
 app = FastAPI(title="LOGS AI OS Backend V0.1", version="0.1.0")
 
@@ -28,3 +29,4 @@ app.add_middleware(
 app.include_router(router)
 app.include_router(capability_router)
 app.include_router(governance_router)
+app.include_router(document_formats_router)
