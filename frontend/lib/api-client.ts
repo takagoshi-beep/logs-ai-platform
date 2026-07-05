@@ -117,8 +117,36 @@ export async function runReasoning(message: string) {
 }
 
 /**
- * Get single project with full aggregate
+ * Build the download URL for a generated proposal image.
  */
+export function getProposalImageUrl(traceId: string) {
+  return `${API_BASE}/api/proposals/images/${traceId}/download`;
+}
+
+/**
+ * Generate a proposal draft (LLM-backed text, optional web search / image).
+ * The draft is NOT sendable until approved via Governance
+ * (see /governance/{id}/decide) — this only returns the draft + its
+ * approval status.
+ */
+export async function draftProposal(
+  customer: string,
+  purpose: string,
+  includeExternal: boolean = false,
+  includeImage: boolean = false
+) {
+  return apiCall("/api/proposals/draft", {
+    method: "POST",
+    body: JSON.stringify({
+      user_id: "u-demo",
+      role: "sales",
+      customer,
+      purpose,
+      include_external: includeExternal,
+      include_image: includeImage,
+    }),
+  });
+}
 export async function getProject(projectId: string) {
   return apiCall(`/api/projects/${projectId}`);
 }
