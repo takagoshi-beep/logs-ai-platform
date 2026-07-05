@@ -1,13 +1,16 @@
 """Document format API — upload an Excel template, infer its structure,
-confirm via Governance, list/retrieve confirmed formats.
+confirm via Governance, list/retrieve confirmed formats, and generate
+filled documents from a confirmed format.
 
-See `services/document_formats.py` for what this does and doesn't cover
-(steps ①②⑥ of the flow only; feeding real data into a confirmed format
-to generate a filled document — ③④⑤⑦ — is a later phase).
+See `services/document_formats.py` for what this does and doesn't cover.
 """
 from __future__ import annotations
 
+from typing import Any, Optional
+
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from services import document_formats
 
@@ -36,3 +39,32 @@ def get_format(format_id: str) -> dict:
     if not fmt:
         raise HTTPException(status_code=404, detail="Format not found")
     return fmt
+
+
+class GenerateRequest(BaseModel):
+    project_id: str = ""
+    user_data: dict[str, Any] = {}
+
+
+@router.post("/{format_id}/generate")
+def generate(format_id: str, request: GenerateRequest) -> dict:
+    try:
+        return document_formats.generate_document(
+            format_id=format_id,
+            project_id=request.project_id,
+            user_data=request.user_data,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/generated/{output_id}/download")
+def download_generated(output_id: str):
+    path = document_formats.GENERATED_DOCS_DIR / f"{output_id}.xlsx"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Generated document not found")
+    return FileResponse(
+        path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=f"{output_id}.xlsx",
+    )

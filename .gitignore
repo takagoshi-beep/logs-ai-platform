@@ -54,3 +54,4 @@ backend/data/governance_approvals.jsonl
 backend/data/governance_audit.jsonl
 backend/data/document_formats.jsonl
 backend/data/document_templates/
+backend/data/generated_documents/

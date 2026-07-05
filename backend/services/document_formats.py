@@ -221,3 +221,152 @@ def list_formats() -> list[dict[str, Any]]:
 def get_format(format_id: str) -> Optional[dict[str, Any]]:
     record = _latest_by_format_id().get(format_id)
     return _resolve_status(record) if record else None
+
+
+GENERATED_DOCS_DIR = DATA_DIR / "generated_documents"
+
+DOCUMENT_GENERATION_CAPABILITY = Capability(
+    capability_id="document_generation",
+    name="Document Generation from Confirmed Format",
+    category="business",
+    description=(
+        "Fills a human-confirmed document format's template with real "
+        "project data plus user-supplied data. Only usable on APPROVED "
+        "formats — the risky part (guessing the template's structure) was "
+        "already gated by Governance when the format was confirmed, so "
+        "each individual generation does not require separate approval; "
+        "it's a mechanical, auditable repetition of an already-reviewed "
+        "structure."
+    ),
+    owner_team="AI OS",
+    owner_user_id="system",
+    team_id="ai-os",
+    status=CapabilityStatus.DEPLOYED,
+    version="1.0.0",
+    supported_inputs=["format_id", "project_id", "user_data"],
+    supported_outputs=["generated_document"],
+    required_context=["purchase_orders"],
+    governance_level=GovernanceLevel.LOW,
+)
+
+# Best-effort mapping from common Japanese field-label text to
+# `ProjectData` attributes, used to auto-fill from real project data when
+# `project_id` is given. Deliberately small and explicit rather than
+# guessing — an unmapped field name simply isn't auto-filled and shows up
+# in `missing_fields` instead of silently getting a wrong value.
+_INTERNAL_FIELD_MAP: dict[str, str] = {
+    "顧客名": "customer_name",
+    "顧客": "customer_name",
+    "仕入先": "supplier_name",
+    "仕入先名": "supplier_name",
+    "PO番号": "po_number",
+    "案件名": "po_number",
+    "金額": "po_amount",
+    "売上金額": "sale_amount",
+    "原価": "cost_amount",
+    "出荷日": "actual_delivery_date",
+    "納期": "po_required_delivery_date",
+    "請求日": "invoice_date",
+    "支払期日": "payment_due_date",
+}
+
+
+def _internal_data_for_project(project_id: str) -> dict[str, Any]:
+    """Best-effort auto-fill from real Supabase data via ProjectService.
+    Returns {} on any failure — internal auto-fill is a convenience, never
+    a hard requirement (user-supplied data can always cover a field this
+    can't)."""
+    if not project_id:
+        return {}
+    try:
+        from services.project_service import ProjectService
+        aggregate = ProjectService().build_project_aggregate(project_id)
+        if not aggregate:
+            return {}
+        result: dict[str, Any] = {}
+        for field_name, attr in _INTERNAL_FIELD_MAP.items():
+            value = getattr(aggregate.data, attr, None)
+            if value is not None:
+                result[field_name] = value
+        return result
+    except Exception:
+        return {}
+
+
+def generate_document(
+    format_id: str,
+    project_id: str = "",
+    user_data: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Fill an APPROVED format's template with real internal data (via
+    `project_id`) merged with `user_data` (e.g. invoice/packing-list/
+    shipping details the user provides directly), matched to the format's
+    field_mappings by field_name. User-supplied values take precedence
+    over internal auto-fill on overlap.
+
+    Raises ValueError if the format doesn't exist or isn't APPROVED —
+    generating from an unconfirmed structure guess is refused outright,
+    not just warned about.
+    """
+    fmt = get_format(format_id)
+    if not fmt:
+        raise ValueError(f"Format {format_id} not found")
+    if fmt["status"] != "APPROVED":
+        raise ValueError(
+            f"Format {format_id} is not APPROVED (status={fmt['status']}) — "
+            "confirm it via the Governance queue before generating documents from it."
+        )
+
+    data: dict[str, Any] = _internal_data_for_project(project_id)
+    data.update(user_data or {})
+
+    ensure_registered(DOCUMENT_GENERATION_CAPABILITY)
+    trace_id = f"docgen-{uuid4().hex[:8]}"
+    execution = capability_registry.execute_capability(
+        capability_id=DOCUMENT_GENERATION_CAPABILITY.capability_id,
+        inputs={"format_id": format_id, "project_id": project_id, "data_keys": list(data.keys())},
+        user_id="system",
+        project_id=str(project_id),
+        trace_id=trace_id,
+    )
+
+    try:
+        workbook = load_workbook(fmt["template_path"])
+        worksheet = workbook.active
+
+        filled: list[str] = []
+        missing: list[str] = []
+        for mapping in fmt["field_mappings"]:
+            field_name = mapping["field_name"]
+            if field_name in data:
+                worksheet[mapping["input_cell"]] = data[field_name]
+                filled.append(field_name)
+            else:
+                missing.append(field_name)
+
+        GENERATED_DOCS_DIR.mkdir(parents=True, exist_ok=True)
+        output_id = f"doc-{uuid4().hex[:8]}"
+        output_path = GENERATED_DOCS_DIR / f"{output_id}.xlsx"
+        workbook.save(output_path)
+    except Exception as e:
+        capability_registry.record_execution_result(
+            execution_id=execution.execution_id, outputs={},
+            status=ExecutionStatus.FAILED, error_message=str(e),
+        )
+        raise
+
+    capability_registry.record_execution_result(
+        execution_id=execution.execution_id,
+        outputs={"filled_count": len(filled), "missing_count": len(missing)},
+        status=ExecutionStatus.COMPLETED,
+    )
+
+    return {
+        "output_id": output_id,
+        "output_path": str(output_path),
+        "format_id": format_id,
+        "format_name": fmt["name"],
+        "filled_fields": filled,
+        "missing_fields": missing,
+        "trace_id": trace_id,
+    }
