@@ -459,8 +459,8 @@ work (Supabase `public` schema).
 | `GET /api/knowledge/documents` | `services.knowledge_loader.load_documents` | real (local knowledge files) |
 | `GET /api/knowledge/registry` | `services.knowledge_registry.get_registry` | real (local knowledge files) |
 | `POST /api/tasks/recommend` | `mock_store.recommend_tasks` | mock |
-| `POST /api/proposals/draft` | `mock_store.draft_proposal` | mock |
-| `POST /api/documents/draft` | `mock_store.draft_document` | mock |
+| `POST /api/proposals/draft` | `services.proposal_generation.draft_proposal` | real (Claude API text generation, grounded in real internal purchase-order history) — updated 2026-07-05, was mock |
+| ~~`POST /api/documents/draft`~~ | removed 2026-07-05 | Fully removed (was `mock_store.draft_document`) — superseded by the `/document-formats` API (Phase G-2), which does the same job for real. |
 | `GET /api/history` | `services.status_reporting.get_history` | real (merges Capability execution history + Governance decisions) — updated 2026-07-04, was mock |
 | `GET /api/executions/{id}` | `services.status_reporting.get_execution` | real (Capability execution record) — updated 2026-07-04, was mock |
 | `GET /api/evaluation/summary` | `services.status_reporting.get_evaluation_summary` | real (aggregated Capability success rates) — updated 2026-07-04, was mock |
@@ -475,15 +475,20 @@ work (Supabase `public` schema).
 
 ### 13.3 Real vs Mock Boundary
 
-`backend/services/mock_store.py` now only backs 4 endpoints that
-genuinely need business/product design work, not just data plumbing:
-`chat` (`consult`), `tasks/recommend`, `proposals/draft`,
-`documents/draft`. `health`, `history`, `executions`, `evaluation/summary`,
+`backend/services/mock_store.py` **no longer exists** (removed
+2026-07-05) — every endpoint it used to back is now real:
+`chat` → `reasoning_pipeline.reason` (Phase F), `tasks/recommend` →
+`status_reporting.recommend_tasks` (Phase F), `proposals/draft` →
+`proposal_generation.draft_proposal` (Phase G-3, LLM-backed), and
+`documents/draft` was removed entirely in favor of the `/document-formats`
+API (Phase G-2). `health`, `history`, `executions`, `evaluation/summary`,
 and `events` were migrated to `services/status_reporting.py` (real, backed
 by the Capability/Governance data built in Phases A–D) on 2026-07-04; the
 `events` function turned out to already be real (writing to
 `backend/data/events.jsonl`) and was simply misplaced. `debug/trace` was
 migrated to `services.trace_store` on 2026-07-04 (Phase B).
+
+As of 2026-07-05, there is no mock-backed endpoint left in `backend/`.
 
 The remaining 4 mock functions are a deliberate placeholder boundary, not
 an oversight — see 13.6 for why each one needs actual design work before
@@ -510,7 +515,7 @@ fastest way to check current status without re-auditing from scratch.
 
 | Principle | Status in `backend/` | Notes |
 |---|---|---|
-| 2, 4, 5, 12 (Capability Driven) | Mostly done | `capability_router.py` is mounted and reachable (Phase A). `ProjectService.build_project_aggregate` (`project_aggregate_analysis`, Phase C-1), `reasoning_pipeline.reason` (`business_question_reasoning`, Phase C-2), `document_format_structure_inference`, and `document_generation` (Phase G-2, 2026-07-05) are all tracked Capability executions via the shared registry in `services/capability_instance.py`. Remaining mock-backed endpoints (`chat`, `tasks/recommend` — both migrated to real data in Phase F) are down to just `proposals/draft` (still mock; needs real generative AI — see 14.5). `documents/draft` was superseded by the `/document-formats` flow (Phase G-2), which is fully real. |
+| 2, 4, 5, 12 (Capability Driven) | Done | `capability_router.py` is mounted and reachable (Phase A). Every real endpoint in `backend/` is a tracked Capability execution via the shared registry in `services/capability_instance.py`: `project_aggregate_analysis` (Phase C-1), `business_question_reasoning` (Phase C-2), `document_format_structure_inference` and `document_generation` (Phase G-2), and `proposal_draft_generation` (Phase G-3, 2026-07-05). `mock_store.py` no longer exists (see 13.3) — there is no mock-backed endpoint left. |
 | 6, 10 (Transparent AI / Trace Everything) | Done for `ProjectService` and `reasoning_pipeline` | Both generate and persist a `trace_id` to `backend/data/traces.jsonl`, retrievable via `GET /api/debug/trace/{id}` (Phase B, extended in Phase C-2). |
 | 3, 5 (Human Governed / Governed Learning) | Mostly done | Phase D-1 added a minimal Governance Queue (`services/governance_store.py`, `/governance` API): `reasoning_pipeline.py`'s Phase 13 knowledge candidates and `document_formats.py`'s structure-inference proposals submit for review, and a human must call `POST /governance/{id}/decide` (approve/reject + reason) before anything is considered approved — durably audited (`backend/data/governance_approvals.jsonl`, `governance_audit.jsonl`). Phase G-1 (2026-07-05) implemented the Blueprint Chapter 11 Approval Levels table's auto-approval rule: `submit_proposal(..., governance_level=...)` auto-approves only when `governance_level == "low"` and `confidence_score > 0.85` (`AUTO_APPROVE_THRESHOLD`); `medium`/`high`/`admin_approved_required` always require manual review regardless of confidence, matching the Blueprint table exactly. Still NOT implemented: PolicyRule creation/activation/rollback, and approver authority checks (`decide()` trusts whatever `approver_id` is passed — no auth). Approving a proposal here does not automatically edit any `knowledge/` file — that "apply the rule" step is still manual by design (see `governance_store.py` module docstring). |
 
@@ -547,12 +552,18 @@ design work was smaller than expected.
   recommendations across projects via `ProjectService`
   (`services/status_reporting.recommend_tasks`), replacing
   `mock_store.recommend_tasks()`'s 3 hardcoded demo tasks (Phase F).
+- `POST /api/proposals/draft` — now generates real LLM-backed (Claude
+  API) proposal text grounded in real internal history, via
+  `services/proposal_generation.py` (Phase G-3, 2026-07-05). See 14.5
+  for what this does and doesn't cover, and the scope decision behind it.
+- `POST /api/documents/draft` — removed entirely (not migrated in place);
+  superseded by the `/document-formats` API (Phase G-2), which solves the
+  same underlying need (customer-specific document generation) for real.
 
-**Still mock — the only two left, and both genuinely need generative
-logic (LLM or template-based document assembly) that doesn't exist
-anywhere in this codebase yet:**
-- `POST /api/proposals/draft`
-- `POST /api/documents/draft`
+**Nothing is mock anymore.** `backend/services/mock_store.py` was deleted
+2026-07-05 once its last two functions (`draft_proposal`,
+`draft_document`) were superseded. Every endpoint in `backend/api/` is
+now backed by real Supabase data, a real LLM call, or both.
 
 ## 14) app/ vs backend/ Duplication — Investigation and Decision (2026-07-04)
 
@@ -724,17 +735,60 @@ step ③ — only structured JSON `user_data` is supported; parsing
 free-form chat instructions or uploaded invoice/packing-list *files*
 (as opposed to pre-structured JSON) is future work.
 
-### 14.5 Remaining: `proposals/draft` (real generative AI, not started)
+### 14.5 Phase G-3 (done 2026-07-05): `proposals/draft` text-only v1
 
-Unlike `documents/draft`, `proposals/draft` was confirmed (2026-07-05
-discussion with Noritsugu) to need actual generative AI capability that
-does not exist anywhere in this codebase: internal history + external
-trend/customer research + image sourcing/illustration + composed prose.
-This requires new infrastructure (an LLM client, plus likely web-search
-and image-generation tool access), not a data-source swap — it's the
-last remaining mock endpoint, and the only one that couldn't be
-"discovered to be smaller than expected" the way `chat`/`tasks/recommend`
-(Phase F) and `documents/draft` (Phase G-2) were.
+The full scope described in 14.4 (internal history + external
+trend/customer research + image sourcing/illustration + composed prose)
+was confirmed to need real generative AI infrastructure this codebase
+didn't have. Rather than deferring the whole thing, it was split:
+
+**Built (`services/llm_client.py` + `services/proposal_generation.py`):**
+- `llm_client.py` — the first LLM integration anywhere in this codebase.
+  A thin wrapper around the `anthropic` Python SDK; requires
+  `ANTHROPIC_API_KEY` in `.env` (not committed — verify with
+  `Select-String -Path .env,config\*.toml -Pattern "ANTHROPIC|API_KEY"`
+  before assuming it's missing, and never paste the key value into chat
+  or commit it).
+- `proposal_generation.draft_proposal(customer, purpose)` — gathers real
+  internal purchase-order history for the customer, then asks Claude
+  (`claude-sonnet-4-5`) to draft a 4-section proposal (顧客の課題 /
+  提案内容 / 期待される効果 / 実行計画) grounded in that history. The
+  prompt explicitly instructs the model not to state external-trend or
+  invented facts as certain, and to mark anything not in the supplied
+  history as "要確認."
+- Tracked as capability `proposal_draft_generation`
+  (`governance_level="high"`) — per the Blueprint Chapter 11 table, HIGH
+  never auto-approves regardless of confidence, so every draft lands in
+  the manual Governance queue before it's considered sendable.
+- `/api/documents/draft` (the mock) was removed outright rather than
+  migrated in place, since `/document-formats` (Phase G-2) already solves
+  the same underlying need for real. `mock_store.py` itself was deleted
+  once both of its remaining functions were superseded — there is no
+  mock-backed endpoint left anywhere in `backend/`.
+
+**Bug found and fixed the same day, via real end-to-end testing:** the
+first version of `_gather_internal_history()` called
+`LogsysProvider().fetch(...)` directly instead of routing through
+`fetch_required_data` → `integrate_evidence` → `interpret_evidence` (the
+pipeline `reasoning_pipeline.py` and `_q5_project_lookup` already use).
+That bypassed `evidence_integration.py`'s `_dedupe_records()` step, so a
+real test surfaced ten identical "20211203US発注分" lines in the LLM
+prompt where 5 *distinct* recent orders were expected. **Lesson
+reinforced (same pattern as the `"logisys"`/`"logsys"` typo in Phase F):
+new code that needs data another part of the codebase already fetches
+correctly should call *that* code, not re-implement a parallel fetch path
+— even a well-intentioned "just call the Provider directly, it's
+simpler" shortcut silently drops whatever correctness logic lives in the
+layer being skipped.** Fixed by routing through the shared pipeline;
+verified against real Supabase data that the same customer's history now
+shows 5 distinct orders with an explicit "重複排除後" (post-dedup) note.
+
+**Explicitly NOT implemented (deferred, not forgotten):** external
+trend/customer research (would need web-search tool access), image
+sourcing or illustration generation (would need an image-generation
+tool), and any UI/workflow for a human to *edit* a draft before
+approving it (today's Governance `decide()` is binary approve/reject with
+a text reason, not an edit-and-resubmit loop).
 
 Also still pending from 14.3/14.4: designing (not porting) a
 `backend/`-native equivalent of `learning/`'s query-log → feedback →
