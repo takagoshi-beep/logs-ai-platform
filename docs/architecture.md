@@ -790,11 +790,80 @@ tool), and any UI/workflow for a human to *edit* a draft before
 approving it (today's Governance `decide()` is binary approve/reject with
 a text reason, not an edit-and-resubmit loop).
 
+**Update, same day:** external trend research and image sourcing were in
+fact added a few hours after this section was first written — see 14.6.
+The "explicitly NOT implemented" list above is kept as a historical record
+of the original scope decision; it is no longer fully accurate as a
+statement of current capability.
+
 Also still pending from 14.3/14.4: designing (not porting) a
 `backend/`-native equivalent of `learning/`'s query-log → feedback →
 improvement loop, and revisiting deletion of `app/`,
 `reference/03_application/`, and the root-level `business/`/`services/`/
 `domain/` packages once the above lands.
+
+### 14.6 Same-day extension: web search, image generation, and frontend
+verification (2026-07-05)
+
+**Web search (`include_external`).** `services/llm_client.py` gained
+`generate_text_with_web_search()`, using Claude's server-side
+`web_search_20250305` tool. Wired to `ProposalDraftRequest.include_external`
+(a field that existed in the schema since Phase E but was silently
+ignored until now). Cited URLs are returned separately
+(`external_sources: list[str]`) rather than trusted from the prose, so a
+human reviewer can see exactly what was searched.
+
+**Image generation (`include_image`).** A new `generate_image()` in
+`llm_client.py` calls OpenAI's `gpt-image-1`. **Finding via real testing:**
+unlike the older DALL-E 3 API, `gpt-image-1` returns `b64_json`
+(base64-encoded bytes), not a `url` — `response.data[0].url` is `None`.
+The function decodes and writes the image to
+`backend/data/generated_proposal_images/{trace_id}.png` and returns only
+the file path; the base64 string itself is never passed around or logged
+(it's enormous — a single response pasted into a terminal produced a
+multi-thousand-line block). New endpoint:
+`GET /api/proposals/images/{trace_id}/download`. Image generation
+failure never blocks the text draft (best-effort, wrapped in try/except).
+
+Both features required new API keys (`ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`) added to `.env` (gitignored). Both are real, metered,
+paid API calls — verify a key isn't already present
+(`Select-String -Path .env,config\*.toml -Pattern "ANTHROPIC|OPENAI|API_KEY"`)
+before assuming one needs to be obtained.
+
+**Frontend verification.** With both `backend/` (port 8000) and
+`frontend/` (port 3000, `npm run dev`) running, four pages were confirmed
+working end-to-end against real data: `/chat` (correctly returned
+"468件見つかりました" with distinct 5-sample project cards for a
+customer-name query — matching the Phase F dedup fix), `/tasks` (real
+`ProjectAction` cards, though dominated by the known "仕入先へ納期急ぎ連絡"
+pattern from `KNOWN_ISSUES.md` #8), and `/reasoning` (full
+Intent→...→Phase 13 four-layer display working for an in-pattern
+question; correctly showed `判定: 回答不可` with a helpful hint for an
+out-of-pattern free-form question — this is the reasoning_pipeline
+limitation already documented in 13.6/14.4, now visually confirmed).
+
+**`/proposals` ("資料作成") was found to be a disconnected UI shell** —
+its "AIで資料作成" button had no `onClick` handler at all, and "過去に
+作成した資料" rendered from `frontend/lib/mock-data.ts`, unrelated to any
+real Governance history. This was likely built before `backend/`'s real
+`proposals/draft` existed and never wired up afterward. Fixed same
+session: added `draftProposal()` / `getProposalImageUrl()` to
+`frontend/lib/api-client.ts`, added a customer-name field and
+external-search/image-generation checkboxes to the page, and connected
+the button to `POST /api/proposals/draft`, following the same
+loading/error/result-state pattern already used by `/chat`. Verified with
+a real end-to-end run (customer "ビームス", both checkboxes on): correct
+`QUEUED_FOR_REVIEW` status text, a substantive multi-section draft
+grounded in both real internal history (152 deduped past orders) and 5
+real cited URLs, and a real generated image rendered inline via the new
+download endpoint.
+
+**Not yet checked:** `/history` (confirmed to have no `fetch` call at
+all — likely also disconnected, not yet investigated), `/workspace`,
+`/debug`, `/learning`, `/walking-skeleton`. A full frontend audit (which
+pages are real vs. decorative) is worth doing before assuming any
+unverified page works.
 
 ## Constraints
 
