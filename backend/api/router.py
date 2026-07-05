@@ -4,12 +4,9 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 
-from api.schemas import ChatRequest, DocumentDraftRequest, ProductEvent, ProposalDraftRequest, TasksRecommendRequest
+from api.schemas import ChatRequest, ProductEvent, ProposalDraftRequest, TasksRecommendRequest
 from business.today_actions import get_home_payload as get_home_payload_business
-from services.mock_store import (
-    draft_document,
-    draft_proposal,
-)
+from services.proposal_generation import draft_proposal
 from services.status_reporting import (
     get_evaluation_summary,
     get_execution,
@@ -84,18 +81,13 @@ def tasks_recommend(_: TasksRecommendRequest) -> dict:
 
 @router.post("/proposals/draft")
 def proposals_draft(req: ProposalDraftRequest) -> dict:
-    return {
-        "proposal": draft_proposal(req.customer, req.purpose),
-        "next_actions": ["Generate PPTX", "Review draft", "Send for approval"],
-    }
-
-
-@router.post("/documents/draft")
-def documents_draft(req: DocumentDraftRequest) -> dict:
-    return {
-        "document": draft_document(req.document_type, req.target_id),
-        "next_actions": ["Review missing fields", "Request approval"],
-    }
+    """Real (LLM-backed) proposal draft generation as of 2026-07-05 — see
+    services/proposal_generation.py and docs/architecture.md 14.5. The
+    draft is submitted to Governance (governance_level=HIGH, never
+    auto-approved) and is not sendable to a customer until approved via
+    POST /governance/{id}/decide.
+    """
+    return draft_proposal(req.customer, req.purpose)
 
 
 @router.get("/history")
