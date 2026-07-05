@@ -147,6 +147,74 @@ export async function draftProposal(
     }),
   });
 }
+/**
+ * Upload a document format template (see docs/architecture.md 13/14 for
+ * `/document-formats`). File type is intentionally not restricted
+ * client-side; the backend currently only supports Excel (.xlsx/.xlsm)
+ * and returns a clear error for anything else, so widening supported
+ * formats later needs no frontend change.
+ *
+ * Uses a raw `fetch` (not the shared `apiCall` helper) because file
+ * uploads need `multipart/form-data`, which the browser sets correctly
+ * on its own — manually setting Content-Type here would break the
+ * multipart boundary.
+ *
+ * NOTE: this router is mounted WITHOUT the `/api` prefix (unlike most
+ * other endpoints) — see `backend/main.py`. Do not add `/api` here.
+ */
+export async function uploadDocumentFormat(name: string, file: File) {
+  const formData = new FormData();
+  formData.append("name", name);
+  formData.append("file", file);
+  try {
+    const response = await fetch(`${API_BASE}/document-formats`, {
+      method: "POST",
+      body: formData,
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.detail || `API Error: ${response.status}`);
+    }
+    return data;
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "アップロードに失敗しました",
+    };
+  }
+}
+
+/**
+ * List all registered document formats, with live-resolved Governance
+ * approval status.
+ */
+export async function listDocumentFormats() {
+  return apiCall("/document-formats");
+}
+
+/**
+ * Generate a filled document from an APPROVED format. `userData` is
+ * merged with real internal project data (if `projectId` is given),
+ * with `userData` taking precedence on overlap.
+ */
+export async function generateDocument(
+  formatId: string,
+  projectId: string,
+  userData: Record<string, any>
+) {
+  return apiCall(`/document-formats/${formatId}/generate`, {
+    method: "POST",
+    body: JSON.stringify({ project_id: projectId, user_data: userData }),
+  });
+}
+
+/**
+ * Build the download URL for a generated document.
+ */
+export function getGeneratedDocumentUrl(outputId: string) {
+  return `${API_BASE}/document-formats/generated/${outputId}/download`;
+}
+
 export async function getProject(projectId: string) {
   return apiCall(`/api/projects/${projectId}`);
 }

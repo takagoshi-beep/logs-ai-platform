@@ -1,8 +1,17 @@
-"""Document format API — upload an Excel template, infer its structure,
+"""Document format API — upload a template, infer its structure,
 confirm via Governance, list/retrieve confirmed formats, and generate
 filled documents from a confirmed format.
 
 See `services/document_formats.py` for what this does and doesn't cover.
+
+Format support (2026-07-05): only Excel (.xlsx/.xlsm) is implemented —
+`services/document_formats.infer_structure()` is openpyxl-based and
+inherently Excel-specific. `SUPPORTED_EXTENSIONS` below is the single
+place that gates what's accepted; adding a new format (e.g. Word, CSV)
+means adding its extension here AND a corresponding structure-inference
+path in `document_formats.py` — extension alone is not sufficient. The
+frontend deliberately does not restrict file selection by extension, so
+that widening this set later requires no frontend change.
 """
 from __future__ import annotations
 
@@ -16,11 +25,19 @@ from services import document_formats
 
 router = APIRouter(prefix="/document-formats", tags=["document-formats"])
 
+SUPPORTED_EXTENSIONS = (".xlsx", ".xlsm")
+
 
 @router.post("")
 async def upload_format(name: str = Form(...), file: UploadFile = File(...)) -> dict:
-    if not file.filename or not file.filename.lower().endswith((".xlsx", ".xlsm")):
-        raise HTTPException(status_code=400, detail="Only .xlsx/.xlsm template files are supported")
+    if not file.filename or not file.filename.lower().endswith(SUPPORTED_EXTENSIONS):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"現在対応しているフォーマットは {', '.join(SUPPORTED_EXTENSIONS)} のみです。"
+                f"アップロードされたファイル「{file.filename}」は未対応の形式です。"
+            ),
+        )
     contents = await file.read()
     try:
         return document_formats.create_format(name=name, file_bytes=contents)

@@ -193,18 +193,14 @@ def draft_proposal(
         )
         raise
 
+    # 画像生成機能は2026-07-05に停止（ビジネス判断: 画像は各ユーザーが個別に
+    # 生成AIツールを使う方針とし、このプラットフォームの機能としては提供しない）。
+    # `include_image=True` が渡されても意図的に何もしない。実装コード
+    # (generate_image, GENERATED_IMAGES_DIR) 自体は将来の再有効化に備えて
+    # 削除せず残してある。docs/architecture.md 14.7 参照。
     image_path: str | None = None
     if include_image:
-        try:
-            image_prompt = (
-                f"{purpose}に関する、{customer}向けのプロフェッショナルなビジネス系イラスト。"
-                "シンプルで清潔感のあるデザイン、企業の提案書に使える品質。文字やロゴは含めない。"
-            )
-            output_path = GENERATED_IMAGES_DIR / f"{trace_id}.png"
-            image_path = generate_image(image_prompt, output_path)
-        except Exception:
-            # 画像生成の失敗はテキストドラフト自体を止めない。
-            image_path = None
+        pass
 
     capability_registry.record_execution_result(
         execution_id=execution.execution_id,
@@ -237,8 +233,9 @@ def draft_proposal(
     note_parts = ["このドラフトはAI生成です。"]
     if not include_external:
         note_parts.append("外部調査は含まれていません。")
-    if not include_image:
-        note_parts.append("画像は含まれていません。")
+    note_parts.append(
+        "画像生成機能は現在無効化されています（個別に生成AIツールをご利用ください）。"
+    )
     note_parts.append("Governance承認前は顧客への送付不可です。")
 
     return {
