@@ -50,3 +50,40 @@ def generate_text(prompt: str, system: Optional[str] = None, max_tokens: int = 1
         kwargs["system"] = system
     response = client.messages.create(**kwargs)
     return response.content[0].text
+
+
+def generate_text_with_web_search(
+    prompt: str, system: Optional[str] = None, max_tokens: int = 3000
+) -> tuple[str, list[str]]:
+    """Text generation with Claude's server-side web search tool enabled,
+    for tasks that genuinely need external/current information (e.g.
+    industry trend research for a customer proposal) rather than only
+    internal Supabase data.
+
+    Returns (text, sources) — `sources` is the list of URLs Claude's web
+    search actually cited, extracted from the response's citation blocks,
+    so callers can show what was actually looked up rather than trusting
+    the prose alone.
+    """
+    client = _get_client()
+    kwargs: dict = {
+        "model": DEFAULT_MODEL,
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": prompt}],
+        "tools": [{"type": "web_search_20250305", "name": "web_search"}],
+    }
+    if system:
+        kwargs["system"] = system
+    response = client.messages.create(**kwargs)
+
+    text_parts: list[str] = []
+    sources: list[str] = []
+    for block in response.content:
+        if getattr(block, "type", None) == "text":
+            text_parts.append(block.text)
+            for citation in (getattr(block, "citations", None) or []):
+                url = getattr(citation, "url", None)
+                if url and url not in sources:
+                    sources.append(url)
+
+    return "\n".join(text_parts), sources

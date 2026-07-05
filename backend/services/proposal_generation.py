@@ -45,7 +45,7 @@ from services import governance_store
 from services.data_providers import fetch_required_data
 from services.evidence_integration import integrate_evidence
 from services.evidence_interpreter import interpret_evidence
-from services.llm_client import generate_text
+from services.llm_client import generate_text, generate_text_with_web_search
 from services.trace_store import save_trace
 
 PROPOSAL_DRAFT_CAPABILITY = Capability(
@@ -108,19 +108,28 @@ def _gather_internal_history(customer: str) -> str:
         return f"社内履歴の取得に失敗しました（エラー: {e}）。このドラフトは履歴データなしで作成されています。"
 
 
-def draft_proposal(customer: str, purpose: str) -> dict[str, Any]:
+def draft_proposal(customer: str, purpose: str, include_external: bool = False) -> dict[str, Any]:
     """Generate a proposal draft and submit it for Governance review.
 
     Returns immediately with the draft text and a `governance_approval_id`
     — the draft is NOT considered finished/sendable until a human approves
     it via `POST /governance/{id}/decide` (this capability's
     governance_level is HIGH, so it is never auto-approved).
+
+    `include_external=True` enables Claude's web search tool for real
+    industry/trend research about the customer (2026-07-05, closing the
+    gap flagged in docs/architecture.md 14.5). This makes the draft
+    depend on live, uncontrolled external content rather than only
+    Provider-fetched internal data, so it is reported separately
+    (`external_sources`) — a human reviewing the draft can see exactly
+    which URLs were used and judge them, rather than trusting prose that
+    doesn't say where a claim came from.
     """
     ensure_registered(PROPOSAL_DRAFT_CAPABILITY)
     trace_id = f"proposal-{uuid4().hex[:8]}"
     execution = capability_registry.execute_capability(
         capability_id=PROPOSAL_DRAFT_CAPABILITY.capability_id,
-        inputs={"customer": customer, "purpose": purpose},
+        inputs={"customer": customer, "purpose": purpose, "include_external": include_external},
         user_id="system",
         project_id="",
         trace_id=trace_id,
@@ -128,26 +137,37 @@ def draft_proposal(customer: str, purpose: str) -> dict[str, Any]:
 
     internal_history = _gather_internal_history(customer)
 
+    external_instruction = (
+        "外部の業界動向・市場トレンド・顧客企業の公開情報について、Web検索で調査し、"
+        "提案書に反映してください。調査した内容には必ず出典（検索結果）が伴います。"
+        if include_external else
+        "外部トレンド調査・顧客の業界動向・画像/写真は現時点で未対応です。含めないでください。"
+    )
+
     prompt = f"""あなたはB2B営業支援AIです。以下の情報をもとに、顧客向け提案書のドラフトを作成してください。
 
 顧客名: {customer}
 提案の目的: {purpose}
 
-社内の過去案件履歴（これが唯一の事実情報です。ここにない情報を事実として書かないでください）:
+社内の過去案件履歴（これが唯一の社内事実情報です。ここにない情報を社内事実として書かないでください）:
 {internal_history}
 
 以下の構成で、日本語で提案書ドラフトを作成してください:
-1. 顧客の課題（社内履歴から読み取れる範囲。推測を含む場合は「推測」と明記）
+1. 顧客の課題（社内履歴{"および外部調査結果" if include_external else ""}から読み取れる範囲。推測を含む場合は「推測」と明記）
 2. 提案内容
 3. 期待される効果
 4. 実行計画
 
 重要な制約:
-- 外部トレンド調査・顧客の業界動向・画像/写真は現時点で未対応です。含めないでください。
+- {external_instruction}
 - 社内履歴に無い具体的な数値・固有名詞を断定的に書かないでください。不明な点は「要確認」と明記してください。"""
 
+    external_sources: list[str] = []
     try:
-        draft_text = generate_text(prompt, max_tokens=2000)
+        if include_external:
+            draft_text, external_sources = generate_text_with_web_search(prompt, max_tokens=3000)
+        else:
+            draft_text = generate_text(prompt, max_tokens=2000)
     except Exception as e:
         capability_registry.record_execution_result(
             execution_id=execution.execution_id, outputs={},
@@ -157,14 +177,15 @@ def draft_proposal(customer: str, purpose: str) -> dict[str, Any]:
 
     capability_registry.record_execution_result(
         execution_id=execution.execution_id,
-        outputs={"draft_length": len(draft_text)},
+        outputs={"draft_length": len(draft_text), "external_sources_count": len(external_sources)},
         status=ExecutionStatus.COMPLETED,
     )
 
     try:
         save_trace(trace_id, {
-            "customer": customer, "purpose": purpose,
+            "customer": customer, "purpose": purpose, "include_external": include_external,
             "internal_history": internal_history, "draft_text": draft_text,
+            "external_sources": external_sources,
         })
     except Exception:
         pass
@@ -183,11 +204,13 @@ def draft_proposal(customer: str, purpose: str) -> dict[str, Any]:
         "purpose": purpose,
         "draft_text": draft_text,
         "internal_history_used": internal_history,
+        "external_sources": external_sources,
         "trace_id": trace_id,
         "governance_approval_id": approval.approval_id,
         "status": approval.status,
         "note": (
-            "このドラフトはAI生成です。外部調査・画像は含まれていません。"
-            "Governance承認前は顧客への送付不可です。"
+            "このドラフトはAI生成です。"
+            + ("画像は含まれていません。" if include_external else "外部調査・画像は含まれていません。")
+            + "Governance承認前は顧客への送付不可です。"
         ),
     }

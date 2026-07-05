@@ -87,7 +87,7 @@ def proposals_draft(req: ProposalDraftRequest) -> dict:
     auto-approved) and is not sendable to a customer until approved via
     POST /governance/{id}/decide.
     """
-    return draft_proposal(req.customer, req.purpose)
+    return draft_proposal(req.customer, req.purpose, include_external=req.include_external)
 
 
 @router.get("/history")
