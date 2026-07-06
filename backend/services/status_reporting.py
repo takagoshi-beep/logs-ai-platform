@@ -74,13 +74,38 @@ def get_health() -> dict[str, Any]:
     }
 
 
+# Capabilities that fire automatically as a side effect of viewing a page
+# (not because the user explicitly asked for something) are excluded from
+# the user-facing history — otherwise they drown out everything else.
+# `project_aggregate_analysis` runs every time any page reads project data
+# (chat lookups, /workspace, /tasks, etc.), often many times per second;
+# it isn't something the user did, it's an internal recompute. Every other
+# registered Capability today (document upload/generation/instruction
+# parsing, proposal drafting, chat reasoning) is triggered directly by an
+# explicit user action and stays visible. If a future Capability is
+# similarly automatic/internal, add it here rather than letting it drown
+# out real activity again (2026-07-06, found via real use: history was
+# 100% project_aggregate_analysis noise).
+_INTERNAL_CAPABILITY_IDS = {"project_aggregate_analysis"}
+
+
 def get_history(limit: int = 50) -> list[dict[str, Any]]:
     """Merge real Capability executions and Governance decisions into a
-    single, time-sorted activity history.
+    single, time-sorted activity history, excluding internal/automatic
+    Capabilities (see `_INTERNAL_CAPABILITY_IDS`).
+
+    Fetches a much larger raw pool than `limit` before filtering — the
+    excluded Capability can fire so frequently that the most recent
+    `limit` raw records might be entirely internal noise, which would
+    silently leave zero real items after filtering if we filtered after
+    truncating instead of before.
     """
     items: list[dict[str, Any]] = []
 
-    for ex in capability_registry.get_execution_history(limit=limit):
+    raw_pool_size = max(limit * 20, 500)
+    for ex in capability_registry.get_execution_history(limit=raw_pool_size):
+        if ex.capability_id in _INTERNAL_CAPABILITY_IDS:
+            continue
         items.append({
             "type": "capability_execution",
             "id": ex.execution_id,
