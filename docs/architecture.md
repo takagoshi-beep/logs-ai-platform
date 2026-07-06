@@ -1321,6 +1321,101 @@ Decision: no action now — these are plausible future features already
 built on the backend side, not fabricated bloat, but not urgent either.
 Left here as a candidate list rather than silently forgotten.
 
+## 14.14 The old `app/`-era top-level package sprawl deleted (2026-07-06)
+
+Item 3 of Noritsugu's four remaining-work list, revisited after the
+initial "should be low-risk cleanup" estimate turned out to be wrong —
+see the investigation notes below for why this took real care rather
+than a quick `rm -rf`.
+
+**What was actually there.** ~30 top-level packages
+(`admin/ ai/ answer/ app/ authorization/ business/ change_management/
+config/ connector/ context/ conversation/ database/ domain/ ingestion/
+intent/ memory/ observability/ planner/ prompts/ question/ scripts/
+self_awareness/ semantic/ services/ session/ storage/ system/ tools/
+transform/ validation/ workflow/`) made up the old `app/` reference
+implementation's full Blueprint-domain-mapped scaffold — `app/main.py`
+alone imported from nearly all of them (66 import statements). None of
+this was imported by `backend/` (verified by grepping `backend/`'s
+actual import statements — only `capability`, `learning`, and
+file-path-only `knowledge/` were real dependencies).
+
+**Why this wasn't the "quick, low-risk" task it first looked like:**
+each of these ~30 packages had its own dedicated, currently-**passing**
+test file, and pytest was silently running all of them alongside the 4
+files that actually matter to `backend/` — the reported "342 tests
+passing" all day included roughly 280 tests for code nothing in
+`backend/` runs. Two specific traps found along the way:
+- `tests/test_learning.py` imported `from app.main import app` —
+  not because it tested anything `backend/` depends on, but because it
+  was testing a *different*, unrelated set of `learning/` submodules
+  (`feedback.py`, `improvements.py`, `query_log.py`, `insights.py` — an
+  old "query-log → feedback → improvement suggestion" flow, distinct
+  from the Blueprint v0.2 Ch.8 Operational/Governed Learning system in
+  `models.py`/`service.py`/`repository.py` that 14.10 wired into
+  `backend/`). Those four files were the only part of `learning/` not
+  needed by `backend/`; deleted along with their test and
+  `change_management/` (their only dependency, via `improvements.py`'s
+  `from change_management.repository import create_change_request`).
+  Also deleted `learning/schemas.py` (unused pydantic-free request
+  shaping — `backend/api/learning_router.py` uses plain FastAPI
+  `BaseModel`s instead, unrelated to this file).
+- `tests/test_project_domain_model.py` and `test_project_events.py`
+  imported bare `domain.project` / `services.project_service` — which,
+  under `pytest.ini`'s `pythonpath = .` (repo root), resolve to the
+  **old root-level** `domain/` and `services/` packages, not
+  `backend/domain/` and `backend/services/` (which is what `backend/`
+  itself resolves those same import statements to, since it's run from
+  inside the `backend/` directory). Same names, same import syntax,
+  completely different files — these tests were validating an
+  abandoned twin of the real `ProjectService`/`ProjectAction` I edited
+  in 14.12, not the real one.
+- `tests/conftest.py`'s autouse fixture called
+  `from config.settings import get_settings; get_settings.cache_clear()`
+  inside a `try/except AttributeError` — which does **not** catch
+  `ModuleNotFoundError`. Deleting `config/` without fixing this first
+  would have crashed every single test collection, including the ones
+  meant to survive. Fixed by removing that block entirely (it only ever
+  existed to stop the old module's cached-settings singleton from
+  leaking into tests).
+
+**What was deleted, precisely:** all ~30 packages above; `learning/`'s
+4 unused submodules + `schemas.py`; 55 test files plus
+`tests/run_scenario_tests.py`, `tests/test_scenarios.json`,
+`tests/scenario_test_results.txt`, and `tests/evaluation/` (an entire
+separate, pytest-uncollected "Blueprint scenario evaluation" framework
+with its own scoring/regression subdirectories, referencing fictional
+data like "Acme Corp" — same old-app-era origin, never wired to
+anything real). `reference/` (docs/specs, not code) was deliberately
+left alone — it doesn't create the "same name, different file"
+confusion the code packages did, so there was no forcing reason to
+touch it today.
+
+**What was kept:** `capability/`, `learning/` (core: `__init__.py`,
+`models.py`, `service.py`, `repository.py`, `classifier.py`,
+`lifecycle.py`), `knowledge/`, and — from `tests/` — only
+`conftest.py`, `test_capability_domain.py`, `test_capability_registry.py`.
+
+**Verified after deletion:** `pytest -q` → 59 passed, 0 failed (down
+from 342 passed / 3 known-failing — the known-failing 3 were entirely
+inside the now-deleted `test_raw_data_validation.py`, which tested the
+now-deleted `validation/`). `backend/main.py`'s FastAPI `app` still
+imports and serves correctly; spot-checked `GET /api/home`,
+`GET /document-formats`, `GET /api/learning/center`, `GET /api/history`,
+and `POST /api/reasoning` all still return 200.
+
+**Named consequence, not hidden:** the test count dropping from 342 to
+59 is not new data loss — it reveals a gap that already existed. None
+of today's real `backend/` feature work (document-formats, proposals,
+Governance wiring, Learning Center wiring) was ever captured as a
+committed pytest file; it was all verified by hand via one-off
+`TestClient` snippets run and discarded in the course of building each
+feature. `capability/`'s 59 tests are the only automated regression
+safety net `backend/` currently has. Writing real pytest coverage for
+`backend/`'s own services is real, separate future work — this cleanup
+just made that gap visible instead of burying it under ~280 tests for
+code nothing runs.
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.
