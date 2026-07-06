@@ -246,9 +246,27 @@ def test_get_project_via_http(monkeypatch):
     response = _client().get("/api/projects/7722")
     assert response.status_code == 200
     assert response.json()["project"]["data"]["customer_name"] == "US_LOGS Inc."
+    assert response.json()["production"] == []  # DB未接続時は空リストに落ちる（クラッシュしない）
 
     missing = _client().get("/api/projects/does-not-exist")
     assert missing.status_code == 404
+
+
+def test_get_project_includes_production_mass_status_when_available(monkeypatch):
+    from services.project_service import ProjectService
+    from services import production_data
+
+    monkeypatch.setattr(ProjectService, "build_project_aggregate", lambda self, project_id: _fake_aggregate(project_id))
+    monkeypatch.setattr(
+        production_data, "get_production_mass_status",
+        lambda po_number: [{"po_number": po_number, "status": "納品済み", "factory": "海東金"}],
+    )
+
+    response = _client().get("/api/projects/7722")
+    assert response.status_code == 200
+    assert response.json()["production"] == [
+        {"po_number": "914-20260626_1", "status": "納品済み", "factory": "海東金"}
+    ]
 
 
 def test_get_project_trace_via_http(monkeypatch):

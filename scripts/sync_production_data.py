@@ -89,6 +89,7 @@ def _dedupe_and_clean_columns(raw_headers: list[str]) -> list[str]:
         "　": "_", " ": "_", "／": "_", "/": "_",
         "：": "_", ":": "_", "・": "_", "、": "",
         "#": "num", "＃": "num", "②": "2",
+        "\n": "_", "\r": "",
     }
 
     def _base_clean(raw: str, idx: int) -> str:

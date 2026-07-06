@@ -156,10 +156,22 @@ def get_project(project_id: str) -> dict:
         if not agg:
             raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
 
-        return {
+        result = {
             "success": True,
             "project": agg.to_dict(),
         }
+
+        # 生産管理チームの量産進捗（PP/TOP/Ex-F/ETD等）をPO番号で突合して
+        # 付加する（14.16/14.18）。取得できなくても案件詳細本体の表示は
+        # ブロックしない — production_mass はこの案件の理解に必須ではなく、
+        # 補足情報という位置づけのため。
+        try:
+            from services.production_data import get_production_mass_status
+            result["production"] = get_production_mass_status(agg.po_number)
+        except Exception:
+            result["production"] = []
+
+        return result
     except HTTPException:
         raise
     except Exception as e:

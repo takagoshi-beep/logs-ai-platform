@@ -23,6 +23,25 @@ interface ProjectEvent {
   event_time: string;
 }
 
+interface ProductionStatus {
+  po_number: string;
+  status: string | null;
+  factory: string | null;
+  production_staff: string | null;
+  pp: string | null;
+  pp_expected_date: string | null;
+  pp_approved_date: string | null;
+  top: string | null;
+  top_expected_date: string | null;
+  top_approved_date: string | null;
+  ex_factory: string | null;
+  etd: string | null;
+  eta: string | null;
+  customs_clearance: string | null;
+  delivery_date: string | null;
+  project_name: string | null;
+}
+
 interface ProjectDetail {
   project_id: string;
   po_number: string;
@@ -69,6 +88,7 @@ function fmtYen(v: number | null | undefined): string {
 
 export default function WorkspacePage({ params }: Params) {
   const [project, setProject] = useState<ProjectDetail | null>(null);
+  const [production, setProduction] = useState<ProductionStatus[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -80,6 +100,7 @@ export default function WorkspacePage({ params }: Params) {
         return;
       }
       setProject(data?.project ?? null);
+      setProduction(data?.production ?? []);
     });
   }, [params.projectId]);
 
@@ -185,6 +206,34 @@ export default function WorkspacePage({ params }: Params) {
           </Card>
         </div>
       </div>
+
+      {production.length > 0 && (
+        <Card>
+          <SectionHeader
+            title="生産進捗"
+            subtitle="生産管理チームのスプレッドシートから同期された、量産の工程状況です（PO番号で突合）。"
+          />
+          <div className="mt-3 space-y-3">
+            {production.map((p, idx) => (
+              <div key={idx} className="rounded-lg border border-slate-200 p-4">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-ink">{p.project_name || project.po_number}</p>
+                  {p.status && <Badge label={p.status} />}
+                </div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-sub sm:grid-cols-3">
+                  {p.factory && <div>工場: {p.factory}</div>}
+                  {p.production_staff && <div>生産担当: {p.production_staff}</div>}
+                  {p.pp_expected_date && <div>PP予定: {p.pp_expected_date}</div>}
+                  {p.top_expected_date && <div>TOP予定: {p.top_expected_date}</div>}
+                  {p.etd && <div>ETD: {p.etd}</div>}
+                  {p.eta && <div>ETA: {p.eta}</div>}
+                  {p.delivery_date && <div>納品日: {p.delivery_date}</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
     </div>
   );
 }

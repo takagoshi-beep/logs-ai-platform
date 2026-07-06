@@ -1660,6 +1660,50 @@ actually connected, only each provider's `fetch()` body needs to
 change — the calling interface (`_PROVIDERS` dict, `_evidence()` shape)
 is unaffected.
 
+## 14.18 `production_mass` wired to the project detail page (2026-07-06)
+
+Closes the loop on 14.16: `production_samples`/`production_mass` were
+synced into Supabase but connected to nothing. New
+`backend/services/production_data.py` reads `production_mass` by
+`"POnum"` at query time (joined to a project via `po_number`, not
+merged at ingestion — same reasoning as 14.16), returning a list since
+a PO can have more than one row (confirmed: 9 of 2,364 real PO numbers
+have 2 `production_mass` rows each, e.g. a reorder/split shipment —
+callers must not assume exactly one). `GET /api/projects/{id}` now adds
+a best-effort `"production"` key (defaults to `[]` on any failure,
+including no live DB in tests — never blocks the main project detail
+response, matching this session's established pattern for optional
+supplementary data). `/workspace/[projectId]` renders it as a new "生産
+進捗" card (工場/PP・TOP予定日/ETD/ETA/納品日), only shown when data
+exists for that PO.
+
+**Column-name bug found while designing the query, fixed in 14.16's
+sync script:** several `量産` tab headers contain literal embedded
+newlines (`"PP\n発行"`, `"検品\nto"`, etc. — a real Google Sheets
+formatting quirk, header text wrapped onto two lines). `_dedupe_and_clean_columns()`'s
+replacement table didn't map `\n`/`\r` to anything, so these newlines
+would have survived straight into the actual Postgres column names —
+technically legal but extremely fragile for any future SQL written
+against them. Added `"\n": "_", "\r": ""` to the replacement table.
+Since `sync_production_data.py` always does a full DROP+replace, this
+takes effect automatically on the next scheduled/manual sync — no
+migration needed, but the *already-synced* `production_mass` table (as
+of 14.16's first successful run) still has the old newline-containing
+column names until it's re-synced once more.
+
+Also completed the read-side audit noted in 14.17:
+`search_production_samples()` (keyword search across 見積No/仕入先名/
+SPL品番) is available for future use but not yet wired to any screen —
+`サンプル` requests happen before a PO is issued, so there's no
+PO-number join key to build a project-detail-page integration the way
+`production_mass` got; a dedicated サンプル-status screen is separate,
+future work.
+
+`tests/backend/test_production_data.py` (6 tests, DB access mocked via
+a fake connection/cursor — no live Supabase in this environment) plus
+one new `test_router.py` test verifying the `"production"` key's
+end-to-end shape.
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.
