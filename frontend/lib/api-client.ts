@@ -195,16 +195,20 @@ export async function listDocumentFormats() {
 /**
  * Generate a filled document from an APPROVED format. `userData` is
  * merged with real internal project data (if `projectId` is given),
- * with `userData` taking precedence on overlap.
+ * with `userData` taking precedence on overlap. `tableRows` (2026-07-06)
+ * fills repeating detail-table sections: {table_id: [{field_name: value,
+ * ...}, ...]}, one entry per row, written starting directly below that
+ * table's header row.
  */
 export async function generateDocument(
   formatId: string,
   projectId: string,
-  userData: Record<string, any>
+  userData: Record<string, any>,
+  tableRows: Record<string, Array<Record<string, any>>> = {}
 ) {
   return apiCall(`/document-formats/${formatId}/generate`, {
     method: "POST",
-    body: JSON.stringify({ project_id: projectId, user_data: userData }),
+    body: JSON.stringify({ project_id: projectId, user_data: userData, table_rows: tableRows }),
   });
 }
 
@@ -233,6 +237,35 @@ export async function decideGovernance(
   return apiCall(`/governance/${approvalId}/decide`, {
     method: "POST",
     body: JSON.stringify({ decision, approver_id: approverId, reason }),
+  });
+}
+
+/**
+ * Let a human edit the AI-detected field mappings before confirming a
+ * format (rename a field, fix which cell it points to, or remove a false
+ * positive) — step 2 of the upload -> agree on structure together -> use
+ * flow.
+ */
+export async function updateFieldMappings(
+  formatId: string,
+  fieldMappings: Array<Record<string, any>>
+) {
+  return apiCall(`/document-formats/${formatId}/field-mappings`, {
+    method: "PUT",
+    body: JSON.stringify({ field_mappings: fieldMappings }),
+  });
+}
+
+/**
+ * Parse a free-text chat instruction (e.g. "顧客名はUS_LOGS Inc.、数量は
+ * 50個") into values for a confirmed format's single-value fields. Only
+ * pre-fills the generation form — the human still reviews/edits before
+ * generating.
+ */
+export async function parseInstruction(formatId: string, instruction: string) {
+  return apiCall(`/document-formats/${formatId}/parse-instruction`, {
+    method: "POST",
+    body: JSON.stringify({ instruction }),
   });
 }
 

@@ -58,9 +58,39 @@ def get_format(format_id: str) -> dict:
     return fmt
 
 
+class UpdateFieldMappingsRequest(BaseModel):
+    field_mappings: list[dict[str, Any]]
+
+
+@router.put("/{format_id}/field-mappings")
+def update_field_mappings(format_id: str, request: UpdateFieldMappingsRequest) -> dict:
+    """Let a human edit the AI-detected field mappings before confirming —
+    step 2 of the "upload -> agree on structure together -> use" flow
+    (docs/architecture.md, 2026-07-06)."""
+    try:
+        return document_formats.update_field_mappings(format_id, request.field_mappings)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+class ParseInstructionRequest(BaseModel):
+    instruction: str
+
+
+@router.post("/{format_id}/parse-instruction")
+def parse_instruction(format_id: str, request: ParseInstructionRequest) -> dict:
+    """Parse a free-text chat instruction into field values for a
+    confirmed format — step 3 (chat-based input) of the same flow."""
+    try:
+        return document_formats.parse_instruction_to_fields(format_id, request.instruction)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 class GenerateRequest(BaseModel):
     project_id: str = ""
     user_data: dict[str, Any] = {}
+    table_rows: dict[str, list[dict[str, Any]]] = {}
 
 
 @router.post("/{format_id}/generate")
@@ -70,6 +100,7 @@ def generate(format_id: str, request: GenerateRequest) -> dict:
             format_id=format_id,
             project_id=request.project_id,
             user_data=request.user_data,
+            table_rows=request.table_rows,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

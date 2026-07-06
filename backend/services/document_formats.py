@@ -32,6 +32,7 @@ from openpyxl import load_workbook
 from capability.domain import Capability, CapabilityStatus, ExecutionStatus, GovernanceLevel
 from services.capability_instance import ensure_registered, registry as capability_registry
 from services import governance_store
+from services.llm_client import generate_text
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data"
@@ -113,8 +114,23 @@ def infer_structure(worksheet) -> list[dict[str, Any]]:
     is openpyxl's own signal for "this cell holds a formula" — checked
     first since it's authoritative; the `startswith("=")` check is a
     defensive fallback in case `data_type` isn't set as expected.
+
+    Two-pass design (2026-07-06, fixing a real bug found while adding
+    table-region support): a naive single pass that always prefers
+    "right" over "below" per-cell misclassifies the *last* column of a
+    detail table as `direction="right"` whenever nothing happens to sit
+    to its right (a common case — a table's last column, e.g. 金額, often
+    has empty space beyond it). That breaks table-header grouping (which
+    groups by shared "below" direction) by excluding exactly the column
+    that should have joined. Fixed by first identifying which *rows*
+    qualify as table headers (>=2 candidate labels with an empty cell
+    below them), then, for cells in those rows, preferring "below" over
+    "right" — so every column of a detected table consistently points
+    below, regardless of what happens to sit to its immediate right.
     """
-    mappings: list[dict[str, Any]] = []
+    from collections import defaultdict
+
+    candidates: list[dict[str, Any]] = []
     for row in worksheet.iter_rows():
         for cell in row:
             if not isinstance(cell.value, str):
@@ -124,29 +140,109 @@ def infer_structure(worksheet) -> list[dict[str, Any]]:
             label = cell.value.strip()
             if not label:
                 continue
-
             right_cell = worksheet.cell(row=cell.row, column=cell.column + 1)
             below_cell = worksheet.cell(row=cell.row + 1, column=cell.column)
-
-            target = None
-            direction = None
-            if right_cell.value in (None, ""):
-                target, direction = right_cell, "right"
-            elif below_cell.value in (None, ""):
-                target, direction = below_cell, "below"
-
-            if target is None:
-                continue
-
-            is_labelish = label.rstrip().endswith(("：", ":"))
-            mappings.append({
-                "field_name": label.rstrip("：:").strip(),
-                "label_cell": cell.coordinate,
-                "input_cell": target.coordinate,
-                "direction": direction,
-                "confidence": 0.7 if is_labelish else 0.5,
+            candidates.append({
+                "cell": cell,
+                "label": label,
+                "right_cell": right_cell,
+                "below_cell": below_cell,
+                "right_empty": right_cell.value in (None, ""),
+                "below_empty": below_cell.value in (None, ""),
             })
+
+    by_row: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for c in candidates:
+        by_row[c["cell"].row].append(c)
+    table_header_rows = {
+        row for row, cells in by_row.items()
+        if sum(1 for c in cells if c["below_empty"]) >= 2
+    }
+
+    mappings: list[dict[str, Any]] = []
+    for c in candidates:
+        row_num = c["cell"].row
+        prefer_below = row_num in table_header_rows and c["below_empty"]
+
+        target = None
+        direction = None
+        if prefer_below:
+            target, direction = c["below_cell"], "below"
+        elif c["right_empty"]:
+            target, direction = c["right_cell"], "right"
+        elif c["below_empty"]:
+            target, direction = c["below_cell"], "below"
+
+        if target is None:
+            continue
+
+        label = c["label"]
+        is_labelish = label.rstrip().endswith(("：", ":"))
+        mappings.append({
+            "field_name": label.rstrip("：:").strip(),
+            "label_cell": c["cell"].coordinate,
+            "input_cell": target.coordinate,
+            "direction": direction,
+            "confidence": 0.7 if is_labelish else 0.5,
+        })
     return mappings
+
+
+def detect_table_regions(mappings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Detect repeating detail-table sections (2026-07-06): a single-value
+    form field is typically alone on its row, but a table header (e.g.
+    品番 | カラー | サイズ | 数量, as seen on a real customer invoice with
+    a variable-length line-item table) has *multiple* "below"-direction
+    labels sharing the same row. Two or more such labels on the same row
+    are treated as one table's header row.
+
+    Mutates `mappings` in place, tagging each grouped label with a
+    `table_id` so a single flat `field_mappings` list can still represent
+    both single fields and table columns without a second, disconnected
+    data structure — `field_mappings` stays the one place a human edits
+    field names/cells (13.6/14.7's existing review-and-edit UI keeps
+    working unchanged), while `table_regions` is purely derived metadata
+    for the repeating-row generation logic.
+
+    Returns the list of detected table regions:
+    [{"table_id", "header_row", "columns": [{"field_name", "label_cell",
+    "column_letter"}, ...]}, ...]
+    """
+    from collections import defaultdict
+    from openpyxl.utils.cell import coordinate_from_string, column_index_from_string
+
+    by_row: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for m in mappings:
+        if m.get("direction") != "below":
+            continue
+        _, row_num = coordinate_from_string(m["label_cell"])
+        by_row[row_num].append(m)
+
+    table_regions: list[dict[str, Any]] = []
+    for row_num, row_mappings in by_row.items():
+        if len(row_mappings) < 2:
+            continue
+        columns = sorted(
+            row_mappings,
+            key=lambda m: column_index_from_string(coordinate_from_string(m["label_cell"])[0]),
+        )
+        table_id = f"table-row{row_num}"
+        table_regions.append({
+            "table_id": table_id,
+            "header_row": row_num,
+            "columns": [
+                {
+                    "field_name": c["field_name"],
+                    "label_cell": c["label_cell"],
+                    "column_letter": coordinate_from_string(c["label_cell"])[0],
+                }
+                for c in columns
+            ],
+        })
+        for c in row_mappings:
+            c["table_id"] = table_id
+
+    return table_regions
 
 
 def create_format(name: str, file_bytes: bytes) -> dict[str, Any]:
@@ -174,6 +270,7 @@ def create_format(name: str, file_bytes: bytes) -> dict[str, Any]:
         workbook = load_workbook(template_path)
         worksheet = workbook.active
         field_mappings = infer_structure(worksheet)
+        table_regions = detect_table_regions(field_mappings)
         avg_confidence = (
             sum(m["confidence"] for m in field_mappings) / len(field_mappings)
             if field_mappings else 0.0
@@ -188,7 +285,7 @@ def create_format(name: str, file_bytes: bytes) -> dict[str, Any]:
 
     capability_registry.record_execution_result(
         execution_id=execution.execution_id,
-        outputs={"fields_detected": len(field_mappings)},
+        outputs={"fields_detected": len(field_mappings), "tables_detected": len(table_regions)},
         status=ExecutionStatus.COMPLETED,
     )
 
@@ -207,6 +304,7 @@ def create_format(name: str, file_bytes: bytes) -> dict[str, Any]:
         "name": name,
         "template_path": str(template_path),
         "field_mappings": field_mappings,
+        "table_regions": table_regions,
         "governance_approval_id": approval.approval_id,
         "trace_id": trace_id,
         "created_at": _now(),
@@ -233,6 +331,152 @@ def list_formats() -> list[dict[str, Any]]:
 def get_format(format_id: str) -> Optional[dict[str, Any]]:
     record = _latest_by_format_id().get(format_id)
     return _resolve_status(record) if record else None
+
+
+def update_field_mappings(format_id: str, field_mappings: list[dict[str, Any]]) -> dict[str, Any]:
+    """Let a human directly edit the AI-detected field mappings (rename a
+    field, fix which cell it points to, or remove a false positive like a
+    misdetected formula or master-data cell) before confirming a format.
+
+    Design (2026-07-06): rather than only offering a binary "trust the AI's
+    guess entirely / reject it entirely" choice, this lets the human and
+    the AI arrive at the structure together — the AI's guess is a starting
+    point, not the final word. This appends a new record with the SAME
+    `format_id` (the existing JSONL "latest record per format_id wins"
+    read pattern in `_latest_by_format_id()` handles this for free) and
+    keeps the same `governance_approval_id`, since editing-then-approving
+    is one human review action, not a new AI proposal requiring a fresh
+    Governance submission.
+
+    Table regions are recomputed from the edited mappings (rather than
+    edited directly) so they stay consistent with whatever the human
+    changed — e.g. deleting a table-column row correctly shrinks that
+    table's column list.
+
+    Raises ValueError if the format doesn't exist.
+    """
+    record = _latest_by_format_id().get(format_id)
+    if not record:
+        raise ValueError(f"Format {format_id} not found")
+
+    # table_id タグを一度リセットしてから再計算する(古いtable_idが残らないように)
+    for m in field_mappings:
+        m.pop("table_id", None)
+    table_regions = detect_table_regions(field_mappings)
+
+    updated = dict(record)
+    updated["field_mappings"] = field_mappings
+    updated["table_regions"] = table_regions
+    updated["field_mappings_edited_at"] = _now()
+    _append_jsonl(updated)
+    return _resolve_status(updated)
+
+
+INSTRUCTION_PARSING_CAPABILITY = Capability(
+    capability_id="document_instruction_parsing",
+    name="Chat Instruction Parsing for Document Fields",
+    category="business",
+    description=(
+        "Parses a free-text chat instruction (e.g. '顧客名はUS_LOGS Inc.、"
+        "数量は50個') into values for a confirmed format's named fields, "
+        "using an LLM. This only pre-fills the generation form — it does "
+        "not write anything to a real document by itself, and the human "
+        "still reviews the filled-in values (and can edit them) before "
+        "generating. No separate Governance approval is required per call "
+        "for the same reason `document_generation` doesn't need one: the "
+        "risky part (the format's structure) was already gated at "
+        "confirmation time."
+    ),
+    owner_team="AI OS",
+    owner_user_id="system",
+    team_id="ai-os",
+    status=CapabilityStatus.DEPLOYED,
+    version="1.0.0",
+    supported_inputs=["format_id", "instruction"],
+    supported_outputs=["field_values"],
+    required_context=[],
+    governance_level=GovernanceLevel.LOW,
+)
+
+
+def parse_instruction_to_fields(format_id: str, instruction: str) -> dict[str, Any]:
+    """Ask an LLM to map a free-text instruction onto a confirmed format's
+    known field names (single fields only — table row values are not yet
+    parsed from chat instructions, see docs/architecture.md). Returns
+    {"field_values": {field_name: value, ...}} — only fields the LLM
+    found a clear value for are included; fields it isn't confident about
+    are simply omitted rather than guessed, so a human filling in the
+    form can see at a glance what still needs manual input.
+    """
+    fmt = get_format(format_id)
+    if not fmt:
+        raise ValueError(f"Format {format_id} not found")
+    if fmt["status"] != "APPROVED":
+        raise ValueError(
+            f"Format {format_id} is not APPROVED (status={fmt['status']}) — "
+            "confirm it via Governance before using chat instructions with it."
+        )
+
+    field_names = [
+        m["field_name"] for m in fmt["field_mappings"] if not m.get("table_id")
+    ]
+
+    ensure_registered(INSTRUCTION_PARSING_CAPABILITY)
+    trace_id = f"docinstr-{uuid4().hex[:8]}"
+    execution = capability_registry.execute_capability(
+        capability_id=INSTRUCTION_PARSING_CAPABILITY.capability_id,
+        inputs={"format_id": format_id, "instruction": instruction},
+        user_id="system",
+        project_id="",
+        trace_id=trace_id,
+    )
+
+    prompt = f"""以下の項目名のリストと、ユーザーの指示文があります。
+指示文から読み取れる値を、対応する項目名に割り当ててください。
+
+項目名のリスト:
+{json.dumps(field_names, ensure_ascii=False)}
+
+ユーザーの指示文:
+{instruction}
+
+出力は、項目名をキー、値を文字列とするJSONオブジェクトのみを返してください。
+前置きや説明文は一切含めないでください。指示文から明確に読み取れない項目は含めないでください。
+出力例: {{"顧客名": "US_LOGS Inc.", "数量": "50"}}"""
+
+    try:
+        raw_response = generate_text(prompt, max_tokens=1000)
+    except Exception as e:
+        capability_registry.record_execution_result(
+            execution_id=execution.execution_id, outputs={},
+            status=ExecutionStatus.FAILED, error_message=str(e),
+        )
+        raise
+
+    cleaned = raw_response.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+        if cleaned.startswith("json"):
+            cleaned = cleaned[4:]
+        cleaned = cleaned.strip()
+
+    try:
+        field_values = json.loads(cleaned)
+        if not isinstance(field_values, dict):
+            field_values = {}
+    except json.JSONDecodeError:
+        field_values = {}
+
+    # 検出済みの項目名以外は無視する(LLMが勝手に項目を作らないようにする)
+    field_values = {k: v for k, v in field_values.items() if k in field_names}
+
+    capability_registry.record_execution_result(
+        execution_id=execution.execution_id,
+        outputs={"fields_filled": len(field_values)},
+        status=ExecutionStatus.COMPLETED,
+    )
+
+    return {"field_values": field_values, "trace_id": trace_id}
 
 
 GENERATED_DOCS_DIR = DATA_DIR / "generated_documents"
@@ -309,12 +553,23 @@ def generate_document(
     format_id: str,
     project_id: str = "",
     user_data: Optional[dict[str, Any]] = None,
+    table_rows: Optional[dict[str, list[dict[str, Any]]]] = None,
 ) -> dict[str, Any]:
     """Fill an APPROVED format's template with real internal data (via
     `project_id`) merged with `user_data` (e.g. invoice/packing-list/
     shipping details the user provides directly), matched to the format's
-    field_mappings by field_name. User-supplied values take precedence
-    over internal auto-fill on overlap.
+    single-value field_mappings by field_name. User-supplied values take
+    precedence over internal auto-fill on overlap.
+
+    `table_rows` (2026-07-06) fills repeating detail-table sections
+    (e.g. 品番/カラー/サイズ/数量 line items) detected in
+    `fmt["table_regions"]`: `{table_id: [{field_name: value, ...}, ...]}`
+    — each dict in the list becomes one row, written starting directly
+    below the table's header row. Rows are written in order starting at
+    `header_row + 1`; existing rows below the header (if any) are
+    overwritten, not inserted — this fills a static-sized template
+    (typical for a customer's fixed-layout delivery note), it does not
+    resize the sheet.
 
     Raises ValueError if the format doesn't exist or isn't APPROVED —
     generating from an unconfirmed structure guess is refused outright,
@@ -331,12 +586,16 @@ def generate_document(
 
     data: dict[str, Any] = _internal_data_for_project(project_id)
     data.update(user_data or {})
+    table_rows = table_rows or {}
 
     ensure_registered(DOCUMENT_GENERATION_CAPABILITY)
     trace_id = f"docgen-{uuid4().hex[:8]}"
     execution = capability_registry.execute_capability(
         capability_id=DOCUMENT_GENERATION_CAPABILITY.capability_id,
-        inputs={"format_id": format_id, "project_id": project_id, "data_keys": list(data.keys())},
+        inputs={
+            "format_id": format_id, "project_id": project_id,
+            "data_keys": list(data.keys()), "table_row_counts": {k: len(v) for k, v in table_rows.items()},
+        },
         user_id="system",
         project_id=str(project_id),
         trace_id=trace_id,
@@ -349,12 +608,31 @@ def generate_document(
         filled: list[str] = []
         missing: list[str] = []
         for mapping in fmt["field_mappings"]:
+            if mapping.get("table_id"):
+                continue  # テーブル列は下のループで別処理する
             field_name = mapping["field_name"]
             if field_name in data:
                 worksheet[mapping["input_cell"]] = data[field_name]
                 filled.append(field_name)
             else:
                 missing.append(field_name)
+
+        tables_written: dict[str, int] = {}
+        for region in fmt.get("table_regions", []):
+            rows = table_rows.get(region["table_id"], [])
+            for row_index, row_data in enumerate(rows):
+                target_row = region["header_row"] + 1 + row_index
+                for column in region["columns"]:
+                    value = row_data.get(column["field_name"])
+                    if value in (None, ""):
+                        continue
+                    cell_ref = f"{column['column_letter']}{target_row}"
+                    worksheet[cell_ref] = value
+                    filled.append(f"{column['field_name']}[{row_index}]")
+            tables_written[region["table_id"]] = len(rows)
+            if not rows:
+                for column in region["columns"]:
+                    missing.append(f"{column['field_name']}（テーブル: {region['table_id']}）")
 
         GENERATED_DOCS_DIR.mkdir(parents=True, exist_ok=True)
         output_id = f"doc-{uuid4().hex[:8]}"
@@ -380,5 +658,6 @@ def generate_document(
         "format_name": fmt["name"],
         "filled_fields": filled,
         "missing_fields": missing,
+        "tables_written": tables_written,
         "trace_id": trace_id,
     }
