@@ -1524,6 +1524,93 @@ every other test file mocks the module-level `generate_text`/
 never the SDK calls underneath). Both are real gaps, left for
 future work rather than attempted here.
 
+## 14.16 New input source: production team's sample/mass-production
+spreadsheet synced into Supabase (2026-07-06)
+
+Noritsugu asked for a new business input — the production management
+team's own Google Spreadsheet ("生産案件管理", tabs `サンプル`/`量産`,
+~8,000 real rows total) — to be synced into Supabase alongside the
+existing "Logsys" data (`logsys-chat` repo's `sync.py`/`sync.yml`,
+which owns `purchase_orders`, `sales`, `customers`, `products`, etc.).
+
+**Key finding before writing any code:** `logs-ai-platform` had zero
+mechanism to *write* to Supabase — every existing `backend/` connection
+(`supabase_client.py`, `project_service.py`, `data_providers.py`) is
+read-only. All writing happens in the separate `logsys-chat` repo. This
+new sync is `logs-ai-platform`'s first-ever write path to the real
+database — confirmed with Noritsugu before touching anything.
+
+**Relationship to existing data:** the `量産` tab's `PO#` values use the
+exact same format as `purchase_orders."PO_No"` (e.g.
+`1032-20220928_2`) — these are very likely the *same* purchase orders,
+viewed from the production team's process-tracking angle (PP/TOP/Ex-F/
+ETD/ETA milestones) rather than Logsys's financial/logistics angle.
+Deliberately **not** merged into `purchase_orders` or joined at
+ingestion time — kept as two new, independent tables
+(`production_samples`, `production_mass`), to be joined at query time
+via `PO#`/`PO_No` when needed, matching the existing
+`purchases`⇔`products` pattern in `sync.py`. `サンプル` (quote/sample
+requests, pre-PO) has no such overlap — genuinely new data.
+
+**New `scripts/sync_production_data.py`**, matching `sync.py`'s design
+(DROP+COPY full-replace per run, same `clean_column_name`-style
+replacements) but sourcing from a native Google Sheet via `gspread`
+(not an Excel file from Drive) since that's how this team's document is
+actually stored. Two real data-quality issues found and fixed by
+testing against the actual uploaded file before writing any Supabase
+code:
+- **Duplicate/blank headers**: `サンプル` has two columns both literally
+  named `SlackID` (one following `回答者`, one following `依頼元`) and
+  one column with no header at all. `get_all_records()`-style dict
+  conversion would silently lose the first `SlackID`'s data (dict key
+  collision) and crash on the blank header. Fixed with
+  `_dedupe_and_clean_columns()`: reads raw rows via `get_all_values()`
+  instead, disambiguates duplicates using the *preceding* column's name
+  (`SlackID_回答者`/`SlackID_依頼元`), and assigns placeholder names
+  (`col_31`) to blank headers.
+- **Row-validity filter, revised mid-build**: initially filtered on
+  "row-number column (`＃`→`num`) is a positive integer" to drop the
+  sheet's example row (literally containing `例`) and ~1,000 blank
+  padding rows. Testing against the real file found this too strict —
+  one real サンプル request had `SLG-05182` (a product code) typo'd
+  into the row-number column, another had `。。`; both are genuine data
+  with real 見積No/仕入先名 that the numeric filter would have silently
+  dropped. Changed to the looser but non-lossy rule: exclude only if
+  the row-number cell is blank or literally `例`.
+- Also caught the full-width `＃` not being in the character-replacement
+  table used by `sync.py` itself (only half-width `#` was mapped) —
+  would have left a raw `＃` as the actual Postgres column name.
+  `"POnum"` (not `"PO_num"`) is what `"PO#"` actually cleans to under
+  this same replacement table, since `#`→`num` doesn't insert an
+  underscore — worth remembering for anyone querying these tables later.
+
+`report_po_match_rate()` runs on every sync (informational, never
+blocks): compares `production_mass`'s `POnum` values against live
+`purchase_orders."PO_No"`, printing the match rate and a few unmatched
+examples if it drops below 80% — an early warning if the two sheets'
+key conventions ever drift apart, per Noritsugu's request to validate
+the join key rather than assume it always matches.
+
+**New `.github/workflows/sync_production_data.yml`** in
+`logs-ai-platform`: accepts both `workflow_dispatch` (manual) and
+`repository_dispatch` (cross-repo trigger). **New
+`docs/production_sync_setup.md`**: step-by-step setup for the
+"one click does both" requirement — a fine-grained PAT scoped to just
+this repo's Actions, stored as `PRODUCTION_SYNC_PAT` in `logsys-chat`,
+with a final `curl`-based dispatch step to add to `logsys-chat`'s
+`sync.yml` (that file lives in a different repo, so provided as a
+snippet to add manually rather than edited directly).
+
+**Deliberately not done:** the `na_rep="\\N"` NULL-handling in
+`sync_table_copy` (shared with `sync.py`) only converts real `NaN`
+values — `gspread.get_all_values()` returns blank cells as empty
+strings, not `NaN`, so blank fields in these two new tables land as
+empty strings (`''`) rather than SQL `NULL`. This matches this specific
+data source's actual behavior and wasn't changed, but means `IS NULL`
+won't catch blank values in `production_samples`/`production_mass` the
+way it might in tables synced from an Excel/pandas source — worth
+knowing when writing queries against these tables.
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.

@@ -1,0 +1,42 @@
+name: 生産管理データ同期
+
+# 2通りの起動方法:
+# 1. workflow_dispatch: このリポジトリのActionsタブから手動で「Run workflow」
+# 2. repository_dispatch: logsys-chat の「ログシス DB同期」が完了した直後に、
+#    そちら側のワークフローから自動的にこちらを呼び出す（1クリックで両方
+#    完了させるための仕組み。logsys-chat 側の sync.yml に、この
+#    リポジトリを呼び出す追加ステップが必要 — 別途案内した手順を参照）。
+on:
+  workflow_dispatch: {}
+  repository_dispatch:
+    types: [production-data-sync]
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python 3.12 セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 依存ライブラリをインストール
+        run: |
+          pip install \
+            pandas \
+            psycopg2-binary \
+            sqlalchemy \
+            google-auth \
+            gspread
+
+      - name: 生産管理データ同期を実行
+        env:
+          SUPABASE_DB_URL:     ${{ secrets.SUPABASE_DB_URL }}
+          GOOGLE_SA_KEY_JSON:  ${{ secrets.GOOGLE_SA_KEY_JSON }}
+          PRODUCTION_SHEET_ID: ${{ secrets.PRODUCTION_SHEET_ID }}
+        run: python scripts/sync_production_data.py
