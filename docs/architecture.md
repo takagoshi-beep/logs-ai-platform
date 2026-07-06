@@ -963,6 +963,117 @@ only at the start of a fresh task once prior work is confirmed pushed;
 (e.g. `proposals-page_v4_review-detail.tsx`) rather than reusing the same
 generic name across turns.
 
+## 14.8 Document-formats: collaborative structure confirmation, chat-based
+input, and repeating table regions (2026-07-06)
+
+Continuing from 14.7, three more pieces of the "upload → agree on
+structure together → use (via form or chat)" flow Noritsugu described:
+
+**Step 2 — human edits the AI's structure guess before confirming.**
+`update_field_mappings(format_id, field_mappings)` lets a human rename a
+field, fix which cell it points to, or delete a false positive (e.g. a
+misdetected formula or master-data cell, per 14.7's residual limitation)
+directly in the review table, before approving. Implementation: appends
+a new record with the *same* `format_id` — the existing "latest record
+per format_id wins" read pattern (`_latest_by_format_id()`) handles
+this for free — and keeps the same `governance_approval_id`, since
+editing-then-approving is one human review action, not a fresh AI
+proposal. `PUT /document-formats/{format_id}/field-mappings`.
+
+**Step 3 (partial) — chat-instruction input for single-value fields.**
+`parse_instruction_to_fields(format_id, instruction)` uses Claude to map
+a free-text instruction (e.g. "顧客名はUS_LOGS Inc.、担当者は高越") onto
+a confirmed format's field names, returning only fields it found a clear
+value for (no guessing). Pre-fills the generation form; the human still
+reviews/edits before generating. Registered as its own low-governance
+Capability (`document_instruction_parsing`) for execution tracking, but
+doesn't need per-call Governance approval — the risky part (the
+format's structure) was already gated at confirmation time, same
+reasoning as `document_generation`. `POST
+/document-formats/{format_id}/parse-instruction`. **Not yet extended to
+table rows** — chat instructions currently only fill single-value
+fields, not detail-table line items (still a manual per-row form).
+
+**Repeating table-region detection and multi-row generation.** The
+biggest gap Noritsugu found in 14.7's testing with the real invoice
+template: it has both single-value header fields (顧客名, 出荷日) *and*
+a variable-length line-item table (品番/カラー/サイズ/数量/単価 repeated
+per row) — the original field_mappings model could only ever fill the
+*first* row, since it always had exactly one input_cell per field_name.
+
+- `detect_table_regions(mappings)`: a form field is normally alone on
+  its row; a table header has *multiple* "below"-direction labels
+  sharing one row. Two or more such labels on the same row are grouped
+  into one `table_regions` entry (`table_id`, `header_row`, `columns`
+  with each column's `field_name`/`label_cell`/`column_letter`), and
+  those specific `field_mappings` entries are tagged with a `table_id`
+  so a single flat, still-editable `field_mappings` list keeps working
+  for both single fields and table columns without a second,
+  disconnected structure to keep in sync.
+- **Bug found and fixed while building this:** `infer_structure`
+  originally decided each cell's direction (`right` vs `below`)
+  independently, always preferring `right`. This silently misclassified
+  a table's *last* column (e.g. 金額, with empty space beyond it) as
+  `direction="right"`, excluding it from its own table's grouping.
+  Fixed with a two-pass approach: first identify which *rows* qualify as
+  table headers (≥2 candidates with an empty cell below), then prefer
+  `below` for cells in those rows regardless of what's to their
+  immediate right — verified against a reconstruction of the real
+  template: all 8 columns of 品番/カラー/.../金額 grouped correctly.
+- **Second bug found via the real file, more serious — crashed the
+  entire generate request:** the template's merged title cell (納品書,
+  merged across several columns) was getting chosen as an input target
+  (and, worse, its row was being misdetected as a *second*, bogus table
+  header alongside a nearby "NO." label sharing that row — a known
+  remaining false positive, see below). Writing to a `MergedCell`'s
+  non-anchor position raises `AttributeError: 'MergedCell' object
+  attribute 'value' is read-only` in openpyxl — reproduced directly:
+  `ws.merge_cells("D1:G1"); ws["E1"] = "x"` raises immediately. This
+  killed the whole `/document-formats/{id}/generate` request with no
+  useful error (browser reported bare "Failed to fetch"). Fixed two
+  ways: (1) `infer_structure` now excludes `MergedCell` instances from
+  being chosen as label *or* target cells at detection time (`from
+  openpyxl.cell.cell import MergedCell`); (2) `generate_document` wraps
+  every individual cell write in `try/except AttributeError` as
+  defense-in-depth (for formats confirmed before this fix, or a human
+  manually re-pointing a field at a bad cell during step-2 editing),
+  collecting failures into a new `write_errors` list in the response
+  instead of failing the whole request — surfaced in the UI with a
+  concrete "which field, which cell, likely reason" message rather than
+  a silent or total failure.
+- **Generation UI**: for each `table_region`, a dynamic table with
+  "+行を追加"/"削除" per-row controls, collected into `tableRows:
+  Record<table_id, Array<Record<field_name, value>>>` and sent alongside
+  the existing single-field `user_data`. Verified end-to-end against the
+  real template: two line-item rows (BLACK/NAVY) both landed in the
+  correct cells (rows 13/14, directly below the row-12 header) in the
+  downloaded output file.
+
+**Known remaining false positive, accepted as-is for now:** the same
+real template's title area still produces one bogus table region
+(grouping "納品書" and "NO." purely because they happen to share a row
+and both have an empty cell below). It's non-fatal (writes fine, just an
+extra unwanted table in the generation form) and can be removed via the
+step-2 edit UI. A stricter heuristic (e.g. requiring 3+ shared-row
+labels, or requiring roughly-even column spacing) would reduce this but
+adds its own false-negative risk on genuinely 2-column tables; decided
+not worth tuning further today per Noritsugu ("あまり作り込んでも細かく
+なっていく") — logged here rather than silently dropped.
+
+**Also still open from 14.7, unchanged:** file-upload-based input (as
+opposed to a form or chat instruction) remains unimplemented and is a
+substantially larger feature (real document parsing, not just a
+detection heuristic tweak).
+
+**Process note:** this feature was rebuilt from scratch twice more
+today after `git reset --hard HEAD` wiped uncommitted work at the start
+of two different turns, despite the explicit lesson already written in
+14.7 about exactly this failure mode. The instruction to self going
+forward is stricter than 14.7's: before running `git reset --hard`,
+check `git status`/`git log` for uncommitted local work from *this
+session* first, every single time, with no exceptions for "probably
+already committed."
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.
