@@ -1233,6 +1233,44 @@ data; `/learning` fully wired end-to-end (persistence + API + a real
 data source). Every page reachable from the sidebar now runs on real
 data.
 
+## 14.12 Home page's three "recent activity" cards: real data, with two
+named honesty caveats (2026-07-06)
+
+`/`'s KPI cards (Data Tables / Sales Records / Sales Data Quality / Last
+Sales Update) were already real (`get_real_kpis()`, Supabase-backed).
+Only the three cards below them — "最近開いた案件"/"最近作成した資料"/
+"最近相談した内容" — still rendered hardcoded `mock-data.ts` entries
+(Fanatics OEM / BEAMS Retail / GOLDWIN Campaign) regardless of what had
+actually happened, the same pattern found and fixed on `/proposals` and
+`/history` earlier this session.
+
+New `business/today_actions._get_recent_activity()`, added to
+`GET /api/home`'s response as `recent_activity`:
+- **最近相談した内容**: `capability_registry.get_execution_history()`
+  filtered to `business_question_reasoning`, reading the real question
+  text straight out of that Capability execution's `inputs["question"]`
+  (already captured there since `reasoning_pipeline.reason()` records
+  it — no new capture needed, just a new reader).
+- **最近作成した資料**: same approach, filtered to
+  `proposal_draft_generation`, reading `inputs["customer"]`/
+  `inputs["purpose"]`.
+- **案件**: reuses the exact same `ProjectService` query
+  `GET /api/projects` already uses (real Supabase purchase orders).
+
+**Two honesty caveats, deliberately surfaced rather than papered over:**
+1. "案件" is NOT "recently opened by this user" — there is no per-user
+   view-history tracking anywhere in the system to make that claim true.
+   The card was relabeled (dropped "最近開いた") rather than keep a title
+   implying tracking that doesn't exist.
+2. "最近作成した資料" only covers proposal drafts, not document-format
+   generations (帳票フォーマットからの生成). That capability's
+   `document_generation` inputs only record `format_id`/`data_keys` (no
+   human-readable title), and `document_formats.py` still doesn't call
+   `trace_store.save_trace()` either (gap already flagged in 14.9) — so
+   there's no accessible readable title to show yet for that source.
+   Extending this card to include it is real future work, not done here.
+   Card renamed to "最近作成した提案書" to match what it actually shows.
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.

@@ -3,6 +3,70 @@
 from services.supabase_client import get_real_kpis
 
 
+def _get_recent_activity() -> dict:
+    """Real substitutes for the home page's "最近開いた案件"/"最近作成した
+    資料"/"最近相談した内容" cards, which used to render hardcoded
+    mock-data.ts entries (Fanatics OEM / BEAMS Retail / GOLDWIN Campaign)
+    regardless of what had actually happened (2026-07-06).
+
+    Two honesty caveats, deliberately not hidden:
+    - "最近開いた案件" isn't literally "recently opened by this user" —
+      there is no per-user view-history tracking anywhere in the system.
+      This uses the same real, Supabase-backed project list `/workspace`
+      and `/api/projects` already use (most urgent/recent purchase
+      orders), which is the closest honest substitute available.
+    - "最近作成した資料" only covers `proposal_draft_generation`
+      (real `customer`/`purpose` values are captured in that
+      Capability's execution `inputs`). It does NOT yet include
+      `document_generation` (帳票フォーマットからの生成) — that
+      Capability's inputs only record `format_id`/`data_keys`, not a
+      human-readable title, and `document_formats.py` doesn't call
+      `trace_store.save_trace()` either (a gap already noted in
+      docs/architecture.md 14.9). Extending this to cover document
+      generation too would need one of those two gaps closed first.
+    """
+    from services.capability_instance import registry as capability_registry
+
+    recent_questions: list[str] = []
+    recent_documents: list[str] = []
+    for ex in reversed(capability_registry.get_execution_history(limit=300)):
+        if len(recent_questions) < 3 and ex.capability_id == "business_question_reasoning":
+            question = ex.inputs.get("question")
+            if question:
+                recent_questions.append(question)
+        elif len(recent_documents) < 3 and ex.capability_id == "proposal_draft_generation":
+            customer = ex.inputs.get("customer", "")
+            purpose = ex.inputs.get("purpose", "")
+            title = f"{customer}向け提案書: {purpose}" if customer else purpose
+            recent_documents.append(title[:80])
+        if len(recent_questions) >= 3 and len(recent_documents) >= 3:
+            break
+
+    recent_projects: list[dict] = []
+    try:
+        from services.project_service import ProjectService
+
+        service = ProjectService()
+        for proj_record in service._query_projects_from_db(limit=3):
+            proj_id = proj_record.get("id")
+            if not proj_id:
+                continue
+            agg = service.build_project_aggregate(proj_id)
+            if agg:
+                recent_projects.append({
+                    "project_id": agg.project_id,
+                    "name": f"{agg.data.customer_name} / {agg.po_number}",
+                })
+    except Exception:
+        pass
+
+    return {
+        "recent_questions": recent_questions,
+        "recent_documents": recent_documents,
+        "recent_projects": recent_projects,
+    }
+
+
 def get_home_payload() -> dict:
     """Get home page payload with today's actions and KPIs."""
     kpi_data = get_real_kpis()
@@ -53,4 +117,5 @@ def get_home_payload() -> dict:
         "today_actions": [],
         "alerts": alerts,
         "data_sources": data_sources,
+        "recent_activity": _get_recent_activity(),
     }

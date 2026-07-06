@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Button, Card } from "@/components/design-system";
-import { projects, pastProposals, pastConsultations } from "@/lib/mock-data";
 import { getHome } from "@/lib/api-client";
 
 interface HomeKpi {
@@ -11,6 +10,17 @@ interface HomeKpi {
   value: string | number;
   change: string;
   status: string;
+}
+
+interface RecentProject {
+  project_id: string;
+  name: string;
+}
+
+interface RecentActivity {
+  recent_questions: string[];
+  recent_documents: string[];
+  recent_projects: RecentProject[];
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -21,12 +31,9 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 export default function HomePage() {
-  const recentProjects = projects.slice(0, 3);
-  const recentProposals = pastProposals.slice(0, 3);
-  const recentConsultations = pastConsultations.slice(0, 3);
-
   const [kpis, setKpis] = useState<HomeKpi[]>([]);
   const [kpiError, setKpiError] = useState<string | null>(null);
+  const [activity, setActivity] = useState<RecentActivity | null>(null);
 
   useEffect(() => {
     getHome().then((data: any) => {
@@ -35,6 +42,7 @@ export default function HomePage() {
         return;
       }
       setKpis(data?.kpis ?? []);
+      setActivity(data?.recent_activity ?? null);
       if (data?.alerts?.length) {
         setKpiError(data.alerts[0]?.message ?? null);
       }
@@ -85,37 +93,49 @@ export default function HomePage() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card>
-          <p className="text-sm font-semibold text-ink">最近開いた案件</p>
+          <p className="text-sm font-semibold text-ink">案件（実データ）</p>
           <ul className="mt-3 space-y-2">
-            {recentProjects.map((project) => (
-              <li key={project.id}>
-                <Link href={`/workspace/${project.id}`} className="text-sm text-accent hover:underline">
-                  {project.name}
-                </Link>
-              </li>
-            ))}
+            {activity?.recent_projects?.length ? (
+              activity.recent_projects.map((project) => (
+                <li key={project.project_id}>
+                  <Link href={`/workspace/${project.project_id}`} className="text-sm text-accent hover:underline">
+                    {project.name}
+                  </Link>
+                </li>
+              ))
+            ) : (
+              <li className="text-sm text-sub">案件はありません</li>
+            )}
           </ul>
         </Card>
 
         <Card>
-          <p className="text-sm font-semibold text-ink">最近作成した資料</p>
+          <p className="text-sm font-semibold text-ink">最近作成した提案書</p>
           <ul className="mt-3 space-y-2">
-            {recentProposals.map((doc) => (
-              <li key={doc.id} className="text-sm text-sub">
-                {doc.title}
-              </li>
-            ))}
+            {activity?.recent_documents?.length ? (
+              activity.recent_documents.map((title, idx) => (
+                <li key={idx} className="text-sm text-sub">
+                  {title}
+                </li>
+              ))
+            ) : (
+              <li className="text-sm text-sub">まだ作成した提案書はありません</li>
+            )}
           </ul>
         </Card>
 
         <Card>
           <p className="text-sm font-semibold text-ink">最近相談した内容</p>
           <ul className="mt-3 space-y-2">
-            {recentConsultations.map((chat) => (
-              <li key={chat.id} className="text-sm text-sub">
-                {chat.title}
-              </li>
-            ))}
+            {activity?.recent_questions?.length ? (
+              activity.recent_questions.map((question, idx) => (
+                <li key={idx} className="text-sm text-sub">
+                  {question}
+                </li>
+              ))
+            ) : (
+              <li className="text-sm text-sub">まだ相談した内容はありません</li>
+            )}
           </ul>
         </Card>
       </div>
