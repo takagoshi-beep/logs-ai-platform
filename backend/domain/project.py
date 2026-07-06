@@ -321,6 +321,8 @@ class ProjectAggregate:
                 {
                     "action_id": a.action_id,
                     "title": a.title,
+                    "description": a.description,
+                    "condition": a.condition,
                     "priority": a.priority,
                     "related_state": a.related_state.value,
                     "related_goal": a.related_goal.value if a.related_goal else None,

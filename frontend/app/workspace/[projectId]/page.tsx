@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { ActionPanel, Badge, Button, Card, SectionHeader, StatusBadge, TaskCard, Timeline } from "@/components/design-system";
-import { taskRecommendations } from "@/lib/mock-data";
 import { getProject } from "@/lib/api-client";
 
 type Params = { params: { projectId: string } };
@@ -10,8 +9,11 @@ type Params = { params: { projectId: string } };
 interface ProjectAction {
   action_id: string;
   title: string;
+  description: string;
+  condition: string;
   priority: string;
   confidence: number;
+  due_date: string | null;
 }
 
 interface ProjectEvent {
@@ -142,20 +144,24 @@ export default function WorkspacePage({ params }: Params) {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
-          <SectionHeader title="関連タスク（デモ）" subtitle="この案件に紐づく対応の例です（モックデータ）。" />
+          <SectionHeader title="関連タスク" subtitle="この案件から実データに基づいて生成されたAIの推奨対応です。" />
           <div className="mt-3 space-y-3">
-            {taskRecommendations.slice(0, 3).map((task) => (
-              <TaskCard
-                key={task.id}
-                title={task.title}
-                project={task.project}
-                due={task.due}
-                priority={task.priority}
-                status={task.status}
-                reason={task.reason}
-                actions={<Button tone="ghost" size="sm">タスクを開く</Button>}
-              />
-            ))}
+            {project.actions.length > 0 ? (
+              project.actions.map((action) => (
+                <TaskCard
+                  key={action.action_id}
+                  title={action.title}
+                  project={project.po_number}
+                  due={action.due_date ? new Date(action.due_date).toLocaleDateString("ja-JP") : "—"}
+                  priority={action.priority}
+                  status="未着手"
+                  reason={action.condition || action.description}
+                  actions={<Button tone="ghost" size="sm">タスクを開く</Button>}
+                />
+              ))
+            ) : (
+              <p className="text-sm text-sub">現時点で推奨タスクはありません</p>
+            )}
           </div>
         </Card>
 
