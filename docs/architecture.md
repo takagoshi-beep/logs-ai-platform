@@ -1196,6 +1196,43 @@ doesn't yet change AI behavior. Closing that loop (reading active
 Policy Memory entries back into the detection heuristic) is a distinct,
 larger piece of work, left for later.
 
+## 14.11 `/walking-skeleton` deleted (2026-07-06)
+
+Last item on the frontend page audit list (14.6/14.9/14.10). "Walking
+skeleton" is a software-engineering term for a minimal end-to-end slice
+through every architectural layer — this page's own subtitle said
+exactly that: "Project → Understanding → Execution → Learning →
+Governance → Activity → Trace". It was a one-time proof-of-concept demo
+scaffold, not a real feature: it created a **synthetic** project (via a
+form defaulting to fictional "Fanatics OEM" / "PO-2026-001" values) to
+walk through the whole pipeline concept, rather than working with real
+Supabase purchase_order data like everything else built in `backend/`
+this session.
+
+Not linked from the sidebar (same as former `/debug`) — only reachable
+by direct URL. More importantly, its very first action was broken:
+`createProject()` (`POST /api/projects`) and `projectFeedback()`
+(`POST /api/projects/{id}/feedback`) — **neither endpoint exists
+anywhere in `backend/api/`**. Clicking "Create Project" would 404
+immediately, before ever reaching the parts of the page that *would*
+have worked (`getLearningCenter()`, wired up just this session in 14.10).
+
+Deleted `frontend/app/walking-skeleton/` entirely (confirmed no other
+page links to it). Since nothing else called them, also removed three
+now-fully-dead `api-client.ts` functions: `getDebugTrace()` (its only
+other caller, `/debug`, was deleted in 14.9; also had the same
+frontend/backend response-shape mismatch documented there),
+`createProject()`, and `projectFeedback()` — the latter two pointed at
+backend endpoints that were never built, so keeping them around risked
+someone assuming project creation was a real, working feature.
+
+**This closes the full frontend page audit started in 14.6**: `/debug`
+and `/walking-skeleton` deleted (both were disconnected/broken
+demo-only scaffolding); `/history` and `/workspace` connected to real
+data; `/learning` fully wired end-to-end (persistence + API + a real
+data source). Every page reachable from the sidebar now runs on real
+data.
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.
