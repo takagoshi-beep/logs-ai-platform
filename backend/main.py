@@ -15,6 +15,7 @@ from api.router import router
 from api.capability_router import router as capability_router
 from api.governance_router import router as governance_router
 from api.document_formats_router import router as document_formats_router
+from api.learning_router import router as learning_router
 
 app = FastAPI(title="LOGS AI OS Backend V0.1", version="0.1.0")
 
@@ -30,3 +31,4 @@ app.include_router(router)
 app.include_router(capability_router)
 app.include_router(governance_router)
 app.include_router(document_formats_router)
+app.include_router(learning_router)

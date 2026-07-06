@@ -1,31 +1,145 @@
 """
-In-memory repositories for the Learning Domain.
+Repositories for the Learning Domain, with durable JSONL persistence
+(added 2026-07-06, closing the gap this module's original docstring
+flagged as deferred to "the Memory domain, Blueprint v0.1 Phase 4").
 
-Mirrors the storage pattern used by capability/domain.py (CapabilityRegistry):
-process-local dict/list stores behind a singleton accessor. This is the
-Learning Domain's MVP persistence layer; durable storage is deferred to the
-Memory domain (Blueprint v0.1 §13 Phase 4), per the ★☆☆☆☆ Memory Domain
-maturity recorded in BLUEPRINT_ALIGNMENT_CHECK.md.
+Storage convention matches the rest of backend/ (governance_store.py,
+document_formats.py): plain append-only JSONL files under
+backend/data/learning/, "latest record per id wins" for anything
+updated over its lifecycle (LearningCandidate, ApprovalQueueEntry), plain
+accumulation for anything append-only/immutable (PolicyMemoryEntry,
+ActivityFeedEntry, OperationalMemoryStore entries).
+
+Repositories keep the same in-memory, in-process shape/behavior as
+before — they just load from disk on first access and write through on
+every mutation, so a server restart no longer silently erases Learning
+Domain history (previously purely in-memory, lost on every restart).
 """
 
 from __future__ import annotations
 
+import json
+from datetime import datetime
+from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from learning.models import ActivityFeedEntry, ApprovalQueueEntry, LearningCandidate, PolicyMemoryEntry
+from learning.models import (
+    ActivityFeedEntry,
+    ApprovalQueueEntry,
+    LearningActivityEvent,
+    LearningCandidate,
+    LearningScopeType,
+    LearningSourceType,
+    LearningStatus,
+    LearningType,
+    PolicyMemoryEntry,
+)
+
+_DATA_DIR = Path(__file__).resolve().parent.parent / "backend" / "data" / "learning"
+
+
+def _append_jsonl(filename: str, record: dict[str, Any]) -> None:
+    _DATA_DIR.mkdir(parents=True, exist_ok=True)
+    path = _DATA_DIR / filename
+    with path.open("a", encoding="utf-8") as fp:
+        fp.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+
+
+def _read_jsonl(filename: str) -> list[dict[str, Any]]:
+    path = _DATA_DIR / filename
+    if not path.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as fp:
+        for line in fp:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return records
+
+
+def _candidate_from_dict(d: dict[str, Any]) -> LearningCandidate:
+    return LearningCandidate(
+        title=d["title"],
+        description=d["description"],
+        source_type=LearningSourceType(d["source_type"]),
+        created_by=d["created_by"],
+        id=d["id"],
+        learning_type=LearningType(d["learning_type"]),
+        scope_type=LearningScopeType(d["scope_type"]) if d.get("scope_type") else None,
+        scope_id=d.get("scope_id"),
+        status=LearningStatus(d["status"]),
+        confidence=d["confidence"],
+        evidence=d.get("evidence") or [],
+        suggested_application=d.get("suggested_application", ""),
+        created_at=datetime.fromisoformat(d["created_at"]),
+        updated_at=datetime.fromisoformat(d["updated_at"]),
+    )
+
+
+def _approval_from_dict(d: dict[str, Any]) -> ApprovalQueueEntry:
+    return ApprovalQueueEntry(
+        candidate_id=d["candidate_id"],
+        approval_id=d["approval_id"],
+        status=d["status"],
+        decision=d.get("decision"),
+        approver_id=d.get("approver_id"),
+        approval_reason=d.get("approval_reason"),
+        created_at=datetime.fromisoformat(d["created_at"]),
+        decided_at=datetime.fromisoformat(d["decided_at"]) if d.get("decided_at") else None,
+    )
+
+
+def _policy_from_dict(d: dict[str, Any]) -> PolicyMemoryEntry:
+    return PolicyMemoryEntry(
+        candidate_id=d["candidate_id"],
+        approval_id=d["approval_id"],
+        rule_definition=d["rule_definition"],
+        approved_by=d["approved_by"],
+        policy_id=d["policy_id"],
+        version=d["version"],
+        active=d["active"],
+        approved_at=datetime.fromisoformat(d["approved_at"]),
+    )
+
+
+def _activity_from_dict(d: dict[str, Any]) -> ActivityFeedEntry:
+    return ActivityFeedEntry(
+        event=LearningActivityEvent(d["event"]),
+        candidate_id=d["candidate_id"],
+        summary=d["summary"],
+        id=d["id"],
+        detail=d.get("detail") or {},
+        created_at=datetime.fromisoformat(d["created_at"]),
+    )
 
 
 class LearningCandidateRepository:
-    """Stores LearningCandidate records."""
+    """Stores LearningCandidate records, persisted to
+    data/learning/candidates.jsonl (latest record per id wins, since a
+    candidate is saved repeatedly as it moves through its lifecycle)."""
+
+    _FILE = "candidates.jsonl"
 
     def __init__(self) -> None:
         self._candidates: dict[str, LearningCandidate] = {}
         self._lock = Lock()
+        for record in _read_jsonl(self._FILE):
+            try:
+                candidate = _candidate_from_dict(record)
+                self._candidates[candidate.id] = candidate
+            except Exception:
+                continue
 
     def save(self, candidate: LearningCandidate) -> str:
         with self._lock:
             self._candidates[candidate.id] = candidate
+        _append_jsonl(self._FILE, candidate.to_dict())
         return candidate.id
 
     def get(self, candidate_id: str) -> LearningCandidate | None:
@@ -50,37 +164,65 @@ class LearningCandidateRepository:
 
 class OperationalMemoryStore:
     """
-    Scoped key-value store for applied Operational Learning.
+    Scoped key-value store for applied Operational Learning, persisted to
+    data/learning/operational_memory.jsonl (append-only — each
+    application is a distinct historical fact, not something a later
+    record overwrites).
 
     Keyed by (scope_type, scope_id) so that USER/PROJECT/CAPABILITY-scoped
     learning never leaks across boundaries (Blueprint v0.1 §10 Preference &
     Scope Standard; Blueprint v0.2 §8.4 Learning Scope).
     """
 
+    _FILE = "operational_memory.jsonl"
+
     def __init__(self) -> None:
         self._store: dict[tuple[str, str], list[dict[str, Any]]] = {}
         self._lock = Lock()
+        for record in _read_jsonl(self._FILE):
+            key = (record.get("scope_type", ""), record.get("scope_id", ""))
+            self._store.setdefault(key, []).append(record.get("entry", {}))
 
     def apply(self, scope_type: str, scope_id: str, entry: dict[str, Any]) -> None:
         key = (scope_type, scope_id or "")
         with self._lock:
             self._store.setdefault(key, []).append(entry)
+        _append_jsonl(self._FILE, {"scope_type": scope_type, "scope_id": scope_id or "", "entry": entry})
 
     def get(self, scope_type: str, scope_id: str) -> list[dict[str, Any]]:
         return list(self._store.get((scope_type, scope_id or ""), []))
 
 
 class ApprovalQueueRepository:
-    """Minimal Governance Approval Queue (Blueprint v0.1 §9 GovernanceApproval, MVP)."""
+    """Minimal Governance Approval Queue (Blueprint v0.1 §9 GovernanceApproval, MVP),
+    persisted to data/learning/approval_queue.jsonl (latest record per
+    approval_id wins, since status/decision change on review)."""
+
+    _FILE = "approval_queue.jsonl"
 
     def __init__(self) -> None:
         self._entries: dict[str, ApprovalQueueEntry] = {}
         self._lock = Lock()
+        for record in _read_jsonl(self._FILE):
+            try:
+                entry = _approval_from_dict(record)
+                self._entries[entry.approval_id] = entry
+            except Exception:
+                continue
 
     def enqueue(self, entry: ApprovalQueueEntry) -> str:
         with self._lock:
             self._entries[entry.approval_id] = entry
+        _append_jsonl(self._FILE, entry.to_dict())
         return entry.approval_id
+
+    def save(self, entry: ApprovalQueueEntry) -> None:
+        """Persist an update to an already-enqueued entry (e.g. after a
+        review sets status/decision/approver_id) — `enqueue` only covers
+        the initial creation."""
+        with self._lock:
+            self._entries[entry.approval_id] = entry
+        _append_jsonl(self._FILE, entry.to_dict())
 
     def get(self, approval_id: str) -> ApprovalQueueEntry | None:
         return self._entries.get(approval_id)
@@ -93,15 +235,25 @@ class ApprovalQueueRepository:
 
 
 class PolicyMemoryRepository:
-    """Minimal Policy Memory store (Blueprint v0.1 §9 PolicyRule, MVP)."""
+    """Minimal Policy Memory store (Blueprint v0.1 §9 PolicyRule, MVP),
+    persisted to data/learning/policy_memory.jsonl."""
+
+    _FILE = "policy_memory.jsonl"
 
     def __init__(self) -> None:
         self._policies: dict[str, PolicyMemoryEntry] = {}
         self._lock = Lock()
+        for record in _read_jsonl(self._FILE):
+            try:
+                policy = _policy_from_dict(record)
+                self._policies[policy.policy_id] = policy
+            except Exception:
+                continue
 
     def save(self, policy: PolicyMemoryEntry) -> str:
         with self._lock:
             self._policies[policy.policy_id] = policy
+        _append_jsonl(self._FILE, policy.to_dict())
         return policy.policy_id
 
     def list_active(self) -> list[PolicyMemoryEntry]:
@@ -112,15 +264,25 @@ class PolicyMemoryRepository:
 
 
 class ActivityFeedRepository:
-    """User-facing Activity Feed entries emitted by the Learning Domain (Blueprint v0.2 §8.9)."""
+    """User-facing Activity Feed entries emitted by the Learning Domain
+    (Blueprint v0.2 §8.9), persisted to
+    data/learning/activity_feed.jsonl (append-only)."""
+
+    _FILE = "activity_feed.jsonl"
 
     def __init__(self) -> None:
         self._entries: list[ActivityFeedEntry] = []
         self._lock = Lock()
+        for record in _read_jsonl(self._FILE):
+            try:
+                self._entries.append(_activity_from_dict(record))
+            except Exception:
+                continue
 
     def record(self, entry: ActivityFeedEntry) -> str:
         with self._lock:
             self._entries.append(entry)
+        _append_jsonl(self._FILE, entry.to_dict())
         return entry.id
 
     def list(self, limit: int = 50) -> list[ActivityFeedEntry]:

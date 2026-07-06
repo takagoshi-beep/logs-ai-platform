@@ -195,6 +195,7 @@ def review_governed_candidate(
     entry.decision = decision
     entry.approver_id = approver_id
     entry.approval_reason = reason
+    queue.save(entry)
 
     if decision == "APPROVED":
         policy = PolicyMemoryEntry(

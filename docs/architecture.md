@@ -1118,6 +1118,84 @@ doesn't have), `/learning` (calls `getLearningCenter()` →
 `/walking-skeleton` (calls both `getDebugTrace` — real endpoint, per
 above — and `getLearningCenter` — does not exist, same as `/learning`).
 
+## 14.10 `/learning` fully wired: persistence, API, and a real data
+source (2026-07-06)
+
+Investigating `/learning`'s "not yet checked" status (14.6/14.9) turned
+up something better than expected: a complete, already-tested Learning
+Domain module already existed at the repo root (`learning/` —
+`models.py`, `repository.py`, `service.py`, `classifier.py`,
+`lifecycle.py`, covered by `tests/test_learning.py`, implementing
+Blueprint v0.2 Ch.8 end-to-end: candidate creation → classify/scope →
+apply-or-govern → approval → policy memory → activity feed). It was
+simply never connected to `backend/` — `grep` confirmed the only caller
+was the old `app/` reference implementation. The frontend's `/learning`
+page was built anticipating this connection and was otherwise complete
+and correctly shaped; it just called a `GET /api/learning/center` that
+didn't exist anywhere in `backend/api/`.
+
+Did all three pieces Noritsugu asked for:
+
+**1. Durable persistence**, previously entirely in-memory (lost on
+every restart, unlike every other domain built in `backend/` today).
+Added JSONL persistence to all 5 repositories in `learning/repository.py`
+(`backend/data/learning/*.jsonl`, gitignored), following the same
+"latest record per id wins" convention as `governance_store.py`/
+`document_formats.py` for anything mutated over its lifecycle
+(`LearningCandidate`, `ApprovalQueueEntry`), plain accumulation for
+append-only records (`PolicyMemoryEntry`, `ActivityFeedEntry`,
+`OperationalMemoryStore` entries). Found and fixed one bug while adding
+this: `service.review_governed_candidate()` mutated an
+`ApprovalQueueEntry`'s fields directly without ever calling a save
+method afterward — harmless with the old pure-in-memory dict (the
+mutated object was already the one held in memory), but would have
+silently failed to persist the review decision once persistence was
+added. Added `ApprovalQueueRepository.save()` and call it after the
+mutation. Verified persistence survives a fresh process (candidate
+created and queued in one Python process, correctly read back — same
+title, same status — in a second, separate process).
+
+**2. API wiring**: new `backend/api/learning_router.py`
+(`GET /api/learning/center`, `POST
+/api/learning/approval-queue/{approval_id}/review`), mounted in
+`main.py`. Deliberately a thin pass-through to the existing
+`learning/service.py` and `learning/repository.py` — no reimplementation
+of Learning Domain logic in `backend/`. **Caught the exact `/api` prefix
+mismatch bug from 14.8 before it shipped this time**: nearly gave the
+router `prefix="/document-formats"`-style bare prefix again out of habit
+before checking what the frontend actually calls
+(`getLearningCenter()` → `/api/learning/center`) — fixed before
+presenting, this time.
+
+**3. A real source of candidates** — the missing piece that would have
+otherwise left the wired-up page permanently empty. Chosen integration
+point: `document_formats.update_field_mappings()` (14.8's human
+structure-editing step) now compares the human-edited `field_mappings`
+against the AI's original detection and, if anything was renamed,
+re-pointed to a different cell, or deleted, records one
+`REPEATED_CORRECTION`-sourced Learning Candidate per edit — this is
+exactly the "AI guessed X, a human corrected it to Y" signal Learning
+is meant to observe, and reuses work already built rather than
+inventing a new trigger. Scoped to the
+`document_format_structure_inference` Capability with
+`affects_business_rule=True`, which `learning.classifier.classify()`
+routes to GOVERNED (queued for human approval, never silently
+self-modifying the detection heuristic) — matching this session's
+general Governance-first stance. Verified end-to-end: deleting a false
+positive field during review correctly produced one candidate in the
+Approval Queue, with `evidence` recording exactly which cell/field
+changed and how; approving it correctly produced a Policy Memory entry
+and Activity Feed events. Recording is wrapped in try/except so any
+failure in it can never block the actual field-mapping save a person is
+trying to make.
+
+**Deliberately not done:** the recorded Policy Memory entries don't yet
+feed back into `infer_structure()`'s actual heuristic — approving a
+"policy" here records institutional knowledge and an audit trail, but
+doesn't yet change AI behavior. Closing that loop (reading active
+Policy Memory entries back into the detection heuristic) is a distinct,
+larger piece of work, left for later.
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.

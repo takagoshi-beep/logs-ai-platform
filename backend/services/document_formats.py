@@ -340,6 +340,82 @@ def get_format(format_id: str) -> Optional[dict[str, Any]]:
     return _resolve_status(record) if record else None
 
 
+def _record_field_mapping_corrections_as_learning(
+    original_record: dict[str, Any], edited_mappings: list[dict[str, Any]]
+) -> None:
+    """Stage C of the Learning Domain integration (2026-07-06): when a
+    human edits the AI's detected field mappings (renames a field, fixes
+    an input cell, or removes a false positive) before approving a
+    format, that correction is exactly the kind of signal Learning is
+    meant to observe — "the AI guessed X, a human corrected it to Y."
+
+    Recorded as a single GOVERNED (human-review-required) candidate per
+    edit action, scoped to the `document_format_structure_inference`
+    Capability — never auto-applied, since changing detection heuristics
+    company-wide deserves a human decision, not a silent self-modification.
+
+    Best-effort only: any failure here (e.g. the optional `learning`
+    module being unavailable) is swallowed so a Learning-recording bug
+    can never block the actual field-mapping edit a person is trying to
+    save.
+    """
+    try:
+        original_mappings = original_record.get("field_mappings", [])
+        original_by_cell = {m["label_cell"]: m for m in original_mappings}
+        edited_by_cell = {m["label_cell"]: m for m in edited_mappings}
+
+        corrections: list[dict[str, Any]] = []
+        for label_cell, original in original_by_cell.items():
+            edited = edited_by_cell.get(label_cell)
+            if edited is None:
+                corrections.append({
+                    "label_cell": label_cell,
+                    "change": "removed",
+                    "before": {"field_name": original["field_name"], "input_cell": original["input_cell"]},
+                })
+            elif (
+                edited["field_name"] != original["field_name"]
+                or edited["input_cell"] != original["input_cell"]
+            ):
+                corrections.append({
+                    "label_cell": label_cell,
+                    "change": "modified",
+                    "before": {"field_name": original["field_name"], "input_cell": original["input_cell"]},
+                    "after": {"field_name": edited["field_name"], "input_cell": edited["input_cell"]},
+                })
+
+        if not corrections:
+            return
+
+        from learning import service as learning_service
+        from learning.models import LearningScopeType, LearningSourceType
+
+        candidate = learning_service.create_candidate(
+            title=f"帳票フォーマット構造推測の人間による修正: {original_record.get('name', '')}",
+            description=(
+                f"「{original_record.get('name', '')}」のAI構造推測結果を、"
+                f"人間が{len(corrections)}件修正しました(項目の削除・名称変更・入力先セルの修正)。"
+            ),
+            source_type=LearningSourceType.REPEATED_CORRECTION,
+            created_by="document_format_review",
+            confidence=0.6,
+            evidence=corrections,
+            suggested_application=(
+                "document_format_structure_inference のヒューリスティックを、"
+                "この修正パターン(evidence参照)を踏まえて見直す候補"
+            ),
+        )
+        candidate = learning_service.classify_and_scope(
+            candidate,
+            requested_scope=LearningScopeType.CAPABILITY,
+            scope_id=DOCUMENT_FORMAT_CAPABILITY.capability_id,
+            affects_business_rule=True,
+        )
+        learning_service.apply_candidate(candidate)
+    except Exception:
+        pass
+
+
 def update_field_mappings(format_id: str, field_mappings: list[dict[str, Any]]) -> dict[str, Any]:
     """Let a human directly edit the AI-detected field mappings (rename a
     field, fix which cell it points to, or remove a false positive like a
@@ -365,6 +441,8 @@ def update_field_mappings(format_id: str, field_mappings: list[dict[str, Any]]) 
     record = _latest_by_format_id().get(format_id)
     if not record:
         raise ValueError(f"Format {format_id} not found")
+
+    _record_field_mapping_corrections_as_learning(record, field_mappings)
 
     # table_id タグを一度リセットしてから再計算する(古いtable_idが残らないように)
     for m in field_mappings:
