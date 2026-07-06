@@ -19,46 +19,12 @@ from typing import Any
 
 from services.capability_instance import registry as capability_registry
 from services import governance_store
-from services.project_service import ProjectService
 
 ROOT = Path(__file__).resolve().parents[1]
 EVENT_LOG_DIR = ROOT / "data"
 EVENT_LOG_PATH = EVENT_LOG_DIR / "events.jsonl"
 
 _events: list[dict[str, Any]] = []
-_PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
-
-
-def recommend_tasks(limit: int = 10) -> list[dict[str, Any]]:
-    """Aggregate real `ProjectAction` recommendations across projects.
-
-    Replaces `mock_store.recommend_tasks()`'s 3 hardcoded demo tasks.
-    `ProjectService._generate_actions()` already builds real, per-project
-    task recommendations (priority, due_date, confidence, trace_id) from
-    Supabase `purchase_orders` data — this just aggregates them across the
-    top N projects instead of duplicating that logic with fake data.
-    """
-    service = ProjectService()
-    aggregates = service.build_project_aggregates(limit=limit)
-
-    tasks: list[dict[str, Any]] = []
-    for aggregate in aggregates:
-        for action in aggregate.actions:
-            tasks.append({
-                "id": action.action_id,
-                "project": aggregate.po_number,
-                "project_id": aggregate.project_id,
-                "title": action.title,
-                "description": action.description,
-                "due": action.due_date.isoformat() if action.due_date else None,
-                "priority": action.priority,
-                "status": "open",
-                "confidence": action.confidence,
-                "trace_id": action.trace_id,
-            })
-
-    tasks.sort(key=lambda t: _PRIORITY_ORDER.get(t["priority"], 3))
-    return tasks[:limit]
 
 
 def get_health() -> dict[str, Any]:

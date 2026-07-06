@@ -13,12 +13,6 @@ class ChatRequest(BaseModel):
     workspace_id: str | None = None
 
 
-class TasksRecommendRequest(BaseModel):
-    user_id: str
-    role: str
-    date: str | None = None
-
-
 class ProposalDraftRequest(BaseModel):
     user_id: str
     role: str

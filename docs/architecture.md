@@ -1271,6 +1271,56 @@ New `business/today_actions._get_recent_activity()`, added to
    Extending this card to include it is real future work, not done here.
    Card renamed to "最近作成した提案書" to match what it actually shows.
 
+## 14.13 Menu/feature duplication audit (2026-07-06)
+
+Noritsugu asked for a check on whether each sidebar menu maps cleanly to
+one real feature, with no redundant backend logic. Findings:
+
+**Removed: `/api/tasks/recommend` duplicated `/api/today-actions`.**
+Both aggregated `ProjectAction`s across projects via `ProjectService`,
+sorted by priority — the same feature, implemented twice.
+`recommend_tasks()` (`status_reporting.py`) was the older one; nothing
+in the frontend called it anymore (`今日のタスク` calls
+`getTodayActions()` → `GET /api/today-actions`, which is also the more
+complete implementation — it includes `customer`/`reason` fields the
+frontend actually renders, which `recommend_tasks()` never provided).
+Deleted the router endpoint, the `TasksRecommendRequest` schema, the
+`recommend_tasks()` function itself (and its now-unused
+`_PRIORITY_ORDER` constant / `ProjectService` import in
+`status_reporting.py`), and the matching, already-uncalled
+`getTaskRecommendations()` in `api-client.ts`.
+
+**Kept intentionally: `相談` (`/api/chat`) and `推論エンジン`
+(`/api/reasoning`) both call the same underlying
+`reasoning_pipeline.reason()`.** Not accidental duplication — different
+presentations of one engine for different purposes. `相談` returns a
+conversational summary (`to_chat_response()`); `推論エンジン` shows the
+full Intent→Meaning→Hypothesis→...→Evidence Interpretation breakdown,
+which Noritsugu specifically wants for verifying the AI's reasoning
+during testing. Explicit decision: keep both.
+
+**Noted, not acted on: 4 backend endpoints have no frontend caller at
+all** — `/api/knowledge/documents`, `/api/knowledge/registry`,
+`/api/executions/{id}`, `/api/evaluation/summary` (`/api/health` is a
+5th, but that one is a standard infra/monitoring endpoint never meant to
+be called by a UI — not comparable to the other four). Assessed
+individually rather than lumped together as "waste":
+- `/knowledge/*` exposes the real business-rule knowledge base
+  (`BR-SALES-STANDARD-001` etc.) already cited in `chat`/`reasoning`
+  answers — a natural base for a future "AIが参照する業務ルール一覧"
+  browse page, in the spirit of the transparency principle already
+  applied elsewhere.
+- `/executions/{id}` would power a drill-down from a `/history` row
+  into that single execution's full inputs/outputs.
+- `/evaluation/summary` aggregates real per-Capability success rates —
+  a natural base for a small "AI品質" dashboard (e.g. surfacing that
+  `document_generation` has both successes and real recorded failures,
+  per 14.12's screenshot).
+
+Decision: no action now — these are plausible future features already
+built on the backend side, not fabricated bloat, but not urgent either.
+Left here as a candidate list rather than silently forgotten.
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.

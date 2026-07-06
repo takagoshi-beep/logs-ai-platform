@@ -50,15 +50,6 @@ export async function getHome() {
 }
 
 /**
- * Get task recommendations
- */
-export async function getTaskRecommendations() {
-  return apiCall("/api/tasks/recommend", {
-    method: "POST",
-  });
-}
-
-/**
  * Get execution history
  */
 export async function getExecutionHistory() {

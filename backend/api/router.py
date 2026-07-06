@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
-from api.schemas import ChatRequest, ProductEvent, ProposalDraftRequest, TasksRecommendRequest
+from api.schemas import ChatRequest, ProductEvent, ProposalDraftRequest
 from business.today_actions import get_home_payload as get_home_payload_business
 from services.proposal_generation import draft_proposal
 from services.status_reporting import (
@@ -13,7 +13,6 @@ from services.status_reporting import (
     get_execution,
     get_health,
     get_history,
-    recommend_tasks,
     store_event,
 )
 from services.trace_store import get_trace
@@ -70,14 +69,6 @@ def knowledge_documents() -> dict:
 def knowledge_registry() -> dict:
     entries = get_registry()
     return {"count": len(entries), "entries": entries}
-
-
-@router.post("/tasks/recommend")
-def tasks_recommend(_: TasksRecommendRequest) -> dict:
-    return {
-        "items": recommend_tasks(),
-        "home": get_home_payload_business(),
-    }
 
 
 @router.post("/proposals/draft")
