@@ -28,6 +28,7 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from openpyxl import load_workbook
+from openpyxl.cell.cell import MergedCell
 
 from capability.domain import Capability, CapabilityStatus, ExecutionStatus, GovernanceLevel
 from services.capability_instance import ensure_registered, registry as capability_registry
@@ -142,13 +143,19 @@ def infer_structure(worksheet) -> list[dict[str, Any]]:
                 continue
             right_cell = worksheet.cell(row=cell.row, column=cell.column + 1)
             below_cell = worksheet.cell(row=cell.row + 1, column=cell.column)
+            # MergedCell（結合セルのうち左上以外の部分）には書き込めない
+            # (openpyxlは AttributeError を投げる)。ここで除外しないと、タイトル
+            # のような結合セルが誤って「入力先」やテーブルヘッダーとして検出され、
+            # 生成時にクラッシュする（2026-07-06、実ファイルで発見）。
+            right_writable = right_cell.value in (None, "") and not isinstance(right_cell, MergedCell)
+            below_writable = below_cell.value in (None, "") and not isinstance(below_cell, MergedCell)
             candidates.append({
                 "cell": cell,
                 "label": label,
                 "right_cell": right_cell,
                 "below_cell": below_cell,
-                "right_empty": right_cell.value in (None, ""),
-                "below_empty": below_cell.value in (None, ""),
+                "right_empty": right_writable,
+                "below_empty": below_writable,
             })
 
     by_row: dict[int, list[dict[str, Any]]] = defaultdict(list)
@@ -607,13 +614,20 @@ def generate_document(
 
         filled: list[str] = []
         missing: list[str] = []
+        write_errors: list[str] = []
         for mapping in fmt["field_mappings"]:
             if mapping.get("table_id"):
                 continue  # テーブル列は下のループで別処理する
             field_name = mapping["field_name"]
             if field_name in data:
-                worksheet[mapping["input_cell"]] = data[field_name]
-                filled.append(field_name)
+                try:
+                    worksheet[mapping["input_cell"]] = data[field_name]
+                    filled.append(field_name)
+                except AttributeError:
+                    # 結合セル（左上以外）など、書き込み不可なセルを指している場合。
+                    # 1項目の失敗で生成全体を止めない — 承認前の「入力先セル」欄で
+                    # 人間が直せるよう、はっきり報告する（2026-07-06、実ファイルで発見）。
+                    write_errors.append(f"{field_name}（セル {mapping['input_cell']} は書き込めません。結合セルの可能性があります）")
             else:
                 missing.append(field_name)
 
@@ -627,8 +641,13 @@ def generate_document(
                     if value in (None, ""):
                         continue
                     cell_ref = f"{column['column_letter']}{target_row}"
-                    worksheet[cell_ref] = value
-                    filled.append(f"{column['field_name']}[{row_index}]")
+                    try:
+                        worksheet[cell_ref] = value
+                        filled.append(f"{column['field_name']}[{row_index}]")
+                    except AttributeError:
+                        write_errors.append(
+                            f"{column['field_name']}[{row_index}]（セル {cell_ref} は書き込めません。結合セルの可能性があります）"
+                        )
             tables_written[region["table_id"]] = len(rows)
             if not rows:
                 for column in region["columns"]:
@@ -659,5 +678,6 @@ def generate_document(
         "filled_fields": filled,
         "missing_fields": missing,
         "tables_written": tables_written,
+        "write_errors": write_errors,
         "trace_id": trace_id,
     }

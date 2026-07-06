@@ -68,6 +68,7 @@ interface GenerateResult {
   filled_fields: string[];
   missing_fields: string[];
   tables_written: Record<string, number>;
+  write_errors: string[];
 }
 
 function statusLabel(status: string) {
@@ -759,6 +760,19 @@ export default function ProposalBuilderPage() {
                           テーブル {tableId}: {count}行を書き込みました
                         </p>
                       ))}
+                      {genResult.write_errors?.length > 0 && (
+                        <div className="rounded bg-red-50 p-2">
+                          <p className="text-xs font-medium text-red-700">
+                            書き込めなかった項目（テンプレートの結合セルなどが原因の可能性があります。
+                            承認待ち画面の「入力先セル」を修正してください）
+                          </p>
+                          <ul className="mt-1 list-disc pl-4 text-xs text-red-700">
+                            {genResult.write_errors.map((err, i) => (
+                              <li key={i}>{err}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                       <a
                         href={getGeneratedDocumentUrl(genResult.output_id)}
                         className="inline-block rounded bg-teal-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-teal-800"
