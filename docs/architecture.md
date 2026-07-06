@@ -1074,6 +1074,50 @@ check `git status`/`git log` for uncommitted local work from *this
 session* first, every single time, with no exceptions for "probably
 already committed."
 
+## 14.9 Frontend page audit begins: `/debug` deleted (2026-07-06)
+
+Started working through 14.6's "not yet checked" frontend page list
+(`/history`, `/workspace`, `/debug`, `/learning`, `/walking-skeleton`).
+
+**`/debug` investigated and deleted, per Noritsugu's call ("メニューとして
+いらない").** Findings before deletion, for the record:
+- Not linked from the sidebar at all — only reachable by typing the URL
+  directly, with optional `?trace=` or `?project=` query params.
+- With no query params, it silently shows hardcoded `mock-data.ts`
+  content forever — looks "populated" without ever calling a real API.
+- **With a real, valid `trace_id`, it was still broken**: the frontend
+  expected `{success: true, trace: {...}}` but
+  `GET /api/debug/trace/{trace_id}` actually returns the trace payload
+  directly at the top level (`{trace_id, ...fields}` or
+  `{trace_id, status: "not_found"}` if unsaved) — verified via a real
+  `trace_id` from `proposal_generation.draft_proposal` (which does call
+  `trace_store.save_trace`). `response.trace` was always `undefined`, so
+  the page always fell through to its error branch regardless of
+  whether the trace actually existed.
+- Separately (now moot, but worth remembering if `/api/debug/trace`
+  is reused elsewhere): `document_formats.py` never calls
+  `trace_store.save_trace()` at all (unlike `proposal_generation.py`),
+  so its trace_ids (`docformat-`/`docgen-`/`docinstr-`) would always
+  resolve to `{"status": "not_found"}` even if the frontend response
+  mismatch were fixed.
+
+Deleted `frontend/app/debug/` entirely (confirmed no other page links to
+it first). Left the backend endpoint (`GET /api/debug/trace/{trace_id}`)
+and `getDebugTrace()` in `api-client.ts` in place, since
+`/walking-skeleton` (still unaudited) also calls `getDebugTrace` —
+revisit removing those too once that page is checked.
+
+**Still to audit:** `/history` (confirmed no `fetch` call at all in
+14.6 — likely a disconnected shell like `/proposals` originally was),
+`/workspace` (code review looks correctly wired to real
+`GET /api/projects` — response shape matches — but needs an actual
+browser check with real Supabase credentials, which this sandbox
+doesn't have), `/learning` (calls `getLearningCenter()` →
+`GET /api/learning/center`, which **does not exist anywhere in
+`backend/api/router.py`** — confirmed broken, not yet fixed),
+`/walking-skeleton` (calls both `getDebugTrace` — real endpoint, per
+above — and `getLearningCenter` — does not exist, same as `/learning`).
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.
