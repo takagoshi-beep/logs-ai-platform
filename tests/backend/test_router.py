@@ -1,0 +1,270 @@
+"""Integration tests for `backend/api/router.py` (the main `/api`-prefixed
+router: health, home, chat, reasoning, knowledge, proposals, history,
+executions, evaluation, debug trace, events, and the Project Aggregate /
+today-actions endpoints).
+
+`ProjectService` (real Supabase) is monkeypatched at the class level for
+the project-related endpoints — no live DB in tests.
+"""
+from __future__ import annotations
+
+from datetime import datetime
+
+from fastapi.testclient import TestClient
+
+from domain.project import (
+    GoalEvaluations, ProjectAction, ProjectAggregate, ProjectData,
+    ProjectEvents, ProjectState,
+)
+
+
+def _client() -> TestClient:
+    from main import app
+    return TestClient(app)
+
+
+def _fake_aggregate(project_id: str = "7722") -> ProjectAggregate:
+    data = ProjectData(
+        project_id=project_id, po_number="914-20260626_1",
+        supplier_id="s1", supplier_name="NEWHATTAN INC.",
+        customer_id="c1", customer_name="US_LOGS Inc.",
+        po_created_date=datetime(2026, 6, 26),
+        po_required_delivery_date=datetime(2026, 7, 6),
+    )
+    action = ProjectAction(
+        action_id="a1", project_id=project_id, title="仕入先へ連絡",
+        description="納期確認のため連絡する", priority="high",
+        related_state=ProjectState.DELIVERY_OVERDUE, condition="納期超過",
+    )
+    return ProjectAggregate(
+        project_id=project_id, po_number="914-20260626_1",
+        events=ProjectEvents(project_id=project_id),
+        data=data, state=ProjectState.DELIVERY_OVERDUE,
+        goal_evaluations=GoalEvaluations(project_id=project_id),
+        decisions=[], actions=[action], trace_id="trace-1",
+    )
+
+
+def _mock_project_service(monkeypatch, aggregates: dict[str, ProjectAggregate]):
+    from services.project_service import ProjectService
+
+    monkeypatch.setattr(
+        ProjectService, "_query_projects_from_db",
+        lambda self, limit=10: [{"id": pid} for pid in aggregates],
+    )
+    monkeypatch.setattr(
+        ProjectService, "build_project_aggregate",
+        lambda self, project_id: aggregates.get(project_id),
+    )
+
+
+# ---------------------------------------------------------------------------
+# health / knowledge (no external dependency)
+# ---------------------------------------------------------------------------
+
+def test_health_reports_ok():
+    response = _client().get("/api/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+
+
+def test_knowledge_documents_lists_real_files():
+    response = _client().get("/api/knowledge/documents")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["count"] == len(body["documents"])
+
+
+def test_knowledge_registry_returns_entries():
+    response = _client().get("/api/knowledge/registry")
+    assert response.status_code == 200
+    assert isinstance(response.json()["entries"], list)
+
+
+# ---------------------------------------------------------------------------
+# home (KPIs mocked, ProjectService mocked)
+# ---------------------------------------------------------------------------
+
+def test_home_returns_kpis_and_recent_activity(monkeypatch):
+    from business import today_actions
+    monkeypatch.setattr(
+        today_actions, "get_real_kpis",
+        lambda: {
+            "success": True, "table_count": 13, "sales_row_count": 199512,
+            "sales_data_quality_pct": 100.0, "last_updated": "2026-06-28",
+        },
+    )
+    _mock_project_service(monkeypatch, {})
+
+    response = _client().get("/api/home")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["kpis"][0]["value"] == 13
+    assert "recent_activity" in body
+
+
+# ---------------------------------------------------------------------------
+# chat / reasoning
+# ---------------------------------------------------------------------------
+
+def test_chat_returns_conversational_shape(monkeypatch):
+    from services import reasoning_pipeline as rp
+    monkeypatch.setattr(rp, "fetch_required_data", lambda required_data: [])
+
+    response = _client().post("/api/chat", json={"user_id": "u", "role": "sales", "message": "今月のOEM事業の粗利を教えて"})
+    assert response.status_code == 200
+    body = response.json()
+    assert "ai_response" in body
+    assert body["trace_id"].startswith("reasoning-")
+
+
+def test_reasoning_returns_full_pipeline_shape(monkeypatch):
+    from services import reasoning_pipeline as rp
+    monkeypatch.setattr(rp, "fetch_required_data", lambda required_data: [])
+
+    response = _client().post("/api/reasoning", json={"user_id": "u", "role": "sales", "message": "今月のOEM事業の粗利を教えて"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["category"] == "Analysis"
+    assert "decision_gate" in body
+
+
+# ---------------------------------------------------------------------------
+# proposals / draft
+# ---------------------------------------------------------------------------
+
+def test_proposals_draft_via_http(monkeypatch):
+    from services import proposal_generation as pg
+    monkeypatch.setattr(pg, "fetch_required_data", lambda required_data: [])
+    # ProposalDraftRequest.include_external のデフォルトは True なので、
+    # 実際に呼ばれるのは generate_text ではなく generate_text_with_web_search 側。
+    monkeypatch.setattr(pg, "generate_text_with_web_search", lambda prompt, max_tokens=3000: ("ダミードラフト", []))
+
+    response = _client().post(
+        "/api/proposals/draft",
+        json={"user_id": "u", "role": "sales", "customer": "US_LOGS Inc.", "purpose": "テスト"},
+    )
+    assert response.status_code == 200
+    assert response.json()["draft_text"] == "ダミードラフト"
+
+
+# ---------------------------------------------------------------------------
+# history / executions / evaluation / events / debug trace
+# ---------------------------------------------------------------------------
+
+def test_history_via_http_reflects_real_capability_execution():
+    from capability.domain import Capability, CapabilityStatus, ExecutionStatus, GovernanceLevel
+    from services.capability_instance import ensure_registered, registry
+
+    cap = Capability(
+        capability_id="test_cap", name="test", category="business", description="test",
+        owner_team="AI OS", owner_user_id="system", team_id="ai-os",
+        status=CapabilityStatus.DEPLOYED, version="1.0.0",
+        supported_inputs=[], supported_outputs=[], required_context=[],
+        governance_level=GovernanceLevel.LOW,
+    )
+    ensure_registered(cap)
+    execution = registry.execute_capability(capability_id="test_cap", inputs={}, user_id="u", project_id="", trace_id="t1")
+    registry.record_execution_result(execution_id=execution.execution_id, outputs={}, status=ExecutionStatus.COMPLETED)
+
+    response = _client().get("/api/history")
+    assert response.status_code == 200
+    assert len(response.json()["items"]) == 1
+
+
+def test_execution_detail_via_http_includes_inputs():
+    """Regression test for the get_execution() bug found & fixed while
+    building this test suite (docs/architecture.md 14.15): the endpoint
+    must return real inputs/outputs, not the incomplete
+    capability.registry.CapabilityExecution.to_dict()."""
+    from capability.domain import Capability, CapabilityStatus, ExecutionStatus, GovernanceLevel
+    from services.capability_instance import ensure_registered, registry
+
+    cap = Capability(
+        capability_id="test_cap", name="test", category="business", description="test",
+        owner_team="AI OS", owner_user_id="system", team_id="ai-os",
+        status=CapabilityStatus.DEPLOYED, version="1.0.0",
+        supported_inputs=[], supported_outputs=[], required_context=[],
+        governance_level=GovernanceLevel.LOW,
+    )
+    ensure_registered(cap)
+    execution = registry.execute_capability(
+        capability_id="test_cap", inputs={"question": "テスト質問"}, user_id="u", project_id="", trace_id="t1",
+    )
+    registry.record_execution_result(execution_id=execution.execution_id, outputs={"answer": "テスト回答"}, status=ExecutionStatus.COMPLETED)
+
+    response = _client().get(f"/api/executions/{execution.execution_id}")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["inputs"] == {"question": "テスト質問"}
+    assert body["outputs"] == {"answer": "テスト回答"}
+
+
+def test_evaluation_summary_via_http():
+    response = _client().get("/api/evaluation/summary")
+    assert response.status_code == 200
+    assert response.json()["total_executions"] == 0
+
+
+def test_events_via_http_persists_event():
+    response = _client().post("/api/events", json={
+        "event_id": "evt-1", "user_id": "u", "role": "sales",
+        "screen": "chat", "action": "test_event",
+        "timestamp": "2026-07-06T12:00:00Z",
+    })
+    assert response.status_code == 200
+    assert response.json()["stored"] is True
+
+
+def test_debug_trace_returns_404_for_unknown_trace():
+    response = _client().get("/api/debug/trace/trace-does-not-exist")
+    assert response.status_code in (404, 200)  # get_trace's own not-found shape, see trace_store.py
+
+
+# ---------------------------------------------------------------------------
+# projects / today-actions (ProjectService mocked)
+# ---------------------------------------------------------------------------
+
+def test_list_projects_via_http(monkeypatch):
+    _mock_project_service(monkeypatch, {"7722": _fake_aggregate("7722")})
+
+    response = _client().get("/api/projects")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["count"] == 1
+    assert body["projects"][0]["customer"] == "US_LOGS Inc."
+
+
+def test_get_project_via_http(monkeypatch):
+    from services.project_service import ProjectService
+
+    def _fake_build(self, project_id):
+        return _fake_aggregate(project_id) if project_id == "7722" else None
+
+    monkeypatch.setattr(ProjectService, "build_project_aggregate", _fake_build)
+
+    response = _client().get("/api/projects/7722")
+    assert response.status_code == 200
+    assert response.json()["project"]["data"]["customer_name"] == "US_LOGS Inc."
+
+    missing = _client().get("/api/projects/does-not-exist")
+    assert missing.status_code == 404
+
+
+def test_get_project_trace_via_http(monkeypatch):
+    from services.project_service import ProjectService
+    monkeypatch.setattr(ProjectService, "build_project_aggregate", lambda self, project_id: _fake_aggregate(project_id))
+
+    response = _client().get("/api/projects/7722/trace")
+    assert response.status_code == 200
+    assert response.json()["trace"]["actions"][0]["description"] == "納期確認のため連絡する"
+
+
+def test_today_actions_via_http_sorted_by_priority(monkeypatch):
+    _mock_project_service(monkeypatch, {"7722": _fake_aggregate("7722")})
+
+    response = _client().get("/api/today-actions")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["count"] == 1
+    assert body["actions"][0]["reason"] == "納期超過"

@@ -96,10 +96,43 @@ def get_history(limit: int = 50) -> list[dict[str, Any]]:
 
 
 def get_execution(execution_id: str) -> dict[str, Any]:
-    """Look up a single real Capability execution record by ID."""
+    """Look up a single real Capability execution record by ID.
+
+    Builds the response from the execution object's real attributes
+    directly, rather than `ex.to_dict()` — found via writing this
+    module's tests (2026-07-06) that `capability/registry.py` defines
+    its *own* `CapabilityExecution` class (separate from
+    `capability/domain.py`'s class of the same name), and it's that
+    registry-local class `execute_capability()` actually constructs.
+    Its `to_dict()` omits `inputs`/`outputs`/`error_message`/
+    `started_at`/`completed_at` entirely — meaningless for a "show me
+    this one execution's full detail" lookup, which is the whole reason
+    this endpoint exists. Fixed here rather than in
+    `capability/registry.py` itself, since that module is directly
+    exercised by `tests/test_capability_registry.py` and
+    `tests/test_capability_domain.py` and is explicitly documented as an
+    in-memory-only MVP — this keeps that module's tested behavior
+    unchanged and only patches the gap where it's actually consumed.
+    """
     for ex in capability_registry.get_execution_history(limit=10_000):
         if ex.execution_id == execution_id:
-            return ex.to_dict()
+            return {
+                "execution_id": ex.execution_id,
+                "capability_id": ex.capability_id,
+                "capability_version": ex.capability_version,
+                "project_id": ex.project_id,
+                "user_id": ex.user_id,
+                "trace_id": ex.trace_id,
+                "status": ex.status.value,
+                "inputs": ex.inputs,
+                "outputs": ex.outputs,
+                "started_at": ex.started_at.isoformat() if ex.started_at else None,
+                "completed_at": ex.completed_at.isoformat() if ex.completed_at else None,
+                "execution_time_seconds": ex.execution_time_seconds,
+                "error_message": ex.error_message,
+                "memory_accessed": ex.memory_accessed,
+                "memory_updated": ex.memory_updated,
+            }
     return {"execution_id": execution_id, "status": "not_found"}
 
 

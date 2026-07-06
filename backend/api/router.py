@@ -219,7 +219,7 @@ def get_project_trace(project_id: str) -> dict:
                     "title": a.title,
                     "description": a.description,
                     "priority": a.priority,
-                    "decision_source": a.decision_source.value,
+                    "decision_source": a.decision_source.value if a.decision_source else None,
                     "related_state": a.related_state.value,
                     "related_goal": a.related_goal.value if a.related_goal else None,
                     "confidence": a.confidence,

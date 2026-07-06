@@ -1438,6 +1438,92 @@ safety net `backend/` currently has. Writing real pytest coverage for
 just made that gap visible instead of burying it under ~280 tests for
 code nothing runs.
 
+## 14.15 `backend/`'s own features get real pytest coverage (2026-07-06)
+
+Item 4 of Noritsugu's remaining-work list, and the thing 14.14 surfaced:
+after deleting ~280 tests for the dead `app/`-era code, `capability/`'s
+59 tests were the *only* automated regression coverage `backend/` had —
+none of this session's real feature work (document-formats, proposals,
+Governance wiring, Learning wiring) had ever been captured as a
+committed pytest file, only verified by hand via one-off `TestClient`
+snippets run and discarded while building each feature.
+
+**New `tests/backend/`**, isolated from `tests/`'s existing
+`capability/`-only tests via `tests/backend/conftest.py`:
+- Puts `backend/` on `sys.path` (bare imports like `from services.x`
+  only resolve correctly with `backend/` itself on the path, matching
+  how `backend/main.py` is actually run).
+- An autouse fixture monkeypatches every module-level storage path
+  constant (`governance_store`, `document_formats`, `capability_instance`,
+  `trace_store`, `learning.repository`, `status_reporting`) to a fresh
+  `tmp_path` per test, and resets in-memory singleton state
+  (`capability_instance.registry`'s dicts, `learning.repository`'s
+  lazily-built singletons) — without this, the test suite would read
+  and write the developer's real `backend/data/*.jsonl` files.
+
+**9 new test files, 115 new tests** (`capability/`'s 59 + these 115 =
+174 total, all passing):
+- `test_document_formats.py` (20) — the real bugs found via manual
+  testing this session, now regression-tested: formula-cell exclusion
+  (14.7), the table-last-column direction bug and merged-cell exclusion
+  (14.8), multi-row table generation, and the Learning Domain
+  integration (14.10/14.14) including the "no real change = no
+  candidate" case.
+- `test_governance_store.py` (14) — the LOW+>0.85-confidence
+  auto-approve exception and every other governance_level always
+  queuing, full `decide()` state-transition guards.
+- `test_reasoning_pipeline.py` (8) — Q1-Q4 fixed-pattern routing (with
+  `fetch_required_data` stubbed to an empty list — these test routing,
+  not real Supabase data), Q5's customer-name fallback, and the final
+  "回答不可" fallback for free-form questions matching nothing.
+- `test_status_reporting.py` (9) — the `project_aggregate_analysis`
+  noise-filtering fix (14.12) under both simple and pool-exhaustion
+  conditions, evaluation-summary aggregation, health.
+- `test_proposal_generation.py` (8) — Governance HIGH-level submission,
+  web-search vs. non-web-search branching, the disabled image feature,
+  failure handling. LLM calls always mocked, never real/billed.
+- `test_learning_router.py` (7), `test_governance_router.py` (9),
+  `test_document_formats_router.py` (11), `test_router.py` (16) — HTTP-
+  level integration tests via the real FastAPI app for every router,
+  including the full upload→approve→generate and
+  create→queue→review→policy-memory lifecycles end-to-end.
+- `test_domain_project.py` (5), `test_today_actions.py` (8) — the
+  14.12 home-page fix's actual data path: `ProjectAction`→`to_dict()`
+  serialization and `_get_recent_activity()`'s question/document/project
+  extraction and 3-item capping.
+
+**Two real, previously-unknown bugs found (and fixed) purely by writing
+these tests — not by manual browser use:**
+1. `status_reporting.get_execution()` (`GET /api/executions/{id}`)
+   returned a dict missing `inputs`/`outputs`/`error_message`/
+   timestamps entirely. Root cause: `capability/registry.py` defines
+   its *own* `CapabilityExecution` class (separate from
+   `capability/domain.py`'s class of the same name), and it's the
+   registry-local one `execute_capability()` actually constructs — its
+   `to_dict()` omits those fields. Fixed by having `get_execution()`
+   build its response from the execution object's real attributes
+   directly, rather than modifying `capability/registry.py` itself
+   (that module has its own committed, passing tests and is documented
+   as an intentionally-reduced MVP — patching the gap where it's
+   consumed was the safer fix).
+2. `GET /api/projects/{id}/trace` crashed with `AttributeError` for any
+   action whose `decision_source` is `None` (a legitimate, common case
+   — not every action is triggered by a specific decision) — one line
+   in `router.py` called `.value` unconditionally instead of the
+   `x.value if x else None` guard used everywhere else in the same
+   function. Never noticed via manual testing because nobody had
+   exercised `/trace` for a project with such an action before this
+   test did.
+
+**Deliberately not covered:** `services/project_service.py` (real
+Supabase queries — tests here mock `ProjectService` at the class level
+rather than testing its DB-querying internals) and `services/llm_client.py`
+itself (a thin wrapper directly around the Anthropic/OpenAI SDKs;
+every other test file mocks the module-level `generate_text`/
+`generate_text_with_web_search`/`generate_image` functions it exports,
+never the SDK calls underneath). Both are real gaps, left for
+future work rather than attempted here.
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.
