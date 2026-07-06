@@ -1,15 +1,33 @@
 # LOGS AI Platform Architecture (Current)
 
-> **Scope note:** This document describes the layered AI OS implemented in
-> `app/main.py` (port 8001). The repository also contains a second,
-> independent FastAPI application, `backend/main.py` (port 8000), which
-> serves the Next.js frontend and hosts the real-data (Supabase) integration
-> work for Home/Workspace/Reasoning. See
+> **⚠️ 2026-07-06 update — read this first.** `app/` (and the ~30
+> top-level packages described in Sections 1–12 below — `database/`,
+> `session/`, `config/`, `business/` [root], `system/`, `planner/`,
+> `context/`, `intent/`, `question/`, `validation/`, `tools/`,
+> `workflow/`, `answer/`, `observability/`, `ai/`, `prompts/`,
+> `memory/`, `change_management/`, `self_awareness/`, `admin/`) **were
+> deleted this session** (Section 14.14) — none of it exists in the
+> repository anymore. `backend/main.py` (port 8000) is now the **only**
+> running server; there is no longer a second server on port 8001.
+> Sections 1–12 are kept as a historical record of the pre-deletion
+> architecture (they explain *why* those layers existed and how they
+> related to each other), but nothing in them describes current,
+> running code. Of everything they list, only `knowledge/` (data files,
+> not a live package import) and parts of `learning/` (see 14.10/14.14)
+> survived, and both are now used by `backend/` instead. **For the
+> actual current architecture, start at Section 13.**
+
+> **Original scope note (pre-2026-07-06, kept for history):** This
+> document describes the layered AI OS implemented in `app/main.py`
+> (port 8001). The repository also contains a second, independent
+> FastAPI application, `backend/main.py` (port 8000), which serves the
+> Next.js frontend and hosts the real-data (Supabase) integration work
+> for Home/Workspace/Reasoning. See
 > [Section 13](#13-second-api-surface-backend-nextjs-facing) for its
 > architecture. The two servers must not run on the same port; see the
 > [README](../README.md#two-separate-servers-in-this-repository) for details.
 
-## 1) Current Layer Inventory
+## 1) Current Layer Inventory ⚠️ HISTORICAL — describes deleted `app/`-era code, see banner above
 
 - Entry/API layer (`app/`)
 - Data and database layer (`database/`, `data/`)
@@ -35,7 +53,7 @@
 - Self-awareness layer (`self_awareness/`)
 - Admin/monitoring layer (`admin/`)
 
-## 2) Layer Responsibilities
+## 2) Layer Responsibilities ⚠️ HISTORICAL (app/-era, deleted 2026-07-06)
 
 - Entry/API layer
   - Exposes HTTP endpoints and validates request-level inputs.
@@ -129,7 +147,7 @@
 - Admin/monitoring layer
   - Aggregates usage/quality/improvement metrics for operators.
 
-## 3) Inter-layer Dependencies
+## 3) Inter-layer Dependencies ⚠️ HISTORICAL (app/-era, deleted 2026-07-06)
 
 ### High-level flow
 
@@ -178,7 +196,7 @@ flowchart LR
 - API layer currently exposes both end-to-end endpoint and layer-direct endpoints.
 - API layer now exposes `POST /chat`, `GET /trace/{trace_id}`, `GET /health`, and `GET /version` as the cloud-facing entry surface.
 
-## 4) Responsibility Overlaps (Current)
+## 4) Responsibility Overlaps (Current) ⚠️ HISTORICAL (app/-era, deleted 2026-07-06)
 
 - End-to-end orchestration exists in two routes:
   - `/answer` endpoint executes plan/workflow/answer/log directly.
@@ -194,7 +212,7 @@ flowchart LR
   - Both store message/answer/intent-like fields.
   - Responsibilities are conceptually distinct, but data shape overlaps.
 
-## 5) Potential Deviations From Intended Design
+## 5) Potential Deviations From Intended Design ⚠️ HISTORICAL (app/-era, deleted 2026-07-06)
 
 - API gateway bypass risk
   - Many layer-direct endpoints remain available, so callers can bypass Runtime orchestration contract.
@@ -207,7 +225,7 @@ flowchart LR
   - Runtime passes classified intent into Planner, but Planner remains rule-based and keeps a message fallback path.
   - This is acceptable for current sprint goals, but architecture doc should state this explicitly.
 
-## 6) Refactoring Candidates (Prioritized)
+## 6) Refactoring Candidates (Prioritized) ⚠️ HISTORICAL (app/-era, deleted 2026-07-06)
 
 1. Unify orchestration entry
    - Make `/ai/chat` the single production orchestration path.
@@ -229,7 +247,7 @@ flowchart LR
 5. Introduce dependency injection for registries/providers/stores
    - Avoid hidden globals and simplify deterministic testing.
 
-## 7) Current Architecture Summary For Team Use
+## 7) Current Architecture Summary For Team Use ⚠️ HISTORICAL (app/-era, deleted 2026-07-06)
 
 - The platform has transitioned from data-first API into layered AI orchestration.
 - Runtime is now the integration point for context-aware chat execution.
@@ -241,7 +259,7 @@ flowchart LR
 - Learning and Memory are separated by intent, but should be further clarified by contract and lifecycle.
 - Near-term architecture goal is reducing duplicate orchestration/execution paths while preserving existing APIs.
 
-## 8) External Source and Storage Foundation (Sprint 29)
+## 8) External Source and Storage Foundation (Sprint 29) ⚠️ HISTORICAL (app/-era, deleted 2026-07-06)
 
 To prepare Google Drive / Spreadsheet and cloud DB integration, the platform now includes `connector/`, `ingestion/`, and `storage/` foundations.
 
@@ -266,7 +284,7 @@ Scope constraints in this sprint:
 - PostgreSQL repository remains scaffold-level until production activation.
 - Existing Business, Knowledge, Context, Intent, Planner, and Workflow responsibilities remain unchanged.
 
-## 9) Source Registry Expansion (Sprint 30)
+## 9) Source Registry Expansion (Sprint 30) ⚠️ HISTORICAL (app/-era, deleted 2026-07-06)
 
 The ingestion layer now includes explicit source definitions for Google Drive preparation.
 
@@ -291,7 +309,7 @@ Data handling policy:
 - GitHub stores code and docs only.
 - Real datasets stay in Google Drive and cloud storage backends.
 
-## 10) Theme 24 Production UI Target
+## 10) Theme 24 Production UI Target ⚠️ HISTORICAL (app/-era, deleted 2026-07-06)
 
 ### Product Direction
 
@@ -347,7 +365,7 @@ Persist each UI operation as an evaluation event:
 
 This enables automatic transformation from production behavior logs into future regression suites.
 
-## 11) Storage-to-Business Query Runtime Path (Sprint 31)
+## 11) Storage-to-Business Query Runtime Path (Sprint 31) ⚠️ HISTORICAL (app/-era, deleted 2026-07-06)
 
 For user questions, the runtime path now prioritizes structured data in Storage through Business layer access.
 
@@ -371,7 +389,7 @@ flowchart LR
   RT --> ANS[Answer]
 ```
 
-## 12) Business Tool Registry Layer (Sprint 33)
+## 12) Business Tool Registry Layer (Sprint 33) ⚠️ HISTORICAL (app/-era, deleted 2026-07-06)
 
 Business capabilities are now managed through a dedicated selector/registry pair inside the business domain.
 
@@ -390,12 +408,16 @@ flowchart TD
   FMT --> ANS[Answer]
 ```
 
-## 13) Second API Surface: backend/ (Next.js-facing)
+## 13) `backend/` — the Sole Running Application (Next.js-facing)
 
-`backend/` is a separate FastAPI application (`backend/main.py`, port 8000)
-from the layered AI OS in `app/`. It exists to serve the Next.js frontend
-(`frontend/`) and currently carries most of the active real-data integration
-work (Supabase `public` schema).
+> Originally titled "Second API Surface" back when `app/` (port 8001)
+> was still the primary system. As of 2026-07-06 (Section 14.14),
+> `app/` and everything Sections 1–12 describe were deleted — `backend/`
+> is now the only server in this repository.
+
+`backend/` is a FastAPI application (`backend/main.py`, port 8000). It
+serves the Next.js frontend (`frontend/`) and carries all real-data
+integration work (Supabase `public` schema).
 
 ### 13.1 Directory Inventory
 
