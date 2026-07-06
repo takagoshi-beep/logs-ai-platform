@@ -213,74 +213,59 @@ class LogsysProvider:
 
 
 class GmailProvider:
-    """Gmail。v0.1はAPI未接続のためデモデータを返すスタブ。"""
+    """Gmail。v0.1はAPI未接続。
+
+    (2026-07-06) 以前はここで固定の架空メール（存在しない差出人・件名）を
+    "ok" ステータスで返していた — Reasoning Pipelineの回答に、実データ
+    (Supabase由来のsales/purchase_orders等)と見分けのつかない形で
+    架空の「証拠」が混入する状態だった。テスト・検証を阻害するため、
+    他の未接続Providerと同じ "unavailable" ステータスで正直に返すよう
+    修正した。実際にGmail APIへ接続する際は、この fetch() の中身を
+    差し替えるだけでよい（呼び出し側のインターフェースは変更不要）。
+    """
 
     name = "gmail"
-    _MESSAGES = [
-        {"date": "2026-07-01", "from": "fanatics-jp@example.com", "subject": "Re: 2026SS OEMジャージ 納期確認", "snippet": "7/15納品分の出荷スケジュールについて確認です…"},
-        {"date": "2026-06-30", "from": "supplier-a@example.com", "subject": "キャップ追加ロット 見積送付", "snippet": "追加200個の見積を添付します…"},
-        {"date": "2026-06-29", "from": "zozo-md@example.com", "subject": "夏物スニーカー 追加発注の件", "snippet": "販売好調のため追加発注を検討しています…"},
-    ]
 
     def fetch(self, dataset: str, params: dict[str, Any]) -> dict[str, Any]:
-        keyword = params.get("keyword", "")
-        rows = [m for m in self._MESSAGES if not keyword or keyword in (m["subject"] + m["snippet"])]
-        rows = rows or self._MESSAGES
         return _evidence(
-            self.name, dataset, "ok",
-            f"直近のメール {len(rows)}件を取得",
-            rows,
-            note="デモデータ（Gmail API未接続。次フェーズで実接続）",
+            self.name, dataset, "unavailable",
+            "Gmailは未接続のため取得できません",
+            note="次フェーズで実接続予定（現時点ではデータなし）",
         )
 
 
 class ProjectSheetProvider:
-    """案件管理シート。v0.1はシート未接続のためデモデータを返すスタブ。"""
+    """案件管理シート。v0.1はシート未接続。
+
+    (2026-07-06) GmailProviderと同じ理由で、固定の架空メモ・タスクを
+    "ok" として返す実装から、正直な "unavailable" 表示に変更した。
+    """
 
     name = "project_sheet"
-    _NOTES = [
-        {"案件": "Fanatics 2026SS OEMジャージ", "次アクション": "出荷前検品の日程確定", "担当": "担当A", "メモ": "納期7/15厳守"},
-        {"案件": "Fanatics キャップ追加ロット", "次アクション": "納品遅延の顧客連絡", "担当": "担当B", "メモ": "納期超過中・要フォロー"},
-        {"案件": "ZOZO 夏物スニーカー", "次アクション": "追加発注の要否確認", "担当": "担当A", "メモ": "販売好調"},
-    ]
-    _TASKS = [
-        {"日付": "2026-07-01", "案件": "Fanatics キャップ追加ロット", "タスク": "工場へ納期督促", "状態": "完了"},
-        {"日付": "2026-07-02", "案件": "Fanatics 2026SS OEMジャージ", "タスク": "出荷前検品の手配", "状態": "未着手"},
-        {"日付": "2026-07-02", "案件": "ZOZO 夏物スニーカー", "タスク": "追加発注数量の確認", "状態": "進行中"},
-    ]
 
     def fetch(self, dataset: str, params: dict[str, Any]) -> dict[str, Any]:
-        keyword = params.get("keyword", "")
-        source = self._TASKS if dataset == "task_history" else self._NOTES
-        rows = [r for r in source if not keyword or any(keyword in str(v) for v in r.values())]
-        rows = rows or source
         label = "タスク履歴" if dataset == "task_history" else "案件メモ"
         return _evidence(
-            self.name, dataset, "ok",
-            f"案件管理シートから{label} {len(rows)}件を取得",
-            rows,
-            note="デモデータ（シート未接続。次フェーズで実接続）",
+            self.name, dataset, "unavailable",
+            f"案件管理シート（{label}）は未接続のため取得できません",
+            note="次フェーズで実接続予定（現時点ではデータなし）",
         )
 
 
 class SlackProvider:
-    """Slack。v0.1はAPI未接続のためデモデータを返すスタブ。"""
+    """Slack。v0.1はAPI未接続。
+
+    (2026-07-06) GmailProviderと同じ理由で、固定の架空投稿を "ok" として
+    返す実装から、正直な "unavailable" 表示に変更した。
+    """
 
     name = "slack"
-    _MESSAGES = [
-        {"date": "2026-07-02", "channel": "#oem-案件", "user": "担当B", "text": "Fanaticsキャップ、工場から7/8出荷予定と連絡あり"},
-        {"date": "2026-07-01", "channel": "#sales", "user": "担当A", "text": "ZOZO夏物、追加発注ありそう。数量確認中"},
-    ]
 
     def fetch(self, dataset: str, params: dict[str, Any]) -> dict[str, Any]:
-        keyword = params.get("keyword", "")
-        rows = [m for m in self._MESSAGES if not keyword or keyword in m["text"]]
-        rows = rows or self._MESSAGES
         return _evidence(
-            self.name, dataset, "ok",
-            f"直近のSlack投稿 {len(rows)}件を取得",
-            rows,
-            note="デモデータ（Slack API未接続。次フェーズで実接続）",
+            self.name, dataset, "unavailable",
+            "Slackは未接続のため取得できません",
+            note="次フェーズで実接続予定（現時点ではデータなし）",
         )
 
 

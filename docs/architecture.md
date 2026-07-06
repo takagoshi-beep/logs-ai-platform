@@ -1611,6 +1611,55 @@ won't catch blank values in `production_samples`/`production_mass` the
 way it might in tables synced from an Excel/pandas source — worth
 knowing when writing queries against these tables.
 
+## 14.17 Supabase read-coverage audit + removing fictional
+Gmail/Slack/ProjectSheet demo data (2026-07-06)
+
+Noritsugu asked for an audit of whether *all* Supabase data is actually
+being read by `backend/`, before wiring up 14.16's new
+`production_samples`/`production_mass` tables to a real screen.
+
+**Audit findings.** Of the tables/views `sync.py` (the `logsys-chat`
+repo) creates, only 5 are ever queried by `backend/`: `sales`,
+`customers`, `products`, `purchases`, `purchase_orders`. Never touched:
+`customer_contacts`, `suppliers`, `purchase_surcharges`, `code_master`,
+`budget_forecast`, `staff`, all three convenience views
+(`v_sales_summary`/`v_product_master`/`v_customer_master`), and
+`_schema_info` (the AI-facing schema documentation table `sync.py`
+creates — nothing actually reads it; `information_schema.tables` is
+queried instead, but only to `COUNT(*)` for the home page's "Data
+Tables" KPI). Plus, as of 14.16, the two brand-new
+`production_samples`/`production_mass` tables aren't wired to anything
+yet either. Left as a known list of candidates for future work rather
+than acted on immediately — the more urgent finding was the next one.
+
+**Bigger finding: `GmailProvider`, `ProjectSheetProvider`, and
+`SlackProvider` were returning hardcoded fictional data** (fake emails
+from `fanatics-jp@example.com`, fake Slack messages about a "Fanatics
+2026SS OEMジャージ" that doesn't exist) **with `status: "ok"`** —
+indistinguishable in shape from real Supabase-backed evidence. Worse:
+**every one of Q1–Q4's fixed patterns** (the most-used `chat`/
+`推論エンジン` questions) had these three providers in their
+`required_data` list, meaning ordinary use of the most common questions
+was silently mixing fabricated "evidence" in with real data. A `note`
+field did carry a "デモデータ" disclaimer through to the final evidence
+object, but whether the frontend actually surfaces that note prominently
+enough for a user to notice was unverified — and per Noritsugu, this was
+actively breaking his ability to test the system going forward.
+
+**Fix:** removed the three providers' hardcoded `_MESSAGES`/`_NOTES`/
+`_TASKS` arrays entirely. `fetch()` now returns
+`_evidence(name, dataset, "unavailable", "...は未接続のため取得できません", note="次フェーズで実接続予定")`
+for all three — the same honest-failure pattern `LogsysProvider` itself
+already uses for unknown datasets or real connection failures. No
+interface change (`fetch_required_data()`/`integrate_evidence()`/
+`interpret_evidence()` already handle `"unavailable"` status
+gracefully — verified via a live, unmocked `_reason_impl()` call).
+`tests/backend/test_data_providers.py` (5 tests) added to keep these
+three honest going forward. When Gmail/Slack/the project sheet are
+actually connected, only each provider's `fetch()` body needs to
+change — the calling interface (`_PROVIDERS` dict, `_evidence()` shape)
+is unaffected.
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.
