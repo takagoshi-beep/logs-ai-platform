@@ -58,3 +58,4 @@ backend/data/generated_documents/
 backend/data/generated_proposal_images/
 backend/data/learning/
 backend/data/conversations.jsonl
+frontend/.env.local
