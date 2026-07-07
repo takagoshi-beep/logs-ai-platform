@@ -147,6 +147,16 @@ def _slack_facts(records: list[dict[str, Any]]) -> list[str]:
     return facts
 
 
+def _ongoing_samples_facts(records: list[dict[str, Any]]) -> list[str]:
+    if not records:
+        return ["対応中のサンプル依頼はありません"]
+    facts = [f"対応中のサンプル依頼は合計{len(records)}件"]
+    by_supplier = Counter(r.get("supplier_name") or "不明" for r in records)
+    breakdown = "、".join(f"{supplier}: {count}件" for supplier, count in by_supplier.most_common(5))
+    facts.append(f"仕入先別内訳: {breakdown}")
+    return facts
+
+
 _INTERPRETERS: dict[tuple[str, str], Callable[[list[dict[str, Any]]], list[str]]] = {
     ("logsys", "sales_lines"): _sales_lines_facts,
     ("logsys", "purchase_lines"): _purchase_lines_facts,
@@ -159,6 +169,7 @@ _INTERPRETERS: dict[tuple[str, str], Callable[[list[dict[str, Any]]], list[str]]
     ("project_sheet", "project_notes"): _project_notes_facts,
     ("gmail", "recent_messages"): _gmail_facts,
     ("slack", "recent_messages"): _slack_facts,
+    ("production", "ongoing_samples_by_staff"): _ongoing_samples_facts,
 }
 
 

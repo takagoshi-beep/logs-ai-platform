@@ -269,11 +269,42 @@ class SlackProvider:
         )
 
 
+class ProductionProvider:
+    """生産管理チームのスプレッドシート由来データ（production_samples/
+    production_mass）。Logsys本体（sales/customers等）とは別データソース
+    のため、LogsysProviderとは別のProviderとして扱う（docs/architecture.md
+    14.16の「別テーブルとして同期し、クエリ時に結合する」方針と一貫させる）。
+    """
+
+    name = "production"
+
+    def fetch(self, dataset: str, params: dict[str, Any]) -> dict[str, Any]:
+        from services.production_data import get_ongoing_samples_by_staff, list_sample_staff_names
+
+        if dataset == "sample_staff_master":
+            names = list_sample_staff_names()
+            return _evidence(
+                self.name, dataset, "ok",
+                f"サンプル対応の生産担当 {len(names)}名を取得（名寄せ用）",
+                [{"生産担当": n} for n in names],
+            )
+        if dataset == "ongoing_samples_by_staff":
+            staff_name = params.get("staff_name", "")
+            rows = get_ongoing_samples_by_staff(staff_name)
+            return _evidence(
+                self.name, dataset, "ok",
+                f"{staff_name}が対応中のサンプル {len(rows)}件を取得",
+                rows,
+            )
+        return _evidence(self.name, dataset, "unavailable", f"未対応のデータセット: {dataset}")
+
+
 _PROVIDERS: dict[str, Any] = {
     "logsys": LogsysProvider(),
     "gmail": GmailProvider(),
     "project_sheet": ProjectSheetProvider(),
     "slack": SlackProvider(),
+    "production": ProductionProvider(),
 }
 
 

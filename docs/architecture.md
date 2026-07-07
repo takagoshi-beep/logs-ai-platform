@@ -1704,6 +1704,59 @@ a fake connection/cursor — no live Supabase in this environment) plus
 one new `test_router.py` test verifying the `"production"` key's
 end-to-end shape.
 
+## 14.19 New fixed pattern Q6: "which samples is [staff] handling?"
+via `chat`/`推論エンジン` (2026-07-06)
+
+Noritsugu wanted `production_samples` (14.16) made useful from chat,
+scoped down to a realistic use case after checking real fill rates
+first. Confirmed with real data before building anything: `ETD`/`ETA`/
+`納品日`/`検品from/to`/`pick-up` are ~99% blank in `production_samples`
+— the production team simply doesn't use this sheet to track sample
+shipping timelines, so "when will it arrive" genuinely cannot be
+answered from this data (not a gap in our implementation). What *is*
+usable: `商品名`/`見積No` (72.7% filled), `仕入先名`/`回答者`/`依頼元`
+(~47-48%), and `通知状況` — which turned out to have exactly two real
+values (blank, or `通知完了`), giving a clean "ongoing vs done" signal.
+Noritsugu confirmed `回答者` (the person handling supplier
+back-and-forth) is what he means by "生産担当" for this sheet — there's
+no literal `生産担当` column here (that's `production_mass`-only).
+
+**New Q6** (`_q6_ongoing_samples_by_staff` in `reasoning_pipeline.py`),
+triggered by `"サンプル"` + a progress-related keyword
+(進行中/対応中/進んで/オンゴーイング/何件), inserted before the Q5
+fallback in `_reason_impl`'s dispatch chain. Matches a real staff name
+against the question exactly like Q5 matches customer names — fetches
+distinct `回答者` values via a new `ProductionProvider("production")`
+(`sample_staff_master` dataset) and checks for a substring match, not a
+fixed/hardcoded staff list.
+
+**New in `production_data.py`**: `list_sample_staff_names()` and
+`get_ongoing_samples_by_staff()` — the latter filters
+`WHERE "通知状況" IS NULL OR "通知状況" = ''` and deliberately does
+**not** select any ETD/ETA/delivery-date columns, since the docstring
+explains why that data isn't trustworthy. Q6's own `unknown` field
+states this limitation explicitly in the reasoning payload rather than
+silently returning nulls, so a person asking "いつ届くか" gets an
+honest "can't answer that" rather than a confidently blank date.
+
+**New in `evidence_interpreter.py`**: `_ongoing_samples_facts()`
+groups results by `supplier_name` and reports a per-supplier count
+breakdown (e.g. "対応中のサンプル依頼は合計3件 / 仕入先別内訳: A社:
+2件、B社: 1件") — directly answering the "grouped by supplier" framing
+Noritsugu asked for.
+
+14 new tests (`test_production_data.py`: 4 new; `test_reasoning_pipeline.py`:
+3 new) verify: staff-name matching + supplier-count breakdown end-to-end,
+honest fallback for an unrecognized name, and that Q6's new keyword
+trigger doesn't interfere with Q1-Q5's existing routing. One test-writing
+gotcha: `test_reasoning_pipeline.py`'s autouse fixture stubs
+`fetch_required_data` to `[]` for every test in that file (isolating
+routing-logic tests from Supabase) — the one Q6 test that needed the
+*real* evidence-fetch path (to verify `ProductionProvider` end-to-end)
+had to explicitly restore the real `fetch_required_data` via
+`monkeypatch.setattr`, overriding the file-wide fixture for just that
+test.
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.

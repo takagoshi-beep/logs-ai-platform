@@ -121,3 +121,44 @@ def test_reason_public_entrypoint_attaches_trace_id_and_registers_execution():
     assert len(executions) == 1
     assert executions[0].inputs["question"] == "聞いたことのない会社の状況を教えて"
     assert executions[0].status.value == "completed"
+
+
+def test_q6_routes_on_matched_staff_name_and_returns_supplier_breakdown(monkeypatch):
+    import services.production_data as production_data
+    from services.data_providers import fetch_required_data as real_fetch_required_data
+
+    # このテストは ProductionProvider 経由の実データ取得ロジックそのものを
+    # 検証したいので、ファイル冒頭の autouse フィクスチャが固定した
+    # rp.fetch_required_data（常に空リストを返す）を、本物の実装に戻す。
+    monkeypatch.setattr(rp, "fetch_required_data", real_fetch_required_data)
+    monkeypatch.setattr(production_data, "list_sample_staff_names", lambda: ["林", "森山"])
+    monkeypatch.setattr(
+        production_data, "get_ongoing_samples_by_staff",
+        lambda staff_name: [
+            {"supplier_name": "A社", "product_name": "商品1", "quote_no": "Q1", "request_content": None, "answered_date": None},
+            {"supplier_name": "A社", "product_name": "商品2", "quote_no": "Q2", "request_content": None, "answered_date": None},
+            {"supplier_name": "B社", "product_name": "商品3", "quote_no": "Q3", "request_content": None, "answered_date": None},
+        ],
+    )
+
+    result = rp._reason_impl("林さんが対応中のサンプルは何件ありますか")
+    assert result["intent"]["category"] == "ProductionLookup"
+    assert result["meaning"]["items"]["matched_staff"] == "林"
+    facts = result["evidence"][0]["facts"]
+    assert "対応中のサンプル依頼は合計3件" in facts
+    assert "A社: 2件" in facts[1]
+
+
+def test_q6_falls_back_honestly_when_staff_name_not_found(monkeypatch):
+    import services.production_data as production_data
+    monkeypatch.setattr(production_data, "list_sample_staff_names", lambda: ["林", "森山"])
+
+    result = rp._reason_impl("鈴木さんが対応中のサンプルは何件ありますか")
+    assert result["intent"]["category"] == "Unclassified"
+    assert result["decision_gate"]["verdict"] == "回答不可"
+
+
+def test_q6_does_not_interfere_with_other_fixed_patterns(monkeypatch):
+    monkeypatch.setattr(rp, "fetch_required_data", lambda required_data: [])
+    result = rp._reason_impl("今月のOEM事業の粗利を教えて")
+    assert result["intent"]["category"] == "Analysis"

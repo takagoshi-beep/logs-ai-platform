@@ -104,6 +104,77 @@ def _fallback() -> dict[str, Any]:
     }
 
 
+def _q6_ongoing_samples_by_staff(message: str) -> dict[str, Any]:
+    """生産担当（サンプル依頼の回答者）名からの、対応中サンプル照会。
+
+    Q5の顧客名マッチングと同じ設計: 質問文と実在の生産担当名を突き合わせ、
+    一致すれば production_samples を実データで検索する。
+
+    2026-07-06 に確認済みの制約（正直に対象外とする）: 「いつ届くか」に
+    あたるETD/ETA/納品日は実データの99%が空欄で信頼できないため、この
+    関数は「対応中かどうか（通知状況が空欄）」と「仕入先・商品」までしか
+    扱わない。到着予定日を尋ねられても答えられない — 生産管理チームが
+    その項目を運用していないという実態を、曖昧にせずそのまま伝える。
+    """
+    from services.data_providers import ProductionProvider
+
+    provider = ProductionProvider()
+    staff_result = provider.fetch("sample_staff_master", {})
+    staff_names = [r.get("生産担当", "") for r in staff_result.get("records", [])]
+
+    matched_staff: str | None = None
+    for name in staff_names:
+        if name and name in message:
+            matched_staff = name
+            break
+
+    if not matched_staff:
+        return _fallback()
+
+    return {
+        "intent": {"type": "サンプル対応状況照会", "category": "ProductionLookup", "confidence": 0.7},
+        "meaning": {
+            "confidence": 0.7,
+            "items": {"matched_staff": matched_staff, "lookup_type": "生産担当名によるキーワード検索"},
+        },
+        "hypothesis": [
+            {
+                "statement": f"質問文に含まれる生産担当名「{matched_staff}」で、対応中（通知未完了）のサンプル依頼を検索すれば回答できる",
+                "confidence": 0.7,
+            },
+        ],
+        "knowledge_used": [],
+        "decision_gate": {
+            "verdict": "データ取得後に判定",
+            "reason": "対応中サンプルの件数に応じて、回答の作り方が変わる",
+            "proceed_conditions": ["検索結果が0件以上であること"],
+            "confidence": 0.7,
+        },
+        "required_data": [
+            {
+                "priority": 1,
+                "item": f"{matched_staff}が対応中のサンプル検索",
+                "provider": "production",
+                "dataset": "ongoing_samples_by_staff",
+                "params": {"staff_name": matched_staff},
+            },
+        ],
+        "unknown": [
+            "サンプルの到着予定日（ETD/ETA/納品日）は生産管理チームのシート上ほとんど未入力のため回答できない",
+        ],
+        "assumption": [
+            {
+                "statement": "「通知状況」が空欄のサンプルを「対応中（オンゴーイング）」とみなす（「通知完了」以外は全て対応中と仮定）",
+                "confidence": 0.7,
+            },
+        ],
+        "plan": [
+            {"stage": "情報取得", "action": f"生産担当「{matched_staff}」でproduction_samplesを検索する（通知状況が空欄のもの）"},
+            {"stage": "回答", "action": "仕入先ごとの件数と、代表的な商品名を回答する"},
+        ],
+    }
+
+
 def _q5_project_lookup(message: str) -> dict[str, Any]:
     """案件名・顧客名からの案件状況照会（キーワード検索）。
 
@@ -688,6 +759,8 @@ def _reason_impl(question: str, trace_id: str = "") -> dict[str, Any]:
         payload = _q3_priority_projects()
     elif "売上" in q and "顧客" in q and ("一番" in q or "最大" in q or "首位" in q):
         payload = _q4_top_customer_sales()
+    elif "サンプル" in q and any(k in q for k in ("進行中", "対応中", "進んで", "オンゴーイング", "何件")):
+        payload = _q6_ongoing_samples_by_staff(q)
     else:
         payload = _q5_project_lookup(q)
 

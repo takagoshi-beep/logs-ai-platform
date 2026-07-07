@@ -126,3 +126,40 @@ def test_search_production_samples_maps_columns_correctly(monkeypatch):
 
 def test_search_production_samples_returns_empty_for_blank_keyword():
     assert production_data.search_production_samples("") == []
+
+
+def test_list_sample_staff_names_returns_distinct_names(monkeypatch):
+    rows = [("林",), ("森山",), ("林",)]  # DBのDISTINCTを模した重複なしの想定だが、防御的に確認
+    fake_conn = _FakeConnection(rows)
+    monkeypatch.setattr(production_data, "get_connection", lambda: fake_conn)
+
+    result = production_data.list_sample_staff_names()
+    assert result == ["林", "森山", "林"]  # SQL側のDISTINCTを信頼し、Python側では追加のdedupeをしない
+
+
+def test_list_sample_staff_names_skips_blank_values(monkeypatch):
+    fake_conn = _FakeConnection([("林",), (None,), ("",)])
+    monkeypatch.setattr(production_data, "get_connection", lambda: fake_conn)
+
+    result = production_data.list_sample_staff_names()
+    assert result == ["林"]
+
+
+def test_get_ongoing_samples_by_staff_maps_columns_correctly(monkeypatch):
+    row = ("A社", "商品1", "見積No-1", "2nd見積もり", None)
+    fake_conn = _FakeConnection([row])
+    monkeypatch.setattr(production_data, "get_connection", lambda: fake_conn)
+
+    result = production_data.get_ongoing_samples_by_staff("林")
+    assert result == [{
+        "supplier_name": "A社",
+        "product_name": "商品1",
+        "quote_no": "見積No-1",
+        "request_content": "2nd見積もり",
+        "answered_date": None,
+    }]
+
+
+def test_get_ongoing_samples_by_staff_returns_empty_for_blank_staff_name():
+    assert production_data.get_ongoing_samples_by_staff("") == []
+    assert production_data.get_ongoing_samples_by_staff(None) == []

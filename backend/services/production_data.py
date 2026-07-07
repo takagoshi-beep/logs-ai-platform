@@ -114,3 +114,64 @@ def search_production_samples(keyword: str, limit: int = 20) -> list[dict[str, A
         {_SAMPLE_COLUMNS[k]: v for k, v in zip(source_keys, row)}
         for row in rows
     ]
+
+
+def list_sample_staff_names() -> list[str]:
+    """production_samples の「回答者」（＝生産担当。仕入先とのやり取りを
+    担当する人）の実在する名前一覧を返す。質問文にこの中の名前が含まれて
+    いるかどうかの突き合わせに使う（Q5の顧客名マッチングと同じ設計）。
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                'SELECT DISTINCT "回答者" FROM production_samples '
+                'WHERE "回答者" IS NOT NULL AND "回答者" != \'\''
+            )
+            rows = cur.fetchall()
+    except Exception as e:
+        print(f"Error querying production_samples staff names: {e}")
+        return []
+    finally:
+        conn.close()
+    return [r[0] for r in rows if r[0]]
+
+
+def get_ongoing_samples_by_staff(staff_name: str) -> list[dict[str, Any]]:
+    """指定した生産担当（回答者）が対応中（＝通知状況が「通知完了」以外）の
+    サンプル依頼を全件返す。
+
+    「通知状況」は実データ上、空欄／「通知完了」の2値のみ（2026-07-06 時点
+    で確認済み）— 空欄を「まだ対応中」とみなす。届く予定日（ETD/ETA等）は
+    実データの99%が空欄で信頼できないため、この関数では扱わない（意図的に
+    範囲外。docs/architecture.md 参照）。
+    """
+    if not staff_name:
+        return []
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                '''SELECT "仕入先名", "商品名", "見積No", "依頼内容", "回答日"
+                   FROM production_samples
+                   WHERE "回答者" = %s
+                     AND ("通知状況" IS NULL OR "通知状況" = '')''',
+                (staff_name,),
+            )
+            rows = cur.fetchall()
+    except Exception as e:
+        print(f"Error querying ongoing samples by staff: {e}")
+        return []
+    finally:
+        conn.close()
+
+    return [
+        {
+            "supplier_name": r[0],
+            "product_name": r[1],
+            "quote_no": r[2],
+            "request_content": r[3],
+            "answered_date": r[4],
+        }
+        for r in rows
+    ]
