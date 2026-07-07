@@ -24,6 +24,8 @@ TOOLS: list[dict[str, Any]] = [
             "既に適用済みなので、取得した行をそのまま合計してよい。"
             "件数が多くなりやすいため、可能な限りperiod_start/period_endで"
             "期間を絞り込んで呼び出すこと（「今月」なら今月の初日〜末日を指定する）。"
+            "取得した行には「事業分類」という数値コード列が含まれるが、"
+            "その意味を推測してはいけない。get_code_masterで実際の意味を確認すること。"
         ),
         "input_schema": {
             "type": "object",
@@ -64,6 +66,17 @@ TOOLS: list[dict[str, Any]] = [
                 "keyword": {"type": "string", "description": "顧客名の部分一致キーワード"},
             },
         },
+    },
+    {
+        "name": "get_code_master",
+        "description": (
+            "各テーブルの数値コード（事業分類、ステータス、決済方法、諸掛区分ID等）が"
+            "実際に何を意味するかを確認する、コードマスタの全件を取得する。"
+            "数値コードの意味を一般常識や推測で判断してはいけない。"
+            "「事業分類=1」「ステータス=2」のような数値コードが出てきたら、"
+            "回答する前に必ずこのツールで実際の意味を確認すること。"
+        ),
+        "input_schema": {"type": "object", "properties": {}},
     },
     {
         "name": "get_product_master",
@@ -188,6 +201,8 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
             result = _PROVIDERS["logsys"].fetch("customer_master", tool_input)
         elif tool_name == "get_product_master":
             result = _PROVIDERS["logsys"].fetch("product_master", tool_input)
+        elif tool_name == "get_code_master":
+            result = _PROVIDERS["logsys"].fetch("code_master", tool_input)
         elif tool_name == "get_cancelled_sales":
             result = _PROVIDERS["logsys"].fetch("cancelled_sales", tool_input)
         elif tool_name == "get_returns":

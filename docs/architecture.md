@@ -1948,6 +1948,49 @@ treat 200 rows as the whole answer.
 test in `test_chat_agent.py` for the now-dynamic system prompt. 224
 total passing.
 
+### 14.21.2 Real bug found via the same first browser test: Claude
+guessed at business-code meanings instead of looking them up
+(2026-07-06, same day)
+
+Same first real end-to-end test as 14.21.1 (asking about OEM gross
+profit), a second, independent problem surfaced once the token-limit
+bug was fixed and a real answer came back: Claude's response confidently
+stated `事業分類=2 → OEM事業またはODM事業` and `事業分類=3 → その他
+（送料、加工費など）` — both **wrong**. The real, `code_master`-verified
+mapping (already known and correctly hardcoded into `reasoning_pipeline.py`'s
+Q1, see `_project_classification`'s own comment) is `1=OEM,
+2=商品仕入れ（海外）, 3=商品仕入れ（国内）`. Claude got `1=OEM` right by
+reasonable guess, then fabricated plausible-sounding but incorrect
+meanings for 2 and 3, presented with the same confidence as the correct
+one — exactly the "confidently wrong, indistinguishable from correct"
+failure mode this whole session has been fighting (14.17's fictional
+Gmail/Slack evidence, mock-data.ts throughout). Root cause: Q1 has this
+mapping baked directly into its code (verified once, hardcoded), but
+`tool_registry.py`'s 10 tools gave Claude no way to look up what a
+numeric code field actually means — so it filled the gap with general
+knowledge instead of real data, same class of problem as 14.21.1 but
+about business-rule correctness rather than token limits.
+
+Fixed the same way as everywhere else this session: give Claude the
+means to check, don't ask it to guess. New `LogsysProvider._code_master()` /
+`get_code_master` tool returns `code_master`'s real rows via
+`SELECT *` — deliberately **not** hardcoding assumed column names,
+since the actual column names come straight from the "コード" tab in
+the source Excel file (via `logsys-chat`'s `sync.py`), and this
+development environment has no way to verify them without live
+Supabase access. Guessing column names here would have repeated
+exactly the mistake being fixed. `code_master` is a small reference
+table, so returning it whole (no `period_start`/`keyword` filtering,
+no interaction with 14.21.1's `_cap_records` truncation in practice) is
+safe. `get_sales_lines`'s own tool description and the system prompt
+were both updated to explicitly instruct Claude to check
+`get_code_master` before interpreting any numeric code field (事業分類/
+ステータス/決済方法/etc.), naming this exact incident as the reason.
+
+2 new tests in `test_tool_registry.py` (the tool is registered;
+dispatch returns whatever columns the fake data has, without the test
+or the code assuming any particular column names). 226 total passing.
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.

@@ -151,6 +151,28 @@ class LogsysProvider:
         rows = self._query('SELECT "LOGS_CODE", "商品名", "商品分類" FROM products')
         return _evidence(self.name, "product_master", "ok", f"商品マスタ {len(rows)}件を取得", rows)
 
+    def _code_master(self, params: dict[str, Any]) -> dict[str, Any]:
+        """code_masterテーブルの中身を、列名を決め打ちせず全て取得する。
+
+        2026-07-06に発見: chat_agent（Function Calling）が「事業分類」の
+        意味を code_master で確認せず一般常識で推測し、実際とは異なる
+        誤った対応（2=OEM事業またはODM事業 等、正しくは2=商品仕入れ海外）
+        を回答したことがあった。code_master テーブルの実際の列名は、
+        元のExcelシート（logsys-chatリポジトリのsync.pyが読む「コード」
+        タブ）の見出しをそのまま使っており、この開発環境からは正確な
+        列名が分からない — 列名を決め打ちして再度誤った推測をするより、
+        `SELECT *` で実際の列名・値をそのまま返し、Claude自身に読み取ら
+        せる方が安全（sync.pyの列名クレンジング処理と同じ理由で、＃や
+        全角記号を含む列名になっている可能性があるため）。件数が少ない
+        参照用マスタテーブルという性質上、全件取得しても問題にならない。
+        """
+        rows = self._query("SELECT * FROM code_master")
+        return _evidence(
+            self.name, "code_master", "ok",
+            f"コードマスタ {len(rows)}件を取得（各テーブルの数値コードの意味を確認する用途）",
+            rows,
+        )
+
     def _project_classification(self, params: dict[str, Any]) -> dict[str, Any]:
         # 事業分類のコード対応は code_master(BUSINESS_TYPE)で確認済み:
         # 1=OEM, 2=商品仕入れ（海外）, 3=商品仕入れ（国内）

@@ -21,6 +21,33 @@ def test_all_tool_schemas_have_required_fields():
         assert tool["input_schema"]["type"] == "object"
 
 
+def test_get_code_master_tool_is_registered():
+    names = [t["name"] for t in tool_registry.TOOLS]
+    assert "get_code_master" in names
+
+
+def test_execute_tool_dispatches_get_code_master_without_assuming_column_names(monkeypatch):
+    """code_masterの実際の列名はこの開発環境からは分からないため、
+    列名を決め打ちせず SELECT * でそのまま返す設計であることを確認する。
+    どんな列名の組み合わせが来ても、そのままrecordsに反映されればよい。"""
+    monkeypatch.setattr(
+        data_providers.LogsysProvider, "_code_master",
+        lambda self, params: {
+            "provider": "logsys", "dataset": "code_master", "status": "ok",
+            "summary": "コードマスタ 3件を取得",
+            "records": [
+                {"テーブル名": "sales", "コード値": "1", "コード名": "OEM"},
+                {"テーブル名": "sales", "コード値": "2", "コード名": "商品仕入れ（海外）"},
+                {"テーブル名": "sales", "コード値": "3", "コード名": "商品仕入れ（国内）"},
+            ],
+        },
+    )
+    result = json.loads(tool_registry.execute_tool("get_code_master", {}))
+    assert result["status"] == "ok"
+    assert len(result["records"]) == 3
+    assert result["records"][1]["コード名"] == "商品仕入れ（海外）"
+
+
 def test_execute_tool_dispatches_to_logsys_provider(monkeypatch):
     monkeypatch.setattr(
         data_providers.LogsysProvider, "_customer_master",
