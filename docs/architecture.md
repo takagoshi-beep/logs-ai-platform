@@ -1991,6 +1991,25 @@ were both updated to explicitly instruct Claude to check
 dispatch returns whatever columns the fake data has, without the test
 or the code assuming any particular column names). 226 total passing.
 
+### 14.21.3 `.gitignore` gap: `conversations.jsonl` was being committed
+(2026-07-06, same day)
+
+Noticed by Noritsugu via `git status` right as this session was
+wrapping up: `backend/data/conversations.jsonl` (14.21's new
+session-history file, containing real chat content from live testing —
+actual sales figures, OEM discussions) had been committed in 14.21's
+own commit. Every *other* runtime data file this session created
+(`events.jsonl`, `traces.jsonl`, `capability_executions.jsonl`,
+`governance_approvals.jsonl`, `governance_audit.jsonl`,
+`document_formats.jsonl`, `learning/`) was correctly gitignored the
+same day it was introduced — `conversations.jsonl` was simply missed
+when 14.21 was built. Added to `.gitignore` now. Noritsugu should also
+run `git rm --cached backend/data/conversations.jsonl` locally so
+future edits to that file stop being tracked — the content already
+pushed in 14.21's commit remains in git history regardless (rewriting
+history to remove it is a separate, more invasive step, not done
+here).
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.
