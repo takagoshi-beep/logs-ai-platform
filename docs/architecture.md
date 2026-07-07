@@ -1757,6 +1757,65 @@ had to explicitly restore the real `fetch_required_data` via
 `monkeypatch.setattr`, overriding the file-wide fixture for just that
 test.
 
+## 14.20 `chat`/`推論エンジン`'s "unknown" observations feed the
+Learning Domain (2026-07-06)
+
+Second remaining item from the post-14.15 backlog. Until now, Learning
+candidates only came from one source: human corrections to AI-detected
+document-format field mappings (14.10/14.14). `chat`/`推論エンジン` —
+the most-used features all session — never fed anything into Learning,
+even though every Q-function's `unknown` field already contains exactly
+the kind of signal Learning is meant to observe (Q6's "サンプル到着日は
+生産管理チームのシート上ほとんど未入力のため回答できない", or the
+final fallback's "質問の意図を認識できませんでした...").
+
+**New `_record_unknown_as_learning()`** in `reasoning_pipeline.py`,
+called from `reason()` (the public entrypoint) right after `_reason_impl()`
+returns. Uses `source_type=AI_OBSERVATION` — deliberately different
+from document_formats' `REPEATED_CORRECTION` — since this is the AI
+noticing its own limitation, not a human correcting anything. Per
+`classifier.py`'s existing rules, `AI_OBSERVATION` classifies as
+OPERATIONAL by default; combined with `scope_type=CAPABILITY` (scoped
+to `business_question_reasoning`, not `GLOBAL`, which would force
+GOVERNED regardless), this means each observation is recorded and
+**auto-applied immediately, no Governance approval needed** — matching
+the judgment that merely recording "here's a gap we found" doesn't
+change any system behavior and doesn't warrant human review overhead,
+unlike learning that would actually change a detection heuristic.
+
+**Deduplication decision, made deliberately non-obvious:** dedupe key
+is the **`unknown` text itself**, not the triggering question. Two
+different questions that hit the *same* underlying limitation (e.g.
+"聞いたことのない会社の状況を教えて" vs "別の知らない会社の状況を教えて"
+— different text, identical fallback message) produce only **one**
+Learning candidate, not two — recording that a specific gap exists
+doesn't need repeating every time it's re-observed. Verified end-to-end:
+two distinct questions triggering the same fallback message → 1
+candidate; a question triggering Q6's distinct sample-ETD limitation →
+a separate, second candidate (different `unknown` text = different
+gap). This trades away visibility into *which* varied phrasings people
+actually use (real signal for the eventual Function Calling work, item
+3 on the backlog) for a Learning Center that doesn't fill up with
+near-duplicate noise — a real, acknowledged tradeoff, not an oversight.
+
+Wrapped in try/except exactly like document_formats' equivalent
+integration: a Learning-recording bug can never block the actual
+chat/reasoning answer a person is waiting for (verified via a dedicated
+test that breaks `learning_service.create_candidate` and confirms
+`reason()` still returns normally).
+
+Verified live: `GET /api/learning/center`'s `operational` array
+correctly shows two `source_type: "ai_observation"` entries after
+exercising both the fallback path and Q6, both already `status: "applied"`
+(no approval-queue entry — confirming the OPERATIONAL auto-apply path,
+distinct from 14.10's GOVERNED document-format-correction flow which
+does require approval).
+
+4 new tests in `test_reasoning_pipeline.py` (15 total in that file
+now): the happy path, no-duplicate-for-identical-unknown, separate
+candidates for genuinely distinct unknowns, and the failure-isolation
+guarantee.
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.

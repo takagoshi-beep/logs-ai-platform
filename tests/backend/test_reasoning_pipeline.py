@@ -162,3 +162,62 @@ def test_q6_does_not_interfere_with_other_fixed_patterns(monkeypatch):
     monkeypatch.setattr(rp, "fetch_required_data", lambda required_data: [])
     result = rp._reason_impl("今月のOEM事業の粗利を教えて")
     assert result["intent"]["category"] == "Analysis"
+
+
+def test_unknown_from_reason_creates_an_operational_learning_candidate(monkeypatch):
+    from services import data_providers
+    from learning.repository import get_candidate_repository
+
+    monkeypatch.setattr(data_providers.LogsysProvider, "_customer_master", lambda self, params: {"records": []})
+
+    rp.reason("聞いたことのない会社の状況を教えて")
+
+    candidates = get_candidate_repository().list()
+    assert len(candidates) == 1
+    assert candidates[0].source_type.value == "ai_observation"
+    assert candidates[0].learning_type.value == "operational"
+    assert candidates[0].status.value == "applied"  # 承認不要で自動適用される
+
+
+def test_repeated_identical_unknown_does_not_create_duplicate_candidates(monkeypatch):
+    """同じunknown（=同じ限界）を引き起こす質問が何度来ても、
+    候補は1件しか作られない — 質問内容が違っても、unknownのテキストが
+    同じなら重複とみなす設計（2026-07-06）。"""
+    from services import data_providers
+    from learning.repository import get_candidate_repository
+
+    monkeypatch.setattr(data_providers.LogsysProvider, "_customer_master", lambda self, params: {"records": []})
+
+    rp.reason("聞いたことのない会社の状況を教えて")
+    rp.reason("別の知らない会社の状況を教えて")  # 違う質問文だが同じunknownメッセージ
+
+    candidates = get_candidate_repository().list()
+    assert len(candidates) == 1
+
+
+def test_distinct_unknown_messages_create_separate_candidates(monkeypatch):
+    from services import data_providers, production_data
+    from learning.repository import get_candidate_repository
+
+    monkeypatch.setattr(data_providers.LogsysProvider, "_customer_master", lambda self, params: {"records": []})
+    monkeypatch.setattr(production_data, "list_sample_staff_names", lambda: ["林"])
+    monkeypatch.setattr(production_data, "get_ongoing_samples_by_staff", lambda staff_name: [])
+
+    rp.reason("聞いたことのない会社の状況を教えて")  # _fallback()のunknown
+    rp.reason("林さんが対応中のサンプルは何件ありますか")  # Q6のunknown（内容が異なる）
+
+    candidates = get_candidate_repository().list()
+    assert len(candidates) == 2
+
+
+def test_learning_recording_failure_never_blocks_the_actual_answer(monkeypatch):
+    """Learning記録処理自体が壊れていても、本来の回答は必ず返る
+    （ベストエフォート設計）。"""
+    from services import data_providers
+    import learning.service as learning_service
+
+    monkeypatch.setattr(data_providers.LogsysProvider, "_customer_master", lambda self, params: {"records": []})
+    monkeypatch.setattr(learning_service, "create_candidate", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    result = rp.reason("聞いたことのない会社の状況を教えて")
+    assert result["intent"]["category"] == "Unclassified"  # 回答自体は正常に返る

@@ -680,6 +680,67 @@ def _q4_top_customer_sales() -> dict[str, Any]:
     }
 
 
+def _record_unknown_as_learning(question: str, unknown_list: list[str]) -> None:
+    """`unknown`欄に記録された「AIが答えられなかったこと」を、Learning
+    Domainの観測(AI_OBSERVATION)として記録する(2026-07-06)。
+
+    人間による修正(REPEATED_CORRECTION、document_formats.pyの方で先に
+    実装済み)とは異なり、これは「AIが自分自身の限界に気づいた」という
+    観測であるため source_type=AI_OBSERVATION を使う。classifier.py の
+    既定ルールにより、これは自動的にOPERATIONAL(承認不要で即記録)に
+    分類される — 「まだ分からないことがある」と記録すること自体は
+    システムの挙動を変えないため、Governance承認は不要という判断。
+
+    重複防止の設計判断: 「同じ質問が2回来たら2回記録しない」ではなく、
+    「同じunknownの内容（=同じ限界）を2回記録しない」を基準にしている。
+    例えばQ6の「サンプル到着予定日は分からない」は、質問者が誰について
+    尋ねても同じ限界であり、質問ごとに新しい候補を作ると重複だらけに
+    なる。一方、_fallback()の汎用メッセージのように既に記録済みの
+    unknownは、以後何度発生しても新規候補を作らない（既知の制約として
+    1回記録されれば十分という判断）。
+
+    失敗しても本来の回答自体はブロックしない（ベストエフォート）。
+    """
+    if not unknown_list:
+        return
+    try:
+        from learning import service as learning_service
+        from learning.models import LearningScopeType, LearningSourceType
+        from learning.repository import get_candidate_repository
+
+        repo = get_candidate_repository()
+        existing_titles = {c.title for c in repo.list()}
+
+        for unknown_text in unknown_list:
+            title = f"AIが観測した未回答事項: {unknown_text[:60]}"
+            if title in existing_titles:
+                continue  # 既知の制約として記録済み
+
+            candidate = learning_service.create_candidate(
+                title=title,
+                description=(
+                    f"質問「{question}」への回答中に、AIが以下を認識した:\n{unknown_text}"
+                ),
+                source_type=LearningSourceType.AI_OBSERVATION,
+                created_by="reasoning_pipeline",
+                confidence=0.6,
+                evidence=[{"question": question, "unknown": unknown_text}],
+                suggested_application=(
+                    "この制約が業務上重要であれば、データ収集方法の見直しや"
+                    "新しい固定質問パターンの追加を検討する"
+                ),
+            )
+            candidate = learning_service.classify_and_scope(
+                candidate,
+                requested_scope=LearningScopeType.CAPABILITY,
+                scope_id=REASONING_CAPABILITY.capability_id,
+            )
+            learning_service.apply_candidate(candidate)
+            existing_titles.add(title)
+    except Exception:
+        pass
+
+
 def reason(question: str) -> dict[str, Any]:
     """Public entrypoint for the reasoning pipeline.
 
@@ -712,6 +773,8 @@ def reason(question: str) -> dict[str, Any]:
         raise
 
     result["trace_id"] = trace_id
+
+    _record_unknown_as_learning(question, result.get("unknown", []))
 
     try:
         save_trace(trace_id, result)
