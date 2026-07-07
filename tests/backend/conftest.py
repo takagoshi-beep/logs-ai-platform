@@ -96,4 +96,10 @@ def _isolate_backend_storage(tmp_path, monkeypatch):
     monkeypatch.setattr(status_reporting, "EVENT_LOG_PATH", data_dir / "events.jsonl")
     monkeypatch.setattr(status_reporting, "_events", [])
 
+    # --- conversation_store.py ---
+    from services import conversation_store
+
+    monkeypatch.setattr(conversation_store, "DATA_DIR", data_dir)
+    monkeypatch.setattr(conversation_store, "CONVERSATION_LOG_PATH", data_dir / "conversations.jsonl")
+
     yield data_dir

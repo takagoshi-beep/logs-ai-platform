@@ -90,10 +90,10 @@ export async function getProjects(limit: number = 10) {
 /**
  * Ask a consultation question and get an evidence-backed answer
  */
-export async function consultQuestion(message: string) {
+export async function consultQuestion(message: string, sessionId?: string) {
   return apiCall("/api/chat", {
     method: "POST",
-    body: JSON.stringify({ user_id: "u-demo", role: "sales", message }),
+    body: JSON.stringify({ user_id: "u-demo", role: "sales", message, session_id: sessionId }),
   });
 }
 

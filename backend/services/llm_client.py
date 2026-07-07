@@ -89,6 +89,68 @@ def generate_text_with_web_search(
     return "\n".join(text_parts), sources
 
 
+def generate_with_tools(
+    messages: list[dict],
+    tools: list[dict],
+    tool_executor,
+    system: Optional[str] = None,
+    max_tokens: int = 1500,
+    max_rounds: int = 5,
+) -> tuple[str, list[dict]]:
+    """Multi-turn Claude tool-use loop (docs/architecture.md 14.21).
+
+    Repeatedly calls Claude; whenever it requests a tool call, runs
+    `tool_executor(tool_name, tool_input) -> str` and feeds the result
+    back as a `tool_result` block, until Claude returns a plain text
+    answer (`stop_reason != "tool_use"`) or `max_rounds` is reached
+    (safety cap against a runaway back-and-forth that never converges —
+    should not happen in practice, but must never hang indefinitely).
+
+    Returns `(final_text, tool_calls_made)` — the latter is
+    `[{"tool": name, "input": input}, ...]` in call order, so callers
+    can show what was actually looked up (transparency), not just trust
+    the final prose.
+    """
+    client = _get_client()
+    conversation = list(messages)
+    tool_calls_made: list[dict] = []
+    response = None
+
+    for _ in range(max_rounds):
+        kwargs: dict = {
+            "model": DEFAULT_MODEL,
+            "max_tokens": max_tokens,
+            "messages": conversation,
+            "tools": tools,
+        }
+        if system:
+            kwargs["system"] = system
+        response = client.messages.create(**kwargs)
+
+        if response.stop_reason != "tool_use":
+            text_parts = [b.text for b in response.content if getattr(b, "type", None) == "text"]
+            return "\n".join(text_parts), tool_calls_made
+
+        conversation.append({"role": "assistant", "content": response.content})
+        tool_results = []
+        for block in response.content:
+            if getattr(block, "type", None) == "tool_use":
+                tool_calls_made.append({"tool": block.name, "input": block.input})
+                output = tool_executor(block.name, block.input)
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": output,
+                })
+        conversation.append({"role": "user", "content": tool_results})
+
+    # max_rounds に達した場合: 最後の応答からテキスト部分だけを取り出す
+    # (ツール呼び出しが続いて収束しなかった場合の安全網)。
+    text_parts = [b.text for b in response.content if getattr(b, "type", None) == "text"] if response else []
+    fallback_text = "\n".join(text_parts) or "回答の生成中に処理上限に達しました。質問を分割して聞き直してください。"
+    return fallback_text, tool_calls_made
+
+
 _openai_client = None
 
 

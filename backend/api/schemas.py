@@ -11,6 +11,7 @@ class ChatRequest(BaseModel):
     role: str
     message: str
     workspace_id: str | None = None
+    session_id: str | None = None
 
 
 class ProposalDraftRequest(BaseModel):

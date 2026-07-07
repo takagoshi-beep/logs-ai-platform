@@ -108,14 +108,25 @@ def test_home_returns_kpis_and_recent_activity(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_chat_returns_conversational_shape(monkeypatch):
-    from services import reasoning_pipeline as rp
-    monkeypatch.setattr(rp, "fetch_required_data", lambda required_data: [])
+    from services import chat_agent
+    monkeypatch.setattr(chat_agent, "generate_with_tools", lambda **kwargs: ("今月のOEM事業の粗利は120万円です", []))
 
     response = _client().post("/api/chat", json={"user_id": "u", "role": "sales", "message": "今月のOEM事業の粗利を教えて"})
     assert response.status_code == 200
     body = response.json()
-    assert "ai_response" in body
-    assert body["trace_id"].startswith("reasoning-")
+    assert body["answer"] == "今月のOEM事業の粗利は120万円です"
+    assert "session_id" in body
+
+
+def test_chat_reuses_session_id_across_turns(monkeypatch):
+    from services import chat_agent
+    monkeypatch.setattr(chat_agent, "generate_with_tools", lambda **kwargs: ("2回目の回答", []))
+
+    response = _client().post("/api/chat", json={
+        "user_id": "u", "role": "sales", "message": "続きの質問", "session_id": "existing-session",
+    })
+    assert response.status_code == 200
+    assert response.json()["session_id"] == "existing-session"
 
 
 def test_reasoning_returns_full_pipeline_shape(monkeypatch):

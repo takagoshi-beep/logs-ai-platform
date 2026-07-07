@@ -1816,6 +1816,93 @@ now): the happy path, no-duplicate-for-identical-unknown, separate
 candidates for genuinely distinct unknowns, and the failure-isolation
 guarantee.
 
+## 14.21 `chat` becomes Function-Calling powered, with real
+conversation memory; `推論エンジン` deliberately left untouched
+(2026-07-06)
+
+The last of the three original remaining-work items, and the biggest —
+flagged from the start as needing a proper sit-down design rather than
+an incremental addition. Combined with a second, related gap found
+along the way: every `reason()` call was completely stateless (no
+`session_id`, no history — confirmed by inspection, not assumption:
+`ChatRequest` only ever had a bare `message` field, and `reason(question)`
+took nothing else). Noritsugu asked for both — real conversation memory
+and flexible, Claude-driven tool use — to be built together.
+
+**Scope decision, made explicit before writing any code:** `推論エンジン`
+(`reasoning_pipeline.py`'s Q1-Q6, `/api/reasoning`) is untouched. Its
+value is being fully deterministic and fully transparent (the 10-step
+Intent→...→Evidence breakdown) for verification — exactly why 14.13
+chose to keep both `chat` and `推論エンジン` rather than merge them.
+`chat` (`/api/chat`) becomes the flexible, evolving surface instead.
+
+**New pieces, each independently testable and each a thin layer over
+work already built this session — no data-access logic was rewritten:**
+
+- **`tool_registry.py`**: 10 Claude tool schemas mapping directly onto
+  `data_providers.py`'s existing `LogsysProvider`/`ProductionProvider`
+  `.fetch()` methods (sales/purchase lines, projects, customer/product
+  master, cancelled sales, returns, sample staff lookup + ongoing
+  samples, production_mass status). `execute_tool()` dispatches by name
+  and always returns a JSON string, even on failure (`status: "error"`)
+  — Claude sees the failure and can decide what to do next, rather than
+  the whole turn crashing. Found while testing: `LogsysProvider.fetch()`
+  already had its own internal exception handling (existing behavior,
+  not new) that converts failures to `status: "unavailable"` before
+  `execute_tool`'s own try/except ever sees them — the outer try/except
+  is a safety net for failures *outside* a provider's own fetch (verified
+  by triggering one directly against `production_data.get_production_mass_status`,
+  which is called directly rather than through a `Provider.fetch()`).
+- **`llm_client.generate_with_tools()`**: the actual multi-turn tool-use
+  loop — calls Claude, executes any requested tool(s) via the injected
+  `tool_executor`, feeds `tool_result` blocks back, repeats until Claude
+  returns plain text or `max_rounds` (default 5) is hit (safety cap
+  against a non-converging back-and-forth — should never trigger in
+  practice, verified with a fake client that always requests another
+  tool call, confirming the loop cannot hang indefinitely).
+- **`conversation_store.py`**: append-only JSONL keyed by `session_id`
+  (same convention as every other JSONL store in `backend/`), giving
+  `chat` — for the first time this session — actual turn-to-turn memory.
+- **`chat_agent.answer(question, session_id)`**: wires the three
+  together. Generates a new `session_id` if none given; loads that
+  session's prior history; calls `generate_with_tools()` with a system
+  prompt instructing Claude to always use tools rather than guess,
+  respect the standard sales/purchase filters tools already apply, and
+  answer honestly when a tool's own description says the data isn't
+  there (e.g. sample ETD). Persists both the question and answer back
+  to `conversation_store` afterward.
+
+**`/api/chat` now calls `chat_agent.answer()` instead of `reason()` +
+`to_chat_response()`.** `ChatRequest` gained `session_id: str | None`.
+`/api/reasoning` is completely unchanged (still calls `reason()`
+directly). The frontend `chat` page was rewritten as a genuine
+multi-turn conversation UI (message bubbles, a running `session_id`
+threaded through each request, a "使用したツール" line per answer,
+a "新しい会話を始める" reset) — the old single-shot
+"submit → structured cards" UI (`data_sources`/`judgment_reasoning`/
+`related_projects`/`open_questions`) no longer matches what this path
+actually produces (free-form text + a tool-call list, not a Decision
+Gate breakdown), and the mock-data.ts `pastConsultations` list it used
+for "past chat history" is gone too — real session continuity replaces
+it now that conversation memory genuinely exists.
+
+25 new tests across `test_llm_client.py` (5, the tool-use loop control
+flow with a fully faked Anthropic client — never a real, billed call),
+`test_conversation_store.py` (5), `test_tool_registry.py` (8), and
+`test_chat_agent.py` (6), plus 1 new `test_router.py` test for
+session-id threading through `/api/chat`. Verified live end-to-end
+(with `generate_with_tools` mocked): a first turn, a second turn on the
+same `session_id`, and confirmed `/api/reasoning`'s Q1 still works
+completely unaffected.
+
+**Deliberately not done:** `chat_agent`'s tool-driven answers don't
+feed into Learning the way `reason()`'s `unknown` field does (14.20) —
+that's a distinct shape (Claude's own tool-use reasoning vs. a
+structured `unknown` list) and would need separate design, left for
+later. `conversation_store` has no expiry/cleanup — sessions accumulate
+in `conversations.jsonl` indefinitely; acceptable for now given this
+session's data volumes, but a real concern for production scale.
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.

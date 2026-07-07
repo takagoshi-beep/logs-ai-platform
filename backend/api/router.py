@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
@@ -19,7 +17,8 @@ from services.trace_store import get_trace
 from services.knowledge_loader import load_documents
 from services.knowledge_registry import get_registry
 from services.project_service import ProjectService
-from services.reasoning_pipeline import reason as run_reasoning, to_chat_response
+from services.reasoning_pipeline import reason as run_reasoning
+from services import chat_agent
 from pathlib import Path
 
 router = APIRouter(prefix="/api", tags=["v0.1"])
@@ -38,14 +37,17 @@ def home() -> dict:
 
 @router.post("/chat")
 def chat(req: ChatRequest) -> dict:
-    """`/api/chat` is now a thin wrapper around `reason()` (real data),
-    reshaped for a conversational response via `to_chat_response`. It no
-    longer uses `mock_store.consult()`'s hardcoded demo dataset (Phase F,
-    2026-07-04) — see docs/architecture.md 13.6.
+    """`/api/chat` (docs/architecture.md 14.21): Function-Calling powered
+    conversation via `chat_agent.answer()` — Claude decides which real
+    tools to call (backed entirely by data already built and tested
+    this session), across a real multi-turn conversation tracked by
+    `session_id`. Replaces the earlier `reason()` + `to_chat_response()`
+    fixed-pattern wrapper for `/api/chat` specifically — `/api/reasoning`
+    below is intentionally left untouched, since its whole value is the
+    fully deterministic, fully transparent Q1-Q6 breakdown (14.13's
+    "keep both" decision).
     """
-    execution_id = f"ex-chat-{datetime.now(timezone.utc).strftime('%H%M%S')}"
-    result = run_reasoning(req.message)
-    return to_chat_response(execution_id, result)
+    return chat_agent.answer(req.message, req.session_id)
 
 
 @router.post("/reasoning")
