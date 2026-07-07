@@ -106,7 +106,7 @@ export default function LearningCenterPage() {
   }, []);
 
   async function handleReview(approvalId: string, decision: "APPROVED" | "REJECTED") {
-    await reviewLearningApproval(approvalId, decision, "ui-admin", `Reviewed via Learning Center (${decision})`);
+    await reviewLearningApproval(approvalId, decision, `Reviewed via Learning Center (${decision})`);
     load();
   }
 

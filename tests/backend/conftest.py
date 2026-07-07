@@ -103,3 +103,22 @@ def _isolate_backend_storage(tmp_path, monkeypatch):
     monkeypatch.setattr(conversation_store, "CONVERSATION_LOG_PATH", data_dir / "conversations.jsonl")
 
     yield data_dir
+
+
+@pytest.fixture(autouse=True)
+def _default_authenticated_session():
+    """既存のテストの大半は認証そのものを検証する意図ではなく、各機能の
+    ロジックを検証するためのものだったため、デフォルトでは「管理者として
+    ログイン済み」として扱う。認証・権限そのものを検証するテスト
+    （test_auth_router.py、および各ルーターの「管理者でなければ403」系の
+    テスト）は、このオーバーライドを明示的に解除して実施する。
+    """
+    from main import app
+    from api.auth_router import require_admin, require_login
+
+    fake_admin = {"email": "test-admin@example.com", "name": "Test Admin", "role": "admin"}
+    app.dependency_overrides[require_login] = lambda: fake_admin
+    app.dependency_overrides[require_admin] = lambda: fake_admin
+    yield
+    app.dependency_overrides.pop(require_login, None)
+    app.dependency_overrides.pop(require_admin, None)

@@ -21,6 +21,7 @@ async function apiCall<T = any>(
   try {
     const url = `${API_BASE}${endpoint}`;
     const response = await fetch(url, {
+      credentials: "include",
       headers: {
         "Content-Type": "application/json",
       },
@@ -160,6 +161,7 @@ export async function uploadDocumentFormat(name: string, file: File) {
   try {
     const response = await fetch(`${API_BASE}/document-formats`, {
       method: "POST",
+      credentials: "include",
       body: formData,
     });
     const data = await response.json();
@@ -215,19 +217,17 @@ export function getGeneratedDocumentUrl(outputId: string) {
  * structure inference). This calls the same endpoint that was previously
  * only reachable via `/governance/queue` outside the app — wiring it
  * into the UI lets a user complete the upload→approve→generate flow
- * without leaving the page. Note: this backend has no real
- * authorization check on `approverId` yet (see docs/architecture.md
- * 13.5) — anyone using the app can approve anything.
+ * without leaving the page. Requires admin role (14.22) — the approver
+ * identity comes from the server-side session, not this call.
  */
 export async function decideGovernance(
   approvalId: string,
   decision: "APPROVED" | "REJECTED",
-  approverId: string,
   reason: string
 ) {
   return apiCall(`/governance/${approvalId}/decide`, {
     method: "POST",
-    body: JSON.stringify({ decision, approver_id: approverId, reason }),
+    body: JSON.stringify({ decision, reason }),
   });
 }
 
@@ -292,44 +292,34 @@ export async function getLearningCenter() {
 export async function reviewLearningApproval(
   approvalId: string,
   decision: "APPROVED" | "REJECTED",
-  approverId: string,
   reason: string
 ) {
   return apiCall(`/api/learning/approval-queue/${approvalId}/review`, {
     method: "POST",
-    body: JSON.stringify({ decision, approver_id: approverId, reason }),
+    body: JSON.stringify({ decision, reason }),
   });
 }
 
 /**
- * Create a new OEM project
+ * Get current logged-in user (14.22)
  */
-export async function createProject(project: {
-  customer_name: string;
-  project_title: string;
-  po_number: string;
-  po_amount: string | number;
-  required_delivery_date: string;
-}) {
-  return apiCall("/api/projects", {
+export async function getCurrentUser() {
+  return apiCall("/api/auth/me");
+}
+
+/**
+ * Log in with a Google Identity Services ID token (14.22)
+ */
+export async function loginWithGoogle(credential: string) {
+  return apiCall("/api/auth/login", {
     method: "POST",
-    body: JSON.stringify(project),
+    body: JSON.stringify({ credential }),
   });
 }
 
 /**
- * Submit feedback on a suggested action for a project
+ * Log out (clears the session cookie) (14.22)
  */
-export async function projectFeedback(
-  projectId: string,
-  feedback: {
-    action_id: string;
-    feedback_text: string;
-    helpful: boolean;
-  }
-) {
-  return apiCall(`/api/projects/${projectId}/feedback`, {
-    method: "POST",
-    body: JSON.stringify(feedback),
-  });
+export async function logout() {
+  return apiCall("/api/auth/logout", { method: "POST" });
 }

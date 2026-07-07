@@ -180,7 +180,7 @@ export default function ProposalBuilderPage() {
       const reason =
         reviewReasons[governanceApprovalId] ||
         (decision === "APPROVED" ? "内容を確認し、問題なし" : "内容を確認し、却下");
-      const response = await decideGovernance(governanceApprovalId, decision, "u-demo", reason);
+      const response = await decideGovernance(governanceApprovalId, decision, reason);
       if (response.success === false) {
         throw new Error(response.error || "承認処理に失敗しました");
       }

@@ -13,9 +13,10 @@ exactly as they already were (now with durable JSONL persistence, see
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from api.auth_router import require_admin
 from learning.repository import (
     get_activity_feed,
     get_approval_queue,
@@ -45,12 +46,14 @@ def learning_center() -> dict:
 
 class ReviewRequest(BaseModel):
     decision: str  # "APPROVED" | "REJECTED"
-    approver_id: str
     reason: str
 
 
 @router.post("/approval-queue/{approval_id}/review")
-def review_approval(approval_id: str, request: ReviewRequest) -> dict:
+def review_approval(approval_id: str, request: ReviewRequest, user: dict = Depends(require_admin)) -> dict:
+    """承認・却下には管理者権限が必要（14.22）。承認者名はセッションの
+    検証済みメールアドレスを使う（governance_router.decide()と同じ理由）。
+    """
     entry = get_approval_queue().get(approval_id)
     if entry is None:
         raise HTTPException(status_code=404, detail=f"Approval queue entry {approval_id} not found")
@@ -67,7 +70,7 @@ def review_approval(approval_id: str, request: ReviewRequest) -> dict:
             candidate,
             approval_id=approval_id,
             decision=request.decision,
-            approver_id=request.approver_id,
+            approver_id=user["email"],
             reason=request.reason,
         )
     except ValueError as e:

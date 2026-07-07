@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from api.auth_router import require_admin
 from services import governance_store
 
 router = APIRouter(prefix="/governance", tags=["governance"])
@@ -18,7 +19,6 @@ router = APIRouter(prefix="/governance", tags=["governance"])
 
 class DecideRequest(BaseModel):
     decision: str  # "APPROVED" | "REJECTED"
-    approver_id: str
     reason: str
 
 
@@ -38,12 +38,16 @@ def get_approval(approval_id: str) -> dict:
 
 
 @router.post("/{approval_id}/decide")
-def decide(approval_id: str, request: DecideRequest) -> dict:
+def decide(approval_id: str, request: DecideRequest, user: dict = Depends(require_admin)) -> dict:
+    """承認・却下には管理者権限が必要（14.22）。承認者名は、リクエスト
+    本文の任意入力ではなく、セッションで検証済みのメールアドレスを使う
+    — なりすまし防止のため、クライアントから送られてきた値は信用しない。
+    """
     try:
         return governance_store.decide(
             approval_id=approval_id,
             decision=request.decision,
-            approver_id=request.approver_id,
+            approver_id=user["email"],
             reason=request.reason,
         )
     except ValueError as e:

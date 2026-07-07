@@ -64,14 +64,14 @@ def test_review_approval_moves_candidate_to_policy_memory():
 
     response = _client().post(
         f"/api/learning/approval-queue/{approval_id}/review",
-        json={"decision": "APPROVED", "approver_id": "u-demo", "reason": "問題なし"},
+        json={"decision": "APPROVED", "reason": "問題なし"},
     )
     assert response.status_code == 200
     assert response.json()["candidate"]["status"] == "approved"
 
     data = _client().get("/api/learning/center").json()
     assert len(data["policy_memory"]) == 1
-    assert data["policy_memory"][0]["approved_by"] == "u-demo"
+    assert data["policy_memory"][0]["approved_by"] == "test-admin@example.com"
     # approval_queue は履歴として全件を返す設計 — 承認済みも消えず、
     # ステータスが更新された状態で残り続ける。
     assert len(data["approval_queue"]) == 1

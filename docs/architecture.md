@@ -2010,6 +2010,108 @@ pushed in 14.21's commit remains in git history regardless (rewriting
 history to remove it is a separate, more invasive step, not done
 here).
 
+## 14.22 Authentication & authorization: Google Sign-In + two-tier
+roles (member/admin) — the last remaining backlog item (2026-07-06)
+
+Scope decided explicitly with Noritsugu before writing any code (three
+questions, three answers): (1) Google Sign-In using each person's real
+Gmail address, matched against the `staff` table synced from
+`logsys-chat` — not a separate password system; (2) two roles only,
+"一般" (member) and "管理者" (admin) — not the full Blueprint Chapter 11
+approval-level ladder; (3) no per-project access restriction (explicitly
+declined) — every logged-in staff member sees everything, the only
+gate is *whether* they're logged in at all, and whether they're an
+admin for approval actions specifically. Also explicitly chosen: (a)
+the *entire app* requires login — not just the approval buttons — so
+`chat`/`推論エンジン`/`資料作成` etc. are unusable without a valid
+staff Google account; (b) session-only cookies — closing the browser
+logs you out, no "remember me."
+
+**How login actually works.** Google Identity Services (the modern
+"Sign in with Google" button, not the older full OAuth
+authorization-code redirect flow) returns a signed ID token (JWT)
+directly to the frontend. The frontend sends that token to
+`POST /api/auth/login`; the backend verifies it via Google's own
+`google-auth` library (signature, issuer, expiry, and — critically —
+that the token was issued for *this app's* client ID, preventing a
+token from some other Google-integrated app being replayed here).
+Verification failure, or `email_verified: false`, is rejected outright.
+A verified email is then checked against `staff` — the actual gate
+against outsiders — and role is decided from an `ADMIN_EMAILS`
+environment variable (comma-separated). Session state (`{email, name,
+role}`) is stored via Starlette's built-in `SessionMiddleware` with
+`max_age=None` (a true HTTP session cookie — no `Max-Age`/`Expires`, so
+browsers discard it on close) and `same_site="lax"` — no new
+dependencies needed (`itsdangerous`, which backs `SessionMiddleware`,
+already ships with Starlette).
+
+**Same defensive-schema principle as `code_master` (14.21.2), applied
+again:** `is_valid_staff_email()` doesn't assume which column in
+`staff` holds the email address — that table's real column names come
+from the same source-Excel-driven pipeline as everything else
+(`logsys-chat`'s `sync.py`), unverifiable from this dev environment.
+`SELECT * FROM staff` and a case-insensitive scan across every value in
+every row, rather than guessing a column name and repeating the exact
+class of mistake found and fixed twice already this session.
+
+**Enforcement, not just UI hints.** `require_login`/`require_admin`
+(new `api/auth_router.py`) are real FastAPI dependencies applied at
+`app.include_router(..., dependencies=[Depends(require_login)])` for
+every router except `auth_router` itself (which obviously can't require
+login to log in). `governance_router.decide()` and
+`learning_router.review_approval()` additionally take
+`Depends(require_admin)` directly on those two routes specifically —
+these are the two real "approve something" actions in the whole app.
+**Closed a real, related spoofing gap while doing this:** both
+endpoints used to accept an `approver_id` field straight from the
+request body — fully client-controlled, meaning anyone could claim to
+be anyone when approving something. Both now ignore any such field and
+use the session's verified email instead
+(`approver_id=user["email"]`) — the `DecideRequest`/`ReviewRequest`
+Pydantic models had their `approver_id` field removed entirely, not
+just ignored, so it's structurally impossible to pass one through the
+API. `api-client.ts`'s `decideGovernance()`/`reviewLearningApproval()`
+lost their `approverId` parameters to match; both callers
+(`/proposals`, `/learning`) updated. `createProject()`/`projectFeedback()`
+in `api-client.ts` — the two now-dead, endpoint-less functions deleted
+in 14.14 — turned out to still be present (likely reintroduced by an
+earlier full-file delivery based on a pre-14.14 copy); deleted again
+while in this file for the `approver_id` cleanup.
+
+**Frontend**: `AuthProvider`/`useAuth()` (new `lib/auth-context.tsx`)
+holds the current user in React context; `AuthGate` (new
+`components/auth-gate.tsx`) checks `GET /api/auth/me` on load and
+renders a Google Sign-In button (via Google Identity Services'
+`renderButton`) instead of the app when logged out. `layout.tsx` wraps
+the whole app in both. `navigation.tsx` shows the logged-in person's
+name/email/role and a logout button. `api-client.ts`'s `apiCall()`
+gained `credentials: "include"` so the session cookie actually flows
+between `localhost:3000` and `:8000` — CORS was already configured
+correctly for this (`allow_origins=["http://localhost:3000"]`,
+`allow_credentials=True` — an exact origin, not `*`, which credentialed
+CORS requires; no changes needed there, already right from Phase F).
+
+**New environment variables** (documented for Noritsugu to set,
+`GOOGLE_OAUTH_CLIENT_ID` and `NEXT_PUBLIC_GOOGLE_CLIENT_ID` must hold
+the *same* value — the `NEXT_PUBLIC_` prefix is only a Next.js
+convention for exposing a var to browser code, not a different
+credential): `GOOGLE_OAUTH_CLIENT_ID` (backend, audience-checks the ID
+token), `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (frontend, GIS button), `ADMIN_EMAILS`
+(backend, comma-separated), `SESSION_SECRET_KEY` (backend, signs the
+session cookie — falls back to an insecure dev default if unset, with
+a code comment saying not to rely on that fallback in real use).
+
+22 new tests (`test_auth_service.py`: 13, `test_auth_router.py`: 9) plus
+one existing `test_learning_router.py` assertion updated to expect the
+session email instead of a client-supplied string (confirms the
+spoofing fix). `tests/backend/conftest.py` gained a new autouse fixture
+overriding `require_login`/`require_admin` to a fake admin session by
+default, since the ~240 pre-existing tests were written to test each
+feature's own logic, not authentication — `test_auth_router.py`
+explicitly clears that override per-test to verify what actually
+happens *without* it (401 unauthenticated, 403 non-admin). 248 total
+passing.
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.

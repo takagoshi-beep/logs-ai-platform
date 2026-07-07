@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useAuth } from "@/lib/auth-context";
 
 const navItems = [
   { href: "/", label: "ホーム" },
@@ -17,9 +18,10 @@ const navItems = [
 
 export function Navigation() {
   const pathname = usePathname();
+  const { user, isAdmin, logout } = useAuth();
 
   return (
-    <nav className="sticky top-4 h-fit rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <nav className="sticky top-4 flex h-fit flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="mb-1 text-lg font-semibold tracking-tight text-accent">LOGS AI OS</div>
       <p className="mb-4 text-xs text-sub">業務エントリーコンソール</p>
       <ul className="space-y-2">
@@ -39,6 +41,19 @@ export function Navigation() {
           );
         })}
       </ul>
+      {user && (
+        <div className="mt-6 border-t border-slate-200 pt-4">
+          <p className="truncate text-xs font-medium text-ink">{user.name}</p>
+          <p className="truncate text-xs text-sub">{user.email}</p>
+          <p className="mt-1 text-xs text-sub">{isAdmin ? "管理者" : "一般"}</p>
+          <button
+            onClick={logout}
+            className="mt-2 text-xs text-accent hover:underline"
+          >
+            ログアウト
+          </button>
+        </div>
+      )}
     </nav>
   );
 }
