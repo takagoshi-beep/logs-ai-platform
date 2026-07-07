@@ -77,5 +77,5 @@ def test_answer_passes_the_system_prompt_and_tools(monkeypatch):
     monkeypatch.setattr(chat_agent, "generate_with_tools", fake_generate_with_tools)
 
     chat_agent.answer("質問")
-    assert captured["system"] == chat_agent.SYSTEM_PROMPT
+    assert "今日の日付" in captured["system"]
     assert captured["tools"] == chat_agent.TOOLS

@@ -91,3 +91,40 @@ def test_execute_tool_returns_error_status_for_exceptions_outside_provider_fetch
     result = json.loads(tool_registry.execute_tool("get_production_mass_status", {"po_number": "914-20260626_1"}))
     assert result["status"] == "error"
     assert "想定外のエラー" in result["summary"]
+
+
+def test_execute_tool_caps_large_record_counts_before_returning_to_claude(monkeypatch):
+    """2026-07-06に実際のブラウザ操作で発見した実バグの再発防止テスト:
+    期間指定なしの get_sales_lines が sales テーブル全件（実際は約20万件）
+    をそのままClaudeに渡そうとし、Anthropic APIの1リクエストあたりの
+    トークン上限（20万）を超えてエラーになった
+    （"prompt is too long: 228537 tokens > 200000 maximum"）。"""
+    huge_records = [{"売上金額": i} for i in range(50_000)]
+    monkeypatch.setattr(
+        data_providers.LogsysProvider, "_sales_lines",
+        lambda self, params: {
+            "provider": "logsys", "dataset": "sales_lines", "status": "ok",
+            "summary": "売上明細 50000件を取得", "records": huge_records,
+        },
+    )
+
+    result = json.loads(tool_registry.execute_tool("get_sales_lines", {}))
+    assert len(result["records"]) == tool_registry._MAX_RECORDS_FOR_CLAUDE
+    assert result["truncated"] is True
+    assert result["total_record_count"] == 50_000
+    assert "50000" in result["summary"] or "50,000" in result["summary"]
+
+
+def test_execute_tool_does_not_touch_small_record_counts(monkeypatch):
+    small_records = [{"売上金額": i} for i in range(3)]
+    monkeypatch.setattr(
+        data_providers.LogsysProvider, "_sales_lines",
+        lambda self, params: {
+            "provider": "logsys", "dataset": "sales_lines", "status": "ok",
+            "summary": "売上明細 3件を取得", "records": small_records,
+        },
+    )
+
+    result = json.loads(tool_registry.execute_tool("get_sales_lines", {}))
+    assert result["records"] == small_records
+    assert "truncated" not in result

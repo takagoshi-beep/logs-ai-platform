@@ -22,6 +22,8 @@ TOOLS: list[dict[str, Any]] = [
             "実際の売上明細を取得する。粗利や売上金額の集計・分析に使う。"
             "有効な受注のみを対象とする標準フィルタ（ステータス・決済方法）が"
             "既に適用済みなので、取得した行をそのまま合計してよい。"
+            "件数が多くなりやすいため、可能な限りperiod_start/period_endで"
+            "期間を絞り込んで呼び出すこと（「今月」なら今月の初日〜末日を指定する）。"
         ),
         "input_schema": {
             "type": "object",
@@ -34,7 +36,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "get_purchase_lines",
-        "description": "実際の仕入明細（諸掛り込み金額）を取得する。仕入原価の分析に使う。",
+        "description": "実際の仕入明細（諸掛り込み金額）を取得する。仕入原価の分析に使う。件数が多くなりやすいため、可能な限りperiod_start/period_endで期間を絞り込むこと。",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -128,6 +130,43 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 
+_MAX_RECORDS_FOR_CLAUDE = 200
+
+
+def _cap_records(result: dict[str, Any]) -> dict[str, Any]:
+    """ツール結果のrecordsが多すぎる場合、Claudeへ渡す前に件数を制限する。
+
+    2026-07-06に実際のブラウザ操作で発見: "今月のOEM事業の粗利を教えて"
+    のような、期間指定なしでも呼び出せてしまう質問に対し、Claudeが
+    get_sales_lines を period_start/period_end なしで呼んだ結果、
+    sales テーブル全件（約20万件）がそのままツール結果としてClaudeに
+    返され、Anthropic APIの1リクエストあたりの上限（20万トークン）を
+    超えてエラーになった（実際のエラー: "prompt is too long: 228537
+    tokens > 200000 maximum"）。
+
+    evidence_interpreter.py の _DISPLAY_LIMIT（表示は代表サンプルに
+    絞り、全件はrecord_countで件数のみ伝える）と同じ考え方を、Claudeに
+    渡すツール結果にも適用する。Claude側に「件数が多いため絞り込んで
+    ほしい」ことを伝え、次のターンで期間や顧客名を指定した再検索を
+    促せるようにする。
+    """
+    records = result.get("records")
+    if not isinstance(records, list) or len(records) <= _MAX_RECORDS_FOR_CLAUDE:
+        return result
+
+    total = len(records)
+    capped = dict(result)
+    capped["records"] = records[:_MAX_RECORDS_FOR_CLAUDE]
+    capped["truncated"] = True
+    capped["total_record_count"] = total
+    original_summary = result.get("summary", "")
+    capped["summary"] = (
+        f"{original_summary}（件数が多いため先頭{_MAX_RECORDS_FOR_CLAUDE}件のみ返却。"
+        f"全{total}件。期間や顧客名などで絞り込んで再度呼び出してください）"
+    )
+    return capped
+
+
 def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
     """ツール呼び出しを実行し、Claudeへ返すJSON文字列を返す。
 
@@ -170,4 +209,5 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
     except Exception as e:
         result = {"status": "error", "summary": f"データ取得中にエラーが発生しました: {e}", "records": []}
 
+    result = _cap_records(result)
     return json.dumps(result, ensure_ascii=False, default=str)

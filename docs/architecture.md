@@ -1903,6 +1903,51 @@ later. `conversation_store` has no expiry/cleanup — sessions accumulate
 in `conversations.jsonl` indefinitely; acceptable for now given this
 session's data volumes, but a real concern for production scale.
 
+### 14.21.1 Real bug found via first real browser use: unfiltered tool
+results blew the Anthropic context limit (2026-07-06, same day)
+
+First real end-to-end test (before this was ever committed): asking
+"今月のOEM事業の粗利を教えて" via the browser failed with
+`anthropic.BadRequestError: prompt is too long: 228537 tokens > 200000
+maximum`. Root cause: `get_sales_lines`'s `period_start`/`period_end`
+are optional, and nothing forced Claude to supply them — with neither
+given, `LogsysProvider._sales_lines()` returns literally every row in
+`sales` (the real table has ~199,512 rows, per the home page's own KPI
+card), serialized whole into a single `tool_result` block. My own
+`test_llm_client.py`/`test_chat_agent.py` tests from 14.21 never caught
+this because they only ever exercised the tool-use *loop's control
+flow* with tiny fake responses — never real data volume. Exactly the
+kind of thing this session has repeatedly found by testing against
+real data rather than assuming small-scale behavior generalizes (14.7's
+formula cells, 14.8's merged cells, 14.16's embedded newlines, all the
+same pattern).
+
+Fixed with `tool_registry._cap_records()`, applied to every tool
+result before it's returned to Claude: if `records` exceeds 200, keep
+only the first 200 and add `truncated: true` + `total_record_count` +
+an explicit note telling Claude to narrow the query. Mirrors
+`evidence_interpreter.py`'s existing `_DISPLAY_LIMIT` pattern (cap what
+gets shown/sent, keep the real count visible) — the same idea already
+established elsewhere in this codebase, just applied to the new
+tool-result path. Verified against a simulated 199,512-row result: the
+JSON sent to Claude drops to ~11,500 characters (~5,750 estimated
+tokens) regardless of how large the underlying table grows.
+
+Also: `chat_agent`'s system prompt didn't tell Claude what today's date
+is, so relative expressions like "今月" had no fixed reference point to
+convert into concrete `period_start`/`period_end` values in the first
+place — `SYSTEM_PROMPT` (a static constant) became
+`SYSTEM_PROMPT_TEMPLATE` + `_build_system_prompt()`, injecting the real
+current date every call, plus an explicit instruction to convert
+relative time expressions before calling a tool, and to recognize
+`truncated: true` in a tool result and re-query narrower rather than
+treat 200 rows as the whole answer.
+
+2 new tests in `test_tool_registry.py` (`_cap_records` triggers on a
+50,000-row fake result, leaves small results untouched), 1 updated
+test in `test_chat_agent.py` for the now-dynamic system prompt. 224
+total passing.
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.
