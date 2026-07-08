@@ -5,7 +5,8 @@ import Link from "next/link";
 import { getProducts } from "@/lib/api-client";
 
 interface ApiProduct {
-  logs_code: string;
+  product_id: string;
+  logs_code: string | null;
   product_name: string | null;
   model_no: string | null;
   supplier_name: string | null;
@@ -37,7 +38,7 @@ export default function ProductsListPage() {
     const q = search.toLowerCase();
     return (
       (p.product_name ?? "").toLowerCase().includes(q) ||
-      p.logs_code.toLowerCase().includes(q) ||
+      (p.logs_code ?? "").toLowerCase().includes(q) ||
       (p.supplier_name ?? "").toLowerCase().includes(q)
     );
   });
@@ -94,8 +95,8 @@ export default function ProductsListPage() {
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="grid grid-cols-4 gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs font-medium text-sub">
-          <span>LOGS_CODE / 商品名</span>
-          <span>Sample_CODE</span>
+          <span>Sample_CODE / 商品名</span>
+          <span>LOGS_CODE</span>
           <span>型番</span>
           <span>仕入先</span>
         </div>
@@ -104,15 +105,15 @@ export default function ProductsListPage() {
         )}
         {!loading && filtered.map((p) => (
           <Link
-            key={p.logs_code}
-            href={`/products/${p.logs_code}`}
+            key={p.product_id}
+            href={`/products/${p.product_id}`}
             className="grid grid-cols-4 items-center gap-2 border-b border-slate-100 px-4 py-3 text-sm text-ink last:border-b-0 hover:bg-slate-50"
           >
             <span>
               <span className="font-medium">{p.product_name ?? "(商品名なし)"}</span>
-              <span className="ml-2 text-xs text-sub">{p.logs_code}</span>
+              <span className="ml-2 text-xs text-sub">{p.sample_code ?? "—"}</span>
             </span>
-            <span className="text-sub">{p.sample_code ?? "—"}</span>
+            <span className="text-sub">{p.logs_code ?? "（未発注）"}</span>
             <span className="text-sub">{p.model_no ?? "—"}</span>
             <span className="text-sub">{p.supplier_name ?? "—"}</span>
           </Link>

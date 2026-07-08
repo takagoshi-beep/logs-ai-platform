@@ -1,0 +1,482 @@
+diff --git a/backend/api/router.py b/backend/api/router.py
+index cf753ac..b12670f 100644
+--- a/backend/api/router.py
++++ b/backend/api/router.py
+@@ -168,7 +168,7 @@ def list_projects(limit: int = 10, scope: str = "mine", user: dict = Depends(req
+ 
+ 
+ @router.get("/projects/{project_id}")
+-def get_project(project_id: str) -> dict:
++def get_project(project_id: str, user: dict = Depends(require_login)) -> dict:
+     """Get complete ProjectAggregate for a single project."""
+     try:
+         service = ProjectService()
+@@ -192,6 +192,24 @@ def get_project(project_id: str) -> dict:
+         except Exception:
+             result["production"] = []
+ 
++        # ログイン中の本人のGmail/Slackから、この案件に関連しそうな
++        # メッセージを検索する（PO番号・顧客担当者メールアドレス・
++        # 仕入先名で突合、docs/architecture.md 14.29）。未連携時は
++        # gmail_service/slack_serviceが返す'unavailable'をそのまま返す。
++        try:
++            from services.project_relations import get_related_communications
++            result["related_communications"] = get_related_communications(
++                user_email=user.get("email"),
++                po_number=agg.po_number,
++                customer_id=agg.data.customer_id,
++                supplier_name=agg.data.supplier_name,
++            )
++        except Exception as e:
++            result["related_communications"] = {
++                "gmail": {"status": "error", "summary": str(e), "records": []},
++                "slack": {"status": "error", "summary": str(e), "records": []},
++            }
++
+         return result
+     except HTTPException:
+         raise
+diff --git a/backend/services/oauth_token_store.py b/backend/services/oauth_token_store.py
+index d7d6bea..bcafacf 100644
+--- a/backend/services/oauth_token_store.py
++++ b/backend/services/oauth_token_store.py
+@@ -32,16 +32,20 @@ def save_token(email: str, provider: str, refresh_token: str, scope: str) -> Non
+ 
+ 
+ def get_refresh_token(email: str, provider: str) -> str | None:
+-    conn = get_connection()
+     try:
+-        with conn.cursor() as cur:
+-            cur.execute(
+-                "SELECT refresh_token_encrypted FROM user_oauth_tokens WHERE email = %s AND provider = %s",
+-                (email.strip().lower(), provider),
+-            )
+-            row = cur.fetchone()
+-    finally:
+-        conn.close()
++        conn = get_connection()
++        try:
++            with conn.cursor() as cur:
++                cur.execute(
++                    "SELECT refresh_token_encrypted FROM user_oauth_tokens WHERE email = %s AND provider = %s",
++                    (email.strip().lower(), provider),
++                )
++                row = cur.fetchone()
++        finally:
++            conn.close()
++    except Exception as e:
++        print(f"Error looking up OAuth token ({provider}): {e}")
++        return None
+     if not row:
+         return None
+     return decrypt(row[0])
+diff --git a/backend/services/project_relations.py b/backend/services/project_relations.py
+new file mode 100644
+index 0000000..9972240
+--- /dev/null
++++ b/backend/services/project_relations.py
+@@ -0,0 +1,109 @@
++"""案件に関連しそうなGmail/Slackメッセージを、実データのキーだけを
++使って検索する (docs/architecture.md 14.29)。
++
++判定に使うキー（元データ調査の結果、精度が高い順）:
++  1. PO番号（purchase_orders.PO_No） — 完全一致で検索すれば誤検出がほぼ無い
++  2. 顧客担当者のメールアドレス（customer_contacts.メールアドレス、
++     purchase_orders.顧客ID で突合） — Gmailのfrom:/to:で高精度に絞れる
++
++仕入先名・商品コード等は第2段階として今後追加を検討する候補
++（顧客担当者のようなメールアドレスの元データが仕入先側には存在しない
++ため、今回は含めていない）。
++
++検索はあくまで「ログイン中の本人が既にGmail/Slack連携済みの場合」に
++限られる。未連携の場合はgmail_service/slack_service自身が返す
++'unavailable'をそのまま呼び出し元に伝える（架空の関連メッセージを
++作らない）。
++"""
++from __future__ import annotations
++
++from typing import Any
++
++from services.supabase_client import get_connection
++
++
++def get_customer_contact_emails(customer_id: str) -> list[str]:
++    """指定した顧客IDに紐づく、顧客担当者の実在するメールアドレス一覧を返す。"""
++    if not customer_id or customer_id == "unknown":
++        return []
++
++    try:
++        conn = get_connection()
++        try:
++            with conn.cursor() as cur:
++                cur.execute(
++                    'SELECT DISTINCT "メールアドレス" FROM customer_contacts '
++                    'WHERE "顧客ID" = %s AND "メールアドレス" IS NOT NULL AND "メールアドレス" != \'\'',
++                    (customer_id,),
++                )
++                rows = cur.fetchall()
++        finally:
++            conn.close()
++    except Exception as e:
++        print(f"Error looking up customer contact emails: {e}")
++        return []
++
++    return [row[0] for row in rows if row[0]]
++
++
++def _build_gmail_query(po_number: str, contact_emails: list[str]) -> str:
++    parts = [f'"{po_number}"'] if po_number else []
++    for email in contact_emails:
++        parts.append(f"from:{email}")
++        parts.append(f"to:{email}")
++    return " OR ".join(parts)
++
++
++def _build_slack_query(po_number: str, supplier_name: str) -> str:
++    parts = []
++    if po_number:
++        parts.append(f'"{po_number}"')
++    if supplier_name:
++        parts.append(f'"{supplier_name}"')
++    return " OR ".join(parts)
++
++
++def get_related_communications(
++    user_email: str | None,
++    po_number: str,
++    customer_id: str,
++    supplier_name: str,
++    max_results: int = 5,
++) -> dict[str, Any]:
++    """ログイン中の本人のGmail/Slackを、この案件に関連しそうなキーワード
++    （PO番号・顧客担当者メールアドレス・仕入先名）で検索する。
++
++    Gmail/Slackどちらも未連携の場合や、user_emailが無い場合は、それぞれ
++    'unavailable'をそのまま返す（呼び出し側はこれを見て「連携してくだ
++    さい」と案内できる）。
++    """
++    if not user_email:
++        unavailable = {"status": "unavailable", "summary": "ログインユーザーが特定できません。", "records": []}
++        return {"gmail": unavailable, "slack": unavailable}
++
++    contact_emails = get_customer_contact_emails(customer_id)
++
++    gmail_query = _build_gmail_query(po_number, contact_emails)
++    slack_query = _build_slack_query(po_number, supplier_name)
++
++    try:
++        from services import gmail_service
++        gmail_result = (
++            gmail_service.search_messages(user_email, gmail_query, max_results)
++            if gmail_query
++            else {"status": "unavailable", "summary": "検索に使えるキーがありませんでした。", "records": []}
++        )
++    except Exception as e:
++        gmail_result = {"status": "error", "summary": f"Gmail検索中にエラーが発生しました: {e}", "records": []}
++
++    try:
++        from services import slack_service
++        slack_result = (
++            slack_service.search_messages(user_email, slack_query, max_results)
++            if slack_query
++            else {"status": "unavailable", "summary": "検索に使えるキーがありませんでした。", "records": []}
++        )
++    except Exception as e:
++        slack_result = {"status": "error", "summary": f"Slack検索中にエラーが発生しました: {e}", "records": []}
++
++    return {"gmail": gmail_result, "slack": slack_result}
+diff --git a/frontend/app/workspace/[projectId]/page.tsx b/frontend/app/workspace/[projectId]/page.tsx
+index 33cbeb5..f91d9ff 100644
+--- a/frontend/app/workspace/[projectId]/page.tsx
++++ b/frontend/app/workspace/[projectId]/page.tsx
+@@ -42,6 +42,17 @@ interface ProductionStatus {
+   project_name: string | null;
+ }
+ 
++interface RelatedMessage {
++  status: string;
++  summary: string;
++  records: Array<Record<string, any>>;
++}
++
++interface RelatedCommunications {
++  gmail: RelatedMessage;
++  slack: RelatedMessage;
++}
++
+ interface ProjectDetail {
+   project_id: string;
+   po_number: string;
+@@ -89,6 +100,7 @@ function fmtYen(v: number | null | undefined): string {
+ export default function WorkspacePage({ params }: Params) {
+   const [project, setProject] = useState<ProjectDetail | null>(null);
+   const [production, setProduction] = useState<ProductionStatus[]>([]);
++  const [related, setRelated] = useState<RelatedCommunications | null>(null);
+   const [error, setError] = useState<string | null>(null);
+   const [loading, setLoading] = useState(true);
+ 
+@@ -101,6 +113,7 @@ export default function WorkspacePage({ params }: Params) {
+       }
+       setProject(data?.project ?? null);
+       setProduction(data?.production ?? []);
++      setRelated(data?.related_communications ?? null);
+     });
+   }, [params.projectId]);
+ 
+@@ -234,6 +247,57 @@ export default function WorkspacePage({ params }: Params) {
+           </div>
+         </Card>
+       )}
++      {related && (
++        <Card>
++          <SectionHeader
++            title="関連するメール・Slack"
++            subtitle="PO番号・顧客担当者のメールアドレスで、あなた自身のGmail/Slackから検索した結果です。"
++          />
++          <div className="mt-3 grid gap-4 sm:grid-cols-2">
++            <div>
++              <h4 className="mb-2 text-xs font-semibold text-ink">Gmail</h4>
++              {related.gmail.status === "ok" && related.gmail.records.length > 0 ? (
++                <div className="space-y-2">
++                  {related.gmail.records.map((r, idx) => (
++                    <div key={idx} className="rounded-lg border border-slate-200 p-3 text-xs">
++                      <p className="font-medium text-ink">{r.subject}</p>
++                      <p className="text-sub">{r.from} ・ {r.date}</p>
++                      {r.snippet && <p className="mt-1 text-sub">{r.snippet}</p>}
++                    </div>
++                  ))}
++                </div>
++              ) : related.gmail.status === "unavailable" ? (
++                <p className="text-xs text-sub">
++                  {related.gmail.summary}{" "}
++                  <a href="/settings" className="text-accent hover:underline">設定画面へ</a>
++                </p>
++              ) : (
++                <p className="text-xs text-sub">{related.gmail.summary || "関連するメールは見つかりませんでした。"}</p>
++              )}
++            </div>
++            <div>
++              <h4 className="mb-2 text-xs font-semibold text-ink">Slack</h4>
++              {related.slack.status === "ok" && related.slack.records.length > 0 ? (
++                <div className="space-y-2">
++                  {related.slack.records.map((r, idx) => (
++                    <div key={idx} className="rounded-lg border border-slate-200 p-3 text-xs">
++                      <p className="font-medium text-ink">#{r.channel} ・ {r.username}</p>
++                      <p className="mt-1 text-sub">{r.text}</p>
++                    </div>
++                  ))}
++                </div>
++              ) : related.slack.status === "unavailable" ? (
++                <p className="text-xs text-sub">
++                  {related.slack.summary}{" "}
++                  <a href="/settings" className="text-accent hover:underline">設定画面へ</a>
++                </p>
++              ) : (
++                <p className="text-xs text-sub">{related.slack.summary || "関連するメッセージは見つかりませんでした。"}</p>
++              )}
++            </div>
++          </div>
++        </Card>
++      )}
+     </div>
+   );
+ }
+\ No newline at end of file
+diff --git a/tests/backend/test_oauth_token_store.py b/tests/backend/test_oauth_token_store.py
+new file mode 100644
+index 0000000..9acfd24
+--- /dev/null
++++ b/tests/backend/test_oauth_token_store.py
+@@ -0,0 +1,66 @@
++"""Tests for `backend/services/oauth_token_store.py`."""
++from __future__ import annotations
++
++from services import oauth_token_store
++
++
++class _FakeCursor:
++    def __init__(self, rows: list[tuple]):
++        self._rows = rows
++
++    def __enter__(self):
++        return self
++
++    def __exit__(self, *a):
++        return False
++
++    def execute(self, sql, params=None):
++        pass
++
++    def fetchone(self):
++        return self._rows[0] if self._rows else None
++
++
++class _FakeConnection:
++    def __init__(self, rows: list[tuple]):
++        self._cursor = _FakeCursor(rows)
++        self.closed = False
++
++    def cursor(self):
++        return self._cursor
++
++    def close(self):
++        self.closed = True
++
++
++def test_get_refresh_token_returns_decrypted_value_when_found(monkeypatch):
++    monkeypatch.setattr(oauth_token_store, "get_connection", lambda: _FakeConnection([("encrypted-blob",)]))
++    monkeypatch.setattr(oauth_token_store, "decrypt", lambda ciphertext: "the-real-token")
++
++    assert oauth_token_store.get_refresh_token("user@logs.co.jp", "google_gmail") == "the-real-token"
++
++
++def test_get_refresh_token_returns_none_when_not_found(monkeypatch):
++    monkeypatch.setattr(oauth_token_store, "get_connection", lambda: _FakeConnection([]))
++
++    assert oauth_token_store.get_refresh_token("user@logs.co.jp", "google_gmail") is None
++
++
++def test_get_refresh_token_returns_none_on_connection_failure(monkeypatch):
++    """接続自体が失敗しても例外を伝播させず、'未連携'として扱えるように
++    Noneを返す（DB未設定のテスト環境や一時的な接続断で、Gmail/Slack検索
++    が'error'ではなく'unavailable'に自然に落ちるようにするための挙動）。"""
++    def _raise():
++        raise RuntimeError("SUPABASE_DB_URL is not configured")
++
++    monkeypatch.setattr(oauth_token_store, "get_connection", _raise)
++
++    assert oauth_token_store.get_refresh_token("user@logs.co.jp", "google_gmail") is None
++
++
++def test_is_connected_reflects_refresh_token_presence(monkeypatch):
++    monkeypatch.setattr(oauth_token_store, "get_refresh_token", lambda email, provider: "token")
++    assert oauth_token_store.is_connected("user@logs.co.jp", "slack") is True
++
++    monkeypatch.setattr(oauth_token_store, "get_refresh_token", lambda email, provider: None)
++    assert oauth_token_store.is_connected("user@logs.co.jp", "slack") is False
+diff --git a/tests/backend/test_project_relations.py b/tests/backend/test_project_relations.py
+new file mode 100644
+index 0000000..4b5fe2b
+--- /dev/null
++++ b/tests/backend/test_project_relations.py
+@@ -0,0 +1,105 @@
++"""Tests for `backend/services/project_relations.py` (docs/architecture.md 14.29)."""
++from __future__ import annotations
++
++from services import project_relations
++
++
++class _FakeCursor:
++    def __init__(self, rows: list[tuple]):
++        self._rows = rows
++
++    def __enter__(self):
++        return self
++
++    def __exit__(self, *a):
++        return False
++
++    def execute(self, sql, params=None):
++        pass
++
++    def fetchall(self):
++        return self._rows
++
++    def fetchone(self):
++        return self._rows[0] if self._rows else None
++
++
++class _FakeConnection:
++    def __init__(self, rows: list[tuple]):
++        self._cursor = _FakeCursor(rows)
++        self.closed = False
++
++    def cursor(self):
++        return self._cursor
++
++    def close(self):
++        self.closed = True
++
++
++def test_get_customer_contact_emails_returns_emails(monkeypatch):
++    rows = [("tanaka@customer.example",), ("suzuki@customer.example",)]
++    monkeypatch.setattr(project_relations, "get_connection", lambda: _FakeConnection(rows))
++
++    emails = project_relations.get_customer_contact_emails("c1")
++    assert emails == ["tanaka@customer.example", "suzuki@customer.example"]
++
++
++def test_get_customer_contact_emails_returns_empty_for_unknown_customer():
++    assert project_relations.get_customer_contact_emails("unknown") == []
++    assert project_relations.get_customer_contact_emails("") == []
++
++
++def test_get_customer_contact_emails_returns_empty_on_query_failure(monkeypatch):
++    def _raise():
++        raise RuntimeError("SUPABASE_DB_URL is not configured")
++
++    monkeypatch.setattr(project_relations, "get_connection", _raise)
++    assert project_relations.get_customer_contact_emails("c1") == []
++
++
++def test_build_gmail_query_combines_po_number_and_contact_emails():
++    query = project_relations._build_gmail_query("2091-20251119_1", ["a@example.com", "b@example.com"])
++    assert query == '"2091-20251119_1" OR from:a@example.com OR to:a@example.com OR from:b@example.com OR to:b@example.com'
++
++
++def test_build_gmail_query_with_no_contact_emails():
++    assert project_relations._build_gmail_query("2091-20251119_1", []) == '"2091-20251119_1"'
++
++
++def test_build_slack_query_combines_po_number_and_supplier_name():
++    query = project_relations._build_slack_query("2091-20251119_1", "1064STUDIO")
++    assert query == '"2091-20251119_1" OR "1064STUDIO"'
++
++
++def test_get_related_communications_returns_unavailable_without_user_email():
++    result = project_relations.get_related_communications(None, "PO-1", "c1", "Supplier")
++    assert result["gmail"]["status"] == "unavailable"
++    assert result["slack"]["status"] == "unavailable"
++
++
++def test_get_related_communications_calls_gmail_and_slack_with_built_queries(monkeypatch):
++    from services import gmail_service, slack_service
++
++    monkeypatch.setattr(project_relations, "get_customer_contact_emails", lambda customer_id: ["tanaka@customer.example"])
++
++    captured = {}
++
++    def _fake_gmail_search(email, query, max_results):
++        captured["gmail_query"] = query
++        return {"status": "ok", "summary": "1件", "records": [{"subject": "見積書"}]}
++
++    def _fake_slack_search(email, query, max_results):
++        captured["slack_query"] = query
++        return {"status": "ok", "summary": "1件", "records": [{"text": "納期確認"}]}
++
++    monkeypatch.setattr(gmail_service, "search_messages", _fake_gmail_search)
++    monkeypatch.setattr(slack_service, "search_messages", _fake_slack_search)
++
++    result = project_relations.get_related_communications(
++        "user@logs.co.jp", "2091-20251119_1", "c1", "1064STUDIO"
++    )
++
++    assert captured["gmail_query"] == '"2091-20251119_1" OR from:tanaka@customer.example OR to:tanaka@customer.example'
++    assert captured["slack_query"] == '"2091-20251119_1" OR "1064STUDIO"'
++    assert result["gmail"]["records"] == [{"subject": "見積書"}]
++    assert result["slack"]["records"] == [{"text": "納期確認"}]
+diff --git a/tests/backend/test_router.py b/tests/backend/test_router.py
+index db3ae3a..9f8f565 100644
+--- a/tests/backend/test_router.py
++++ b/tests/backend/test_router.py
+@@ -346,6 +346,10 @@ def test_get_project_via_http(monkeypatch):
+     assert response.status_code == 200
+     assert response.json()["project"]["data"]["customer_name"] == "US_LOGS Inc."
+     assert response.json()["production"] == []  # DB未接続時は空リストに落ちる（クラッシュしない）
++    # 14.29: Gmail/Slack未連携・DB未接続でもクラッシュせず'unavailable'に落ちる
++    related = response.json()["related_communications"]
++    assert related["gmail"]["status"] == "unavailable"
++    assert related["slack"]["status"] == "unavailable"
+ 
+     missing = _client().get("/api/projects/does-not-exist")
+     assert missing.status_code == 404

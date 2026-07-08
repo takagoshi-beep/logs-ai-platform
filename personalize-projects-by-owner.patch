@@ -1,0 +1,415 @@
+diff --git a/backend/api/router.py b/backend/api/router.py
+index 3466d3b..6920563 100644
+--- a/backend/api/router.py
++++ b/backend/api/router.py
+@@ -31,9 +31,13 @@ def health() -> dict:
+ 
+ 
+ @router.get("/home")
+-def home() -> dict:
++def home(scope: str = "mine", user: dict = Depends(require_login)) -> dict:
+     """Get home page payload with today's actions and KPIs."""
+-    return get_home_payload_business()
++    owner_name = None
++    if scope == "mine":
++        from services.auth_service import get_staff_name_by_email
++        owner_name = get_staff_name_by_email(user.get("email"))
++    return get_home_payload_business(owner_name=owner_name)
+ 
+ 
+ @router.post("/chat")
+@@ -121,11 +125,23 @@ def events(event: ProductEvent) -> dict:
+ # ===== NEW: Project Aggregate Endpoints =====
+ 
+ @router.get("/projects")
+-def list_projects(limit: int = 10) -> dict:
+-    """Get list of project candidates with summary info."""
++def list_projects(limit: int = 10, scope: str = "mine", user: dict = Depends(require_login)) -> dict:
++    """Get list of project candidates with summary info.
++
++    scope="mine"（既定）: ログイン中の本人が営業担当者・営業事務担当者に
++    なっている案件だけを返す（docs/architecture.md 14.28）。本人の氏名が
++    staffテーブルのメールアドレスと一致しない場合は、絞り込みをせず
++    全件を返す（表記ゆれで誤って絞り込むより、全件見せる方が安全）。
++    scope="all": 常に全件を返す。
++    """
+     try:
++        owner_name = None
++        if scope == "mine":
++            from services.auth_service import get_staff_name_by_email
++            owner_name = get_staff_name_by_email(user.get("email"))
++
+         service = ProjectService()
+-        project_ids = service._query_projects_from_db(limit=limit)
++        project_ids = service._query_projects_from_db(limit=limit, owner_name=owner_name)
+ 
+         projects = []
+         for proj_record in project_ids[:limit]:
+@@ -148,6 +164,7 @@ def list_projects(limit: int = 10) -> dict:
+             "success": True,
+             "projects": projects,
+             "count": len(projects),
++            "scope": "mine" if owner_name else "all",
+         }
+     except Exception as e:
+         raise HTTPException(status_code=500, detail=str(e))
+@@ -264,13 +281,22 @@ def get_project_trace(project_id: str) -> dict:
+ 
+ 
+ @router.get("/today-actions")
+-def get_today_actions(limit: int = 20) -> dict:
+-    """Get today's actions from all projects, sorted by priority."""
++def get_today_actions(limit: int = 20, scope: str = "mine", user: dict = Depends(require_login)) -> dict:
++    """Get today's actions from all projects, sorted by priority.
++
++    scope="mine"（既定）: ログイン中の本人が担当する案件のタスクだけに
++    絞り込む（docs/architecture.md 14.28）。本人特定できない場合は全件。
++    """
+     try:
++        owner_name = None
++        if scope == "mine":
++            from services.auth_service import get_staff_name_by_email
++            owner_name = get_staff_name_by_email(user.get("email"))
++
+         service = ProjectService()
+ 
+         # Get multiple projects
+-        project_ids = service._query_projects_from_db(limit=50)
++        project_ids = service._query_projects_from_db(limit=50, owner_name=owner_name)
+ 
+         all_actions = []
+         for proj_record in project_ids:
+@@ -310,6 +336,7 @@ def get_today_actions(limit: int = 20) -> dict:
+             "actions": actions,
+             "count": len(actions),
+             "total": len(all_actions),
++            "scope": "mine" if owner_name else "all",
+         }
+     except Exception as e:
+         raise HTTPException(status_code=500, detail=str(e))
+diff --git a/backend/business/today_actions.py b/backend/business/today_actions.py
+index 60c980f..105082a 100644
+--- a/backend/business/today_actions.py
++++ b/backend/business/today_actions.py
+@@ -3,7 +3,7 @@
+ from services.supabase_client import get_real_kpis
+ 
+ 
+-def _get_recent_activity() -> dict:
++def _get_recent_activity(owner_name: str | None = None) -> dict:
+     """Real substitutes for the home page's "最近開いた案件"/"最近作成した
+     資料"/"最近相談した内容" cards, which used to render hardcoded
+     mock-data.ts entries (Fanatics OEM / BEAMS Retail / GOLDWIN Campaign)
+@@ -15,6 +15,10 @@ def _get_recent_activity() -> dict:
+       This uses the same real, Supabase-backed project list `/workspace`
+       and `/api/projects` already use (most urgent/recent purchase
+       orders), which is the closest honest substitute available.
++      Since 14.28, when owner_name resolves, this list is at least
++      filtered to purchase_orders the user is 営業担当者/営業事務担当者
++      for — a real (not inferred) narrowing, even though "recently
++      opened" itself remains an approximation.
+     - "最近作成した資料" only covers `proposal_draft_generation`
+       (real `customer`/`purpose` values are captured in that
+       Capability's execution `inputs`). It does NOT yet include
+@@ -47,7 +51,7 @@ def _get_recent_activity() -> dict:
+         from services.project_service import ProjectService
+ 
+         service = ProjectService()
+-        for proj_record in service._query_projects_from_db(limit=3):
++        for proj_record in service._query_projects_from_db(limit=3, owner_name=owner_name):
+             proj_id = proj_record.get("id")
+             if not proj_id:
+                 continue
+@@ -67,8 +71,13 @@ def _get_recent_activity() -> dict:
+     }
+ 
+ 
+-def get_home_payload() -> dict:
+-    """Get home page payload with today's actions and KPIs."""
++def get_home_payload(owner_name: str | None = None) -> dict:
++    """Get home page payload with today's actions and KPIs.
++
++    owner_name: ログイン中の本人の氏名（staffテーブルのメールアドレスから
++    特定できた場合のみ）。指定すると"最近開いた案件"が本人担当分に絞られる
++    （docs/architecture.md 14.28）。特定できない場合は全社共通のまま。
++    """
+     kpi_data = get_real_kpis()
+ 
+     if kpi_data.get("success"):
+@@ -117,5 +126,5 @@ def get_home_payload() -> dict:
+         "today_actions": [],
+         "alerts": alerts,
+         "data_sources": data_sources,
+-        "recent_activity": _get_recent_activity(),
++        "recent_activity": _get_recent_activity(owner_name),
+     }
+\ No newline at end of file
+diff --git a/backend/services/auth_service.py b/backend/services/auth_service.py
+index aa66412..1020d0b 100644
+--- a/backend/services/auth_service.py
++++ b/backend/services/auth_service.py
+@@ -53,6 +53,40 @@ def is_valid_staff_email(email: str) -> bool:
+     return False
+ 
+ 
++def get_staff_name_by_email(email: str) -> str | None:
++    """ログイン中のメールアドレスから、staffテーブルの社員氏名を特定する。
++
++    purchase_orders等の「営業担当者名」列は氏名の文字列でしか案件を
++    見分けられないため、この関数がその橋渡し役になる。一致する社員が
++    見つからない場合はNoneを返す — 呼び出し側は「本人の案件だけに絞る」
++    処理をスキップする（表記ゆれのある名前を推測で補って絞り込むと、
++    誤って他人の案件を混ぜる/本人の案件を漏らすことになるため、
++    一致しない場合は絞り込み自体を諦めるのが安全側の判断）。
++    """
++    if not email:
++        return None
++    email_lower = email.strip().lower()
++
++    try:
++        conn = get_connection()
++        try:
++            with conn.cursor() as cur:
++                cur.execute(
++                    'SELECT "社員氏名" FROM staff WHERE lower("メールアドレス") = %s LIMIT 1',
++                    (email_lower,),
++                )
++                row = cur.fetchone()
++        finally:
++            conn.close()
++    except Exception as e:
++        print(f"Error looking up staff name by email: {e}")
++        return None
++
++    if not row or not row[0]:
++        return None
++    return str(row[0]).strip()
++
++
+ def _admin_emails() -> set[str]:
+     raw = os.environ.get("ADMIN_EMAILS", "")
+     return {e.strip().lower() for e in raw.split(",") if e.strip()}
+diff --git a/backend/services/project_service.py b/backend/services/project_service.py
+index 1c4e6ed..853faef 100644
+--- a/backend/services/project_service.py
++++ b/backend/services/project_service.py
+@@ -46,12 +46,26 @@ class ProjectService:
+         project_hash = hashlib.md5(str(project_id).encode()).hexdigest()[:8]
+         return f"project-{project_hash}"
+ 
+-    def _query_projects_from_db(self, limit: int = 50) -> list[dict[str, Any]]:
+-        """Query database to find all project candidates (Purchase Orders)."""
++    def _query_projects_from_db(self, limit: int = 50, owner_name: str | None = None) -> list[dict[str, Any]]:
++        """Query database to find all project candidates (Purchase Orders).
++
++        owner_name: 指定すると、その氏名が「営業担当者名」または
++        「営業事務担当者名」と完全一致する案件だけに絞り込む
++        （ログイン中の本人の案件をデフォルト表示するための絞り込み、
++        docs/architecture.md 14.28）。Noneなら従来通り全件対象。
++        """
+         conn = get_connection()
+         try:
+             with conn.cursor() as cur:
+-                cur.execute('SELECT DISTINCT "ID" FROM purchase_orders ORDER BY "ID" DESC LIMIT %s', (limit,))
++                if owner_name:
++                    cur.execute(
++                        'SELECT DISTINCT "ID" FROM purchase_orders '
++                        'WHERE "営業担当者名" = %s OR "営業事務担当者名" = %s '
++                        'ORDER BY "ID" DESC LIMIT %s',
++                        (owner_name, owner_name, limit),
++                    )
++                else:
++                    cur.execute('SELECT DISTINCT "ID" FROM purchase_orders ORDER BY "ID" DESC LIMIT %s', (limit,))
+                 rows = cur.fetchall()
+             return [{"id": row[0]} for row in rows]
+         except Exception as e:
+diff --git a/backend/services/tool_registry.py b/backend/services/tool_registry.py
+index 25e69f4..5756297 100644
+--- a/backend/services/tool_registry.py
++++ b/backend/services/tool_registry.py
+@@ -188,6 +188,22 @@ TOOLS: list[dict[str, Any]] = [
+             "required": ["query"],
+         },
+     },
++    {
++        "name": "get_my_projects",
++        "description": (
++            "ログインユーザー自身が「営業担当者」または「営業事務担当者」になっている"
++            "案件（PO）を取得する。「自分の案件」「私が担当している案件」「自分の残タスク」"
++            "のような質問に使う。ログイン中のメールアドレスが社員マスタの氏名と一致しない"
++            "場合は取得できない（'unavailable'）ので、その場合は正直に担当者名を特定できな"
++            "かった旨を伝えること。架空の案件を作ってはいけない。"
++        ),
++        "input_schema": {
++            "type": "object",
++            "properties": {
++                "limit": {"type": "integer", "description": "取得件数（既定20）"},
++            },
++        },
++    },
+ ]
+ 
+ 
+@@ -293,6 +309,41 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
+                 result = slack_service.search_messages(
+                     user_email, tool_input.get("query", ""), tool_input.get("max_results", 10)
+                 )
++        elif tool_name == "get_my_projects":
++            if not user_email:
++                result = {"status": "unavailable", "summary": "ユーザーが特定できないため取得できません。", "records": []}
++            else:
++                from services.auth_service import get_staff_name_by_email
++                from services.project_service import ProjectService
++
++                owner_name = get_staff_name_by_email(user_email)
++                if not owner_name:
++                    result = {
++                        "status": "unavailable",
++                        "summary": "ログイン中のメールアドレスが社員マスタの氏名と一致しないため、担当案件を特定できません。",
++                        "records": [],
++                    }
++                else:
++                    service = ProjectService()
++                    limit = tool_input.get("limit", 20)
++                    project_ids = service._query_projects_from_db(limit=limit, owner_name=owner_name)
++                    records = []
++                    for proj in project_ids:
++                        agg = service.build_project_aggregate(proj["id"])
++                        if agg:
++                            records.append({
++                                "project_id": agg.project_id,
++                                "po_number": agg.po_number,
++                                "customer": agg.data.customer_name,
++                                "state": agg.state.value,
++                                "priority": agg.priority,
++                                "actions_count": len(agg.actions),
++                            })
++                    result = {
++                        "status": "ok" if records else "unavailable",
++                        "summary": f"{owner_name}さんが担当する案件を{len(records)}件取得しました。" if records else f"{owner_name}さんが担当する案件は見つかりませんでした。",
++                        "records": records,
++                    }
+         else:
+             result = {"status": "unavailable", "summary": f"未知のツール: {tool_name}", "records": []}
+     except Exception as e:
+diff --git a/tests/backend/test_auth_service.py b/tests/backend/test_auth_service.py
+index e07ec09..c34f1e4 100644
+--- a/tests/backend/test_auth_service.py
++++ b/tests/backend/test_auth_service.py
+@@ -26,6 +26,9 @@ class _FakeCursor:
+     def fetchall(self):
+         return self._rows
+ 
++    def fetchone(self):
++        return self._rows[0] if self._rows else None
++
+ 
+ class _FakeConnection:
+     def __init__(self, rows: list[tuple]):
+@@ -152,3 +155,29 @@ def test_authenticate_rejects_non_staff_email_even_with_valid_google_token(monke
+     monkeypatch.setattr(auth_service, "is_valid_staff_email", lambda email: False)
+ 
+     assert auth_service.authenticate("fake-credential") is None
++
++
++def test_get_staff_name_by_email_returns_name_for_matching_email(monkeypatch):
++    rows = [("山田太郎",)]
++    monkeypatch.setattr(auth_service, "get_connection", lambda: _FakeConnection(rows))
++
++    assert auth_service.get_staff_name_by_email("yamada@logs.co.jp") == "山田太郎"
++
++
++def test_get_staff_name_by_email_returns_none_when_no_match(monkeypatch):
++    monkeypatch.setattr(auth_service, "get_connection", lambda: _FakeConnection([]))
++
++    assert auth_service.get_staff_name_by_email("unknown@logs.co.jp") is None
++
++
++def test_get_staff_name_by_email_returns_none_for_blank_email():
++    assert auth_service.get_staff_name_by_email("") is None
++
++
++def test_get_staff_name_by_email_returns_none_on_query_failure(monkeypatch):
++    def _raise():
++        raise RuntimeError("SUPABASE_DB_URL is not configured")
++
++    monkeypatch.setattr(auth_service, "get_connection", _raise)
++
++    assert auth_service.get_staff_name_by_email("someone@logs.co.jp") is None
+diff --git a/tests/backend/test_router.py b/tests/backend/test_router.py
+index b9b8486..3b5dc1d 100644
+--- a/tests/backend/test_router.py
++++ b/tests/backend/test_router.py
+@@ -50,7 +50,7 @@ def _mock_project_service(monkeypatch, aggregates: dict[str, ProjectAggregate]):
+ 
+     monkeypatch.setattr(
+         ProjectService, "_query_projects_from_db",
+-        lambda self, limit=10: [{"id": pid} for pid in aggregates],
++        lambda self, limit=10, owner_name=None: [{"id": pid} for pid in aggregates],
+     )
+     monkeypatch.setattr(
+         ProjectService, "build_project_aggregate",
+@@ -246,6 +246,63 @@ def test_list_projects_via_http(monkeypatch):
+     assert body["projects"][0]["customer"] == "US_LOGS Inc."
+ 
+ 
++def test_list_projects_defaults_to_mine_and_passes_owner_name(monkeypatch):
++    """14.28: scope未指定（既定=mine）だと、ログイン中の本人の氏名が
++    _query_projects_from_db へ渡されることを確認する。"""
++    from services import auth_service
++    from services.project_service import ProjectService
++
++    monkeypatch.setattr(auth_service, "get_staff_name_by_email", lambda email: "山田太郎")
++
++    captured = {}
++
++    def _fake_query(self, limit=10, owner_name=None):
++        captured["owner_name"] = owner_name
++        return [{"id": "7722"}]
++
++    monkeypatch.setattr(ProjectService, "_query_projects_from_db", _fake_query)
++    monkeypatch.setattr(ProjectService, "build_project_aggregate", lambda self, project_id: _fake_aggregate(project_id))
++
++    response = _client().get("/api/projects")
++    assert response.status_code == 200
++    assert captured["owner_name"] == "山田太郎"
++    assert response.json()["scope"] == "mine"
++
++
++def test_list_projects_scope_all_ignores_owner_name(monkeypatch):
++    from services import auth_service
++    from services.project_service import ProjectService
++
++    monkeypatch.setattr(auth_service, "get_staff_name_by_email", lambda email: "山田太郎")
++
++    captured = {}
++
++    def _fake_query(self, limit=10, owner_name=None):
++        captured["owner_name"] = owner_name
++        return [{"id": "7722"}]
++
++    monkeypatch.setattr(ProjectService, "_query_projects_from_db", _fake_query)
++    monkeypatch.setattr(ProjectService, "build_project_aggregate", lambda self, project_id: _fake_aggregate(project_id))
++
++    response = _client().get("/api/projects?scope=all")
++    assert response.status_code == 200
++    assert captured["owner_name"] is None
++    assert response.json()["scope"] == "all"
++
++
++def test_list_projects_falls_back_to_all_when_staff_name_unresolved(monkeypatch):
++    """ログイン中のメールが社員マスタと一致しない場合は、絞り込みをせず
++    全件を返す（表記ゆれで誤って絞り込むより安全側に倒す）。"""
++    from services import auth_service
++
++    monkeypatch.setattr(auth_service, "get_staff_name_by_email", lambda email: None)
++    _mock_project_service(monkeypatch, {"7722": _fake_aggregate("7722")})
++
++    response = _client().get("/api/projects")
++    assert response.status_code == 200
++    assert response.json()["scope"] == "all"
++
++
+ def test_get_project_via_http(monkeypatch):
+     from services.project_service import ProjectService
+ 

@@ -1,0 +1,296 @@
+diff --git a/backend/services/project_relations.py b/backend/services/project_relations.py
+index 9972240..a1619cd 100644
+--- a/backend/services/project_relations.py
++++ b/backend/services/project_relations.py
+@@ -6,6 +6,14 @@
+   2. 顧客担当者のメールアドレス（customer_contacts.メールアドレス、
+      purchase_orders.顧客ID で突合） — Gmailのfrom:/to:で高精度に絞れる
+ 
++この2つはOR（どちらか一致すればヒット）では組み合わせない —
++「PO番号は一致していないが、その顧客担当者との別件のメールならヒットする」
++というノイズが実際に発生したため（2026-07-08、全く別のPO番号のメールが
++表示された実例）。代わりに、まずPO番号だけで検索し、0件だった場合に限り
++顧客担当者メール／仕入先名にフォールバックする段階的な方式にしている。
++フォールバックでヒットした結果は`match_type`で区別し、呼び出し側が
++「PO番号そのものの一致ではない」ことを利用者に伝えられるようにする。
++
+ 仕入先名・商品コード等は第2段階として今後追加を検討する候補
+ （顧客担当者のようなメールアドレスの元データが仕入先側には存在しない
+ ため、今回は含めていない）。
+@@ -46,21 +54,76 @@ def get_customer_contact_emails(customer_id: str) -> list[str]:
+     return [row[0] for row in rows if row[0]]
+ 
+ 
+-def _build_gmail_query(po_number: str, contact_emails: list[str]) -> str:
+-    parts = [f'"{po_number}"'] if po_number else []
++def _contact_emails_query(contact_emails: list[str]) -> str:
++    parts = []
+     for email in contact_emails:
+         parts.append(f"from:{email}")
+         parts.append(f"to:{email}")
+     return " OR ".join(parts)
+ 
+ 
+-def _build_slack_query(po_number: str, supplier_name: str) -> str:
+-    parts = []
++def _search_gmail_related(
++    user_email: str, po_number: str, contact_emails: list[str], max_results: int
++) -> dict[str, Any]:
++    from services import gmail_service
++
++    if po_number:
++        po_result = gmail_service.search_messages(user_email, f'"{po_number}"', max_results)
++        if po_result.get("status") != "ok":
++            # Gmail未連携・APIエラー等 — フォールバックしても意味がないので
++            # そのまま呼び出し側に伝える（連携未完了なのに「担当者名で
++            # 検索したら見つかりました」という矛盾した表示を避ける）。
++            return po_result
++        if po_result.get("records"):
++            po_result["match_type"] = "po_number"
++            return po_result
++    else:
++        po_result = {"status": "ok", "summary": "PO番号がありません。", "records": []}
++
++    if contact_emails:
++        fallback_query = _contact_emails_query(contact_emails)
++        fallback_result = gmail_service.search_messages(user_email, fallback_query, max_results)
++        if fallback_result.get("status") == "ok" and fallback_result.get("records"):
++            fallback_result["match_type"] = "customer_contact"
++            fallback_result["summary"] = (
++                f"PO番号「{po_number}」に一致するメールは見つかりませんでしたが、"
++                f"この顧客の担当者とのメールが{len(fallback_result['records'])}件見つかりました"
++                "（同じPOとは限りません）。"
++            )
++            return fallback_result
++
++    po_result["match_type"] = "po_number"
++    return po_result
++
++
++def _search_slack_related(
++    user_email: str, po_number: str, supplier_name: str, max_results: int
++) -> dict[str, Any]:
++    from services import slack_service
++
+     if po_number:
+-        parts.append(f'"{po_number}"')
++        po_result = slack_service.search_messages(user_email, f'"{po_number}"', max_results)
++        if po_result.get("status") != "ok":
++            return po_result
++        if po_result.get("records"):
++            po_result["match_type"] = "po_number"
++            return po_result
++    else:
++        po_result = {"status": "ok", "summary": "PO番号がありません。", "records": []}
++
+     if supplier_name:
+-        parts.append(f'"{supplier_name}"')
+-    return " OR ".join(parts)
++        fallback_result = slack_service.search_messages(user_email, f'"{supplier_name}"', max_results)
++        if fallback_result.get("status") == "ok" and fallback_result.get("records"):
++            fallback_result["match_type"] = "supplier_name"
++            fallback_result["summary"] = (
++                f"PO番号「{po_number}」に一致するメッセージは見つかりませんでしたが、"
++                f"仕入先「{supplier_name}」に関するメッセージが{len(fallback_result['records'])}件見つかりました"
++                "（同じPOとは限りません）。"
++            )
++            return fallback_result
++
++    po_result["match_type"] = "po_number"
++    return po_result
+ 
+ 
+ def get_related_communications(
+@@ -71,7 +134,8 @@ def get_related_communications(
+     max_results: int = 5,
+ ) -> dict[str, Any]:
+     """ログイン中の本人のGmail/Slackを、この案件に関連しそうなキーワード
+-    （PO番号・顧客担当者メールアドレス・仕入先名）で検索する。
++    （PO番号を優先し、0件ならフォールバックとして顧客担当者メールアドレス・
++    仕入先名）で検索する。
+ 
+     Gmail/Slackどちらも未連携の場合や、user_emailが無い場合は、それぞれ
+     'unavailable'をそのまま返す（呼び出し側はこれを見て「連携してくだ
+@@ -83,26 +147,13 @@ def get_related_communications(
+ 
+     contact_emails = get_customer_contact_emails(customer_id)
+ 
+-    gmail_query = _build_gmail_query(po_number, contact_emails)
+-    slack_query = _build_slack_query(po_number, supplier_name)
+-
+     try:
+-        from services import gmail_service
+-        gmail_result = (
+-            gmail_service.search_messages(user_email, gmail_query, max_results)
+-            if gmail_query
+-            else {"status": "unavailable", "summary": "検索に使えるキーがありませんでした。", "records": []}
+-        )
++        gmail_result = _search_gmail_related(user_email, po_number, contact_emails, max_results)
+     except Exception as e:
+         gmail_result = {"status": "error", "summary": f"Gmail検索中にエラーが発生しました: {e}", "records": []}
+ 
+     try:
+-        from services import slack_service
+-        slack_result = (
+-            slack_service.search_messages(user_email, slack_query, max_results)
+-            if slack_query
+-            else {"status": "unavailable", "summary": "検索に使えるキーがありませんでした。", "records": []}
+-        )
++        slack_result = _search_slack_related(user_email, po_number, supplier_name, max_results)
+     except Exception as e:
+         slack_result = {"status": "error", "summary": f"Slack検索中にエラーが発生しました: {e}", "records": []}
+ 
+diff --git a/frontend/app/workspace/[projectId]/page.tsx b/frontend/app/workspace/[projectId]/page.tsx
+index f91d9ff..acabbe2 100644
+--- a/frontend/app/workspace/[projectId]/page.tsx
++++ b/frontend/app/workspace/[projectId]/page.tsx
+@@ -46,6 +46,7 @@ interface RelatedMessage {
+   status: string;
+   summary: string;
+   records: Array<Record<string, any>>;
++  match_type?: string;
+ }
+ 
+ interface RelatedCommunications {
+@@ -258,6 +259,9 @@ export default function WorkspacePage({ params }: Params) {
+               <h4 className="mb-2 text-xs font-semibold text-ink">Gmail</h4>
+               {related.gmail.status === "ok" && related.gmail.records.length > 0 ? (
+                 <div className="space-y-2">
++                  {related.gmail.match_type === "customer_contact" && (
++                    <p className="text-xs text-amber-700">※PO番号の一致ではなく、この顧客の担当者とのメールです（同じ案件とは限りません）。</p>
++                  )}
+                   {related.gmail.records.map((r, idx) => (
+                     <div key={idx} className="rounded-lg border border-slate-200 p-3 text-xs">
+                       <p className="font-medium text-ink">{r.subject}</p>
+@@ -279,6 +283,9 @@ export default function WorkspacePage({ params }: Params) {
+               <h4 className="mb-2 text-xs font-semibold text-ink">Slack</h4>
+               {related.slack.status === "ok" && related.slack.records.length > 0 ? (
+                 <div className="space-y-2">
++                  {related.slack.match_type === "supplier_name" && (
++                    <p className="text-xs text-amber-700">※PO番号の一致ではなく、仕入先名でのマッチです（同じ案件とは限りません）。</p>
++                  )}
+                   {related.slack.records.map((r, idx) => (
+                     <div key={idx} className="rounded-lg border border-slate-200 p-3 text-xs">
+                       <p className="font-medium text-ink">#{r.channel} ・ {r.username}</p>
+diff --git a/tests/backend/test_project_relations.py b/tests/backend/test_project_relations.py
+index 4b5fe2b..5dd97b0 100644
+--- a/tests/backend/test_project_relations.py
++++ b/tests/backend/test_project_relations.py
+@@ -57,49 +57,87 @@ def test_get_customer_contact_emails_returns_empty_on_query_failure(monkeypatch)
+     assert project_relations.get_customer_contact_emails("c1") == []
+ 
+ 
+-def test_build_gmail_query_combines_po_number_and_contact_emails():
+-    query = project_relations._build_gmail_query("2091-20251119_1", ["a@example.com", "b@example.com"])
+-    assert query == '"2091-20251119_1" OR from:a@example.com OR to:a@example.com OR from:b@example.com OR to:b@example.com'
++def test_get_related_communications_returns_unavailable_without_user_email():
++    result = project_relations.get_related_communications(None, "PO-1", "c1", "Supplier")
++    assert result["gmail"]["status"] == "unavailable"
++    assert result["slack"]["status"] == "unavailable"
+ 
+ 
+-def test_build_gmail_query_with_no_contact_emails():
+-    assert project_relations._build_gmail_query("2091-20251119_1", []) == '"2091-20251119_1"'
++def test_gmail_search_prefers_po_number_match_and_does_not_fall_back_when_found(monkeypatch):
++    """14.29の回帰テスト: PO番号でヒットした場合、顧客担当者メールでの
++    フォールバック検索は一切呼ばれない（=別件のメールが混ざらない）。"""
++    from services import gmail_service
+ 
++    calls = []
+ 
+-def test_build_slack_query_combines_po_number_and_supplier_name():
+-    query = project_relations._build_slack_query("2091-20251119_1", "1064STUDIO")
+-    assert query == '"2091-20251119_1" OR "1064STUDIO"'
++    def _fake_search(email, query, max_results):
++        calls.append(query)
++        if query == '"2091-20250602_2"':
++            return {"status": "ok", "summary": "1件", "records": [{"subject": "見積書 2091-20250602_2"}]}
++        raise AssertionError(f"fallback search should not have been called, got query={query!r}")
+ 
++    monkeypatch.setattr(gmail_service, "search_messages", _fake_search)
++    monkeypatch.setattr(project_relations, "get_customer_contact_emails", lambda customer_id: ["tanaka@customer.example"])
++
++    result = project_relations.get_related_communications("user@logs.co.jp", "2091-20250602_2", "c1", "1064STUDIO")
++
++    assert calls == ['"2091-20250602_2"']
++    assert result["gmail"]["match_type"] == "po_number"
++    assert result["gmail"]["records"] == [{"subject": "見積書 2091-20250602_2"}]
+ 
+-def test_get_related_communications_returns_unavailable_without_user_email():
+-    result = project_relations.get_related_communications(None, "PO-1", "c1", "Supplier")
+-    assert result["gmail"]["status"] == "unavailable"
+-    assert result["slack"]["status"] == "unavailable"
+ 
++def test_gmail_search_falls_back_to_contact_email_only_when_po_number_finds_nothing(monkeypatch):
++    """PO番号一致が0件の場合に限り、顧客担当者メールでの検索を行う。
++    その結果はmatch_type='customer_contact'で区別できる。"""
++    from services import gmail_service
+ 
+-def test_get_related_communications_calls_gmail_and_slack_with_built_queries(monkeypatch):
+-    from services import gmail_service, slack_service
++    def _fake_search(email, query, max_results):
++        if query == '"2091-20250602_2"':
++            return {"status": "ok", "summary": "0件", "records": []}
++        return {"status": "ok", "summary": "1件", "records": [{"subject": "別件のメール"}]}
+ 
++    monkeypatch.setattr(gmail_service, "search_messages", _fake_search)
+     monkeypatch.setattr(project_relations, "get_customer_contact_emails", lambda customer_id: ["tanaka@customer.example"])
+ 
+-    captured = {}
++    result = project_relations.get_related_communications("user@logs.co.jp", "2091-20250602_2", "c1", "1064STUDIO")
++
++    assert result["gmail"]["match_type"] == "customer_contact"
++    assert result["gmail"]["records"] == [{"subject": "別件のメール"}]
++    assert "同じPOとは限りません" in result["gmail"]["summary"]
++
++
++def test_gmail_search_does_not_fall_back_when_gmail_is_unavailable(monkeypatch):
++    """未連携の場合はそのまま'unavailable'を返し、フォールバック検索も
++    行わない（連携していないのに結果が出るという矛盾を避ける）。"""
++    from services import gmail_service
++
++    calls = []
++
++    def _fake_search(email, query, max_results):
++        calls.append(query)
++        return {"status": "unavailable", "summary": "Gmail未連携です。", "records": []}
++
++    monkeypatch.setattr(gmail_service, "search_messages", _fake_search)
++    monkeypatch.setattr(project_relations, "get_customer_contact_emails", lambda customer_id: ["tanaka@customer.example"])
++
++    result = project_relations.get_related_communications("user@logs.co.jp", "2091-20250602_2", "c1", "1064STUDIO")
++
++    assert result["gmail"]["status"] == "unavailable"
++    assert calls == ['"2091-20250602_2"']  # フォールバックは呼ばれていない
++
+ 
+-    def _fake_gmail_search(email, query, max_results):
+-        captured["gmail_query"] = query
+-        return {"status": "ok", "summary": "1件", "records": [{"subject": "見積書"}]}
++def test_slack_search_prefers_po_number_and_falls_back_to_supplier_name(monkeypatch):
++    from services import slack_service
+ 
+-    def _fake_slack_search(email, query, max_results):
+-        captured["slack_query"] = query
+-        return {"status": "ok", "summary": "1件", "records": [{"text": "納期確認"}]}
++    def _fake_search(email, query, max_results):
++        if query == '"2091-20250602_2"':
++            return {"status": "ok", "summary": "0件", "records": []}
++        assert query == '"1064STUDIO"'
++        return {"status": "ok", "summary": "1件", "records": [{"text": "1064STUDIOとのやり取り"}]}
+ 
+-    monkeypatch.setattr(gmail_service, "search_messages", _fake_gmail_search)
+-    monkeypatch.setattr(slack_service, "search_messages", _fake_slack_search)
++    monkeypatch.setattr(slack_service, "search_messages", _fake_search)
+ 
+-    result = project_relations.get_related_communications(
+-        "user@logs.co.jp", "2091-20251119_1", "c1", "1064STUDIO"
+-    )
++    result = project_relations.get_related_communications("user@logs.co.jp", "2091-20250602_2", "unknown", "1064STUDIO")
+ 
+-    assert captured["gmail_query"] == '"2091-20251119_1" OR from:tanaka@customer.example OR to:tanaka@customer.example'
+-    assert captured["slack_query"] == '"2091-20251119_1" OR "1064STUDIO"'
+-    assert result["gmail"]["records"] == [{"subject": "見積書"}]
+-    assert result["slack"]["records"] == [{"text": "納期確認"}]
++    assert result["slack"]["match_type"] == "supplier_name"
++    assert result["slack"]["records"] == [{"text": "1064STUDIOとのやり取り"}]

@@ -1,0 +1,548 @@
+diff --git a/backend/api/router.py b/backend/api/router.py
+index 1fe985a..cf753ac 100644
+--- a/backend/api/router.py
++++ b/backend/api/router.py
+@@ -142,23 +142,20 @@ def list_projects(limit: int = 10, scope: str = "mine", user: dict = Depends(req
+ 
+         service = ProjectService()
+         project_ids = service._query_projects_from_db(limit=limit, owner_name=owner_name)
++        ids = [r["id"] for r in project_ids[:limit] if r.get("id")]
+ 
+         projects = []
+-        for proj_record in project_ids[:limit]:
+-            proj_id = proj_record.get("id")
+-            if proj_id:
+-                agg = service.build_project_aggregate(proj_id, record_capability=False)
+-                if agg:
+-                    projects.append({
+-                        "project_id": agg.project_id,
+-                        "project_name": agg.po_number,
+-                        "customer": agg.data.customer_name,
+-                        "state": agg.state.value,
+-                        "priority": agg.priority,
+-                        "actions_count": len(agg.actions),
+-                        "events_count": agg.events.event_count,
+-                        "trace_id": agg.trace_id,
+-                    })
++        for agg in service.build_project_aggregates_bulk(ids):
++            projects.append({
++                "project_id": agg.project_id,
++                "project_name": agg.po_number,
++                "customer": agg.data.customer_name,
++                "state": agg.state.value,
++                "priority": agg.priority,
++                "actions_count": len(agg.actions),
++                "events_count": agg.events.event_count,
++                "trace_id": agg.trace_id,
++            })
+ 
+         return {
+             "success": True,
+@@ -297,30 +294,27 @@ def get_today_actions(limit: int = 20, scope: str = "mine", user: dict = Depends
+ 
+         # Get multiple projects
+         project_ids = service._query_projects_from_db(limit=50, owner_name=owner_name)
++        ids = [r["id"] for r in project_ids if r.get("id")]
+ 
+         all_actions = []
+-        for proj_record in project_ids:
+-            proj_id = proj_record.get("id")
+-            if proj_id:
+-                agg = service.build_project_aggregate(proj_id, record_capability=False)
+-                if agg:
+-                    for action in agg.actions:
+-                        all_actions.append({
+-                            "action_id": action.action_id,
+-                            "project_id": agg.project_id,
+-                            "project_name": agg.po_number,
+-                            "customer": agg.data.customer_name,
+-                            "title": action.title,
+-                            "description": action.description,
+-                            "priority": action.priority,
+-                            "reason": action.condition,
+-                            "related_event": [e.event_type.value for e in agg.events.events if e.after_state == action.related_state][-1:] if agg.events.events else None,
+-                            "related_state": action.related_state.value,
+-                            "related_goal": action.related_goal.value if action.related_goal else None,
+-                            "trace_id": agg.trace_id,
+-                            "due_date": action.due_date.isoformat() if action.due_date else None,
+-                            "confidence": action.confidence,
+-                        })
++        for agg in service.build_project_aggregates_bulk(ids):
++            for action in agg.actions:
++                all_actions.append({
++                    "action_id": action.action_id,
++                    "project_id": agg.project_id,
++                    "project_name": agg.po_number,
++                    "customer": agg.data.customer_name,
++                    "title": action.title,
++                    "description": action.description,
++                    "priority": action.priority,
++                    "reason": action.condition,
++                    "related_event": [e.event_type.value for e in agg.events.events if e.after_state == action.related_state][-1:] if agg.events.events else None,
++                    "related_state": action.related_state.value,
++                    "related_goal": action.related_goal.value if action.related_goal else None,
++                    "trace_id": agg.trace_id,
++                    "due_date": action.due_date.isoformat() if action.due_date else None,
++                    "confidence": action.confidence,
++                })
+ 
+         # Sort by priority (high first) then confidence
+         priority_order = {"high": 0, "medium": 1, "low": 2}
+diff --git a/backend/business/today_actions.py b/backend/business/today_actions.py
+index 9694da7..d598a9d 100644
+--- a/backend/business/today_actions.py
++++ b/backend/business/today_actions.py
+@@ -51,16 +51,12 @@ def _get_recent_activity(owner_name: str | None = None) -> dict:
+         from services.project_service import ProjectService
+ 
+         service = ProjectService()
+-        for proj_record in service._query_projects_from_db(limit=3, owner_name=owner_name):
+-            proj_id = proj_record.get("id")
+-            if not proj_id:
+-                continue
+-            agg = service.build_project_aggregate(proj_id, record_capability=False)
+-            if agg:
+-                recent_projects.append({
+-                    "project_id": agg.project_id,
+-                    "name": f"{agg.data.customer_name} / {agg.po_number}",
+-                })
++        ids = [r["id"] for r in service._query_projects_from_db(limit=3, owner_name=owner_name) if r.get("id")]
++        for agg in service.build_project_aggregates_bulk(ids):
++            recent_projects.append({
++                "project_id": agg.project_id,
++                "name": f"{agg.data.customer_name} / {agg.po_number}",
++            })
+     except Exception:
+         pass
+ 
+diff --git a/backend/services/project_service.py b/backend/services/project_service.py
+index c619018..4975915 100644
+--- a/backend/services/project_service.py
++++ b/backend/services/project_service.py
+@@ -74,48 +74,36 @@ class ProjectService:
+         finally:
+             conn.close()
+ 
+-    def _build_project_data(self, project_id: str) -> ProjectData | None:
+-        """Build ProjectData by querying purchase_orders (real Supabase public schema)."""
+-
+-        def parse_date(date_val: Any) -> datetime | None:
+-            if not date_val:
+-                return None
+-            if isinstance(date_val, datetime):
+-                return date_val
+-            try:
+-                return datetime.fromisoformat(str(date_val).replace("Z", "+00:00"))
+-            except Exception:
+-                return None
+-
+-        conn = get_connection()
++    _PO_SELECT_COLUMNS = (
++        '"ID", "PO_No", "仕入先ID", "仕入先名", "顧客ID", "顧客名", '
++        '"PO発行日", "顧客納品日", "納品日", '
++        '"合計発注金額", "合計売上原価", "合計売上金額"'
++    )
++
++    @staticmethod
++    def _parse_date(date_val: Any) -> datetime | None:
++        if not date_val:
++            return None
++        if isinstance(date_val, datetime):
++            return date_val
+         try:
+-            with conn.cursor() as cur:
+-                cur.execute(
+-                    'SELECT "PO_No", "仕入先ID", "仕入先名", "顧客ID", "顧客名", '
+-                    '"PO発行日", "顧客納品日", "納品日", '
+-                    '"合計発注金額", "合計売上原価", "合計売上金額" '
+-                    'FROM purchase_orders WHERE "ID" = %s',
+-                    (project_id,),
+-                )
+-                row = cur.fetchone()
+-                if not row:
+-                    return None
+-                columns = [desc[0] for desc in cur.description]
+-                po_dict = dict(zip(columns, row))
+-        except Exception as e:
+-            print(f"Error building project data: {e}")
++            return datetime.fromisoformat(str(date_val).replace("Z", "+00:00"))
++        except Exception:
+             return None
+-        finally:
+-            conn.close()
+ 
++    def _po_dict_to_project_data(self, project_id: str, po_dict: dict[str, Any]) -> ProjectData | None:
++        """Convert an already-fetched purchase_orders row (as a dict) into
++        ProjectData. Shared by both the single-project and batch code paths
++        so the parsing logic only lives in one place.
++        """
+         try:
+             po_number = po_dict.get("PO_No", "") or ""
+             supplier_id = str(po_dict.get("仕入先ID", "") or "unknown")
+             supplier_name = po_dict.get("仕入先名", "") or ""
+             customer_id = str(po_dict.get("顧客ID", "") or "unknown")
+             customer_name = po_dict.get("顧客名", "") or ""
+-            po_created = parse_date(po_dict.get("PO発行日")) or datetime.now()
+-            po_required_delivery = parse_date(po_dict.get("顧客納品日")) or (datetime.now() + timedelta(days=30))
++            po_created = self._parse_date(po_dict.get("PO発行日")) or datetime.now()
++            po_required_delivery = self._parse_date(po_dict.get("顧客納品日")) or (datetime.now() + timedelta(days=30))
+ 
+             project_data = ProjectData(
+                 project_id=project_id,
+@@ -133,7 +121,7 @@ class ProjectService:
+                 customer_email=None,
+                 customer_address=None,
+                 po_required_delivery_date_alt=None,
+-                actual_delivery_date=parse_date(po_dict.get("納品日")),
++                actual_delivery_date=self._parse_date(po_dict.get("納品日")),
+                 invoice_date=None,
+                 payment_due_date=None,
+                 actual_payment_date=None,
+@@ -155,6 +143,68 @@ class ProjectService:
+             print(f"Error building project data: {e}")
+             return None
+ 
++    def _build_project_data(self, project_id: str) -> ProjectData | None:
++        """Build ProjectData for a single project by querying purchase_orders
++        (real Supabase public schema). For fetching many projects at once
++        (list views), use `_build_project_data_batch` instead — each call to
++        this method opens its own DB connection, which is fine for a single
++        lookup but far too slow in a loop (docs/architecture.md 14.28).
++        """
++        conn = get_connection()
++        try:
++            with conn.cursor() as cur:
++                cur.execute(
++                    f'SELECT {self._PO_SELECT_COLUMNS} FROM purchase_orders WHERE "ID" = %s',
++                    (project_id,),
++                )
++                row = cur.fetchone()
++                if not row:
++                    return None
++                columns = [desc[0] for desc in cur.description]
++                po_dict = dict(zip(columns, row))
++        except Exception as e:
++            print(f"Error building project data: {e}")
++            return None
++        finally:
++            conn.close()
++
++        return self._po_dict_to_project_data(project_id, po_dict)
++
++    def _build_project_data_batch(self, project_ids: list[str]) -> dict[str, ProjectData]:
++        """Fetch ProjectData for many projects in a single DB round-trip
++        (one connection, one query with `WHERE "ID" = ANY(%s)`), instead of
++        one connection per project. Added 2026-07-08 (docs/architecture.md
++        14.28) after 案件一覧/今日のタスク were measured taking 20〜80秒 —
++        almost entirely connection-open overhead multiplied by project
++        count, not query cost itself.
++        """
++        if not project_ids:
++            return {}
++
++        conn = get_connection()
++        try:
++            with conn.cursor() as cur:
++                cur.execute(
++                    f'SELECT {self._PO_SELECT_COLUMNS} FROM purchase_orders WHERE "ID" = ANY(%s)',
++                    (list(project_ids),),
++                )
++                rows = cur.fetchall()
++                columns = [desc[0] for desc in cur.description]
++        except Exception as e:
++            print(f"Error batch-building project data: {e}")
++            return {}
++        finally:
++            conn.close()
++
++        result: dict[str, ProjectData] = {}
++        for row in rows:
++            po_dict = dict(zip(columns, row))
++            project_id = str(po_dict.get("ID"))
++            data = self._po_dict_to_project_data(project_id, po_dict)
++            if data:
++                result[project_id] = data
++        return result
++
+     def _generate_project_events(self, data: ProjectData, trace_id: str) -> ProjectEvents:
+         """Generate business events from project data."""
+         events = ProjectEvents(project_id=data.project_id)
+@@ -765,7 +815,18 @@ class ProjectService:
+         data = self._build_project_data(project_id)
+         if not data:
+             return None
+-
++        return self._build_aggregate_from_data(project_id, data)
++
++    def _build_aggregate_from_data(
++        self, project_id: str, data: ProjectData, save_trace_flag: bool = True
++    ) -> ProjectAggregate:
++        """Run the (pure-Python, no DB access) event/goal/decision/action/
++        health/risk calculations for an already-fetched ProjectData and
++        assemble a ProjectAggregate. Split out from `_build_project_aggregate_impl`
++        so `build_project_aggregates_bulk` can reuse it against data that was
++        fetched in one batched query, instead of one query per project
++        (docs/architecture.md 14.28).
++        """
+         trace_id = self._generate_trace_id(project_id)
+ 
+         events = self._generate_project_events(data, trace_id)
+@@ -798,13 +859,37 @@ class ProjectService:
+             recommended_focus=recommended_focus,
+         )
+ 
+-        try:
+-            save_trace(trace_id, aggregate.to_dict())
+-        except Exception:
+-            # Trace persistence must never block the actual response.
+-            pass
++        if save_trace_flag:
++            try:
++                save_trace(trace_id, aggregate.to_dict())
++            except Exception:
++                # Trace persistence must never block the actual response.
++                pass
+ 
+         return aggregate
++
++    def build_project_aggregates_bulk(self, project_ids: list[str]) -> list[ProjectAggregate]:
++        """Build ProjectAggregates for many projects at once, using exactly
++        one DB connection/query total (via `_build_project_data_batch`)
++        instead of one per project. This is the method list-style call
++        sites (/api/projects, /api/today-actions, home's recent projects,
++        get_my_projects) should use — `build_project_aggregate()` in a loop
++        was measured taking 20〜80秒 for 20〜50 projects, almost entirely
++        connection-open overhead (docs/architecture.md 14.28). Trace/
++        Capability bookkeeping is always skipped here, matching
++        record_capability=False's behavior, since this is inherently a
++        bulk/listing code path.
++
++        Returns aggregates in the same order as `project_ids`, skipping any
++        id that no longer exists in purchase_orders.
++        """
++        data_map = self._build_project_data_batch(project_ids)
++        aggregates = []
++        for project_id in project_ids:
++            data = data_map.get(str(project_id))
++            if data:
++                aggregates.append(self._build_aggregate_from_data(str(project_id), data, save_trace_flag=False))
++        return aggregates
+         
+ 
+     def build_project_aggregates(self, limit: int = 50) -> list[ProjectAggregate]:
+diff --git a/backend/services/tool_registry.py b/backend/services/tool_registry.py
+index 14fa865..9c1eacb 100644
+--- a/backend/services/tool_registry.py
++++ b/backend/services/tool_registry.py
+@@ -327,18 +327,17 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
+                     service = ProjectService()
+                     limit = tool_input.get("limit", 20)
+                     project_ids = service._query_projects_from_db(limit=limit, owner_name=owner_name)
++                    ids = [p["id"] for p in project_ids if p.get("id")]
+                     records = []
+-                    for proj in project_ids:
+-                        agg = service.build_project_aggregate(proj["id"], record_capability=False)
+-                        if agg:
+-                            records.append({
+-                                "project_id": agg.project_id,
+-                                "po_number": agg.po_number,
+-                                "customer": agg.data.customer_name,
+-                                "state": agg.state.value,
+-                                "priority": agg.priority,
+-                                "actions_count": len(agg.actions),
+-                            })
++                    for agg in service.build_project_aggregates_bulk(ids):
++                        records.append({
++                            "project_id": agg.project_id,
++                            "po_number": agg.po_number,
++                            "customer": agg.data.customer_name,
++                            "state": agg.state.value,
++                            "priority": agg.priority,
++                            "actions_count": len(agg.actions),
++                        })
+                     result = {
+                         "status": "ok" if records else "unavailable",
+                         "summary": f"{owner_name}さんが担当する案件を{len(records)}件取得しました。" if records else f"{owner_name}さんが担当する案件は見つかりませんでした。",
+diff --git a/tests/backend/test_project_service.py b/tests/backend/test_project_service.py
+new file mode 100644
+index 0000000..64b6175
+--- /dev/null
++++ b/tests/backend/test_project_service.py
+@@ -0,0 +1,132 @@
++"""Tests for `backend/services/project_service.py`'s batch data-fetching
++path (docs/architecture.md 14.28).
++
++`_build_project_data_batch`/`build_project_aggregates_bulk` exist
++specifically to replace "one `get_connection()` per project" (measured
++taking 20〜80秒 for 20〜50 projects, almost entirely connection-open
++overhead) with exactly one connection/query for however many projects are
++requested. These tests lock in that connection-count guarantee so a future
++change can't silently regress back to the N+1 pattern.
++"""
++from __future__ import annotations
++
++from services.project_service import ProjectService
++
++
++class _FakeCursor:
++    def __init__(self, rows: list[tuple], columns: list[str]):
++        self._rows = rows
++        self.description = [(c,) for c in columns]
++
++    def __enter__(self):
++        return self
++
++    def __exit__(self, *a):
++        return False
++
++    def execute(self, sql, params=None):
++        pass
++
++    def fetchall(self):
++        return self._rows
++
++    def fetchone(self):
++        return self._rows[0] if self._rows else None
++
++
++class _FakeConnection:
++    def __init__(self, rows: list[tuple], columns: list[str]):
++        self._cursor = _FakeCursor(rows, columns)
++        self.closed = False
++
++    def cursor(self):
++        return self._cursor
++
++    def close(self):
++        self.closed = True
++
++
++_COLUMNS = [
++    "ID", "PO_No", "仕入先ID", "仕入先名", "顧客ID", "顧客名",
++    "PO発行日", "顧客納品日", "納品日",
++    "合計発注金額", "合計売上原価", "合計売上金額",
++]
++
++
++def _fake_row(project_id: str) -> tuple:
++    return (project_id, f"PO-{project_id}", "s1", "Supplier", "c1", "Customer",
++            None, None, None, 100.0, 60.0, 90.0)
++
++
++def test_build_project_data_batch_opens_exactly_one_connection(monkeypatch):
++    """14.28: 10件でも50件でも、get_connection()が呼ばれるのは1回だけ
++    であることを確認する（一覧・今日のタスクの体感速度改善の要）。"""
++    project_ids = [str(i) for i in range(50)]
++    rows = [_fake_row(pid) for pid in project_ids]
++
++    call_count = {"n": 0}
++
++    def _fake_get_connection():
++        call_count["n"] += 1
++        return _FakeConnection(rows, _COLUMNS)
++
++    monkeypatch.setattr("services.project_service.get_connection", _fake_get_connection)
++
++    service = ProjectService()
++    result = service._build_project_data_batch(project_ids)
++
++    assert call_count["n"] == 1
++    assert len(result) == 50
++    assert result["0"].po_number == "PO-0"
++
++
++def test_build_project_data_batch_returns_empty_dict_for_empty_input(monkeypatch):
++    """空リストで呼んでもDBに接続しない（無駄な往復をしない）。"""
++    call_count = {"n": 0}
++
++    def _fake_get_connection():
++        call_count["n"] += 1
++        return _FakeConnection([], _COLUMNS)
++
++    monkeypatch.setattr("services.project_service.get_connection", _fake_get_connection)
++
++    service = ProjectService()
++    result = service._build_project_data_batch([])
++
++    assert result == {}
++    assert call_count["n"] == 0
++
++
++def test_build_project_aggregates_bulk_preserves_order_and_skips_missing(monkeypatch):
++    """存在しないIDは静かにスキップし、残りは要求した順序を保つ。"""
++    rows = [_fake_row("1"), _fake_row("3")]
++
++    monkeypatch.setattr(
++        "services.project_service.get_connection",
++        lambda: _FakeConnection(rows, _COLUMNS),
++    )
++
++    service = ProjectService()
++    aggregates = service.build_project_aggregates_bulk(["1", "2", "3"])
++
++    assert [a.project_id for a in aggregates] == ["1", "3"]
++
++
++def test_build_project_aggregates_bulk_does_not_touch_capability_registry(monkeypatch):
++    """一覧系のbulk構築は、record_capability=Falseの場合と同じく
++    Capability実行履歴への書き込みを一切行わない。"""
++    from services import capability_instance
++
++    def _fail_if_called(*args, **kwargs):
++        raise AssertionError("execute_capability should not be called from build_project_aggregates_bulk")
++
++    monkeypatch.setattr(capability_instance.registry, "execute_capability", _fail_if_called)
++    monkeypatch.setattr(
++        "services.project_service.get_connection",
++        lambda: _FakeConnection([_fake_row("1")], _COLUMNS),
++    )
++
++    service = ProjectService()
++    aggregates = service.build_project_aggregates_bulk(["1"])
++
++    assert len(aggregates) == 1
+diff --git a/tests/backend/test_router.py b/tests/backend/test_router.py
+index a9f9739..db3ae3a 100644
+--- a/tests/backend/test_router.py
++++ b/tests/backend/test_router.py
+@@ -56,6 +56,10 @@ def _mock_project_service(monkeypatch, aggregates: dict[str, ProjectAggregate]):
+         ProjectService, "build_project_aggregate",
+         lambda self, project_id, record_capability=True: aggregates.get(project_id),
+     )
++    monkeypatch.setattr(
++        ProjectService, "build_project_aggregates_bulk",
++        lambda self, project_ids: [aggregates[pid] for pid in project_ids if pid in aggregates],
++    )
+ 
+ 
+ # ---------------------------------------------------------------------------
+@@ -261,7 +265,7 @@ def test_list_projects_defaults_to_mine_and_passes_owner_name(monkeypatch):
+         return [{"id": "7722"}]
+ 
+     monkeypatch.setattr(ProjectService, "_query_projects_from_db", _fake_query)
+-    monkeypatch.setattr(ProjectService, "build_project_aggregate", lambda self, project_id, record_capability=True: _fake_aggregate(project_id))
++    monkeypatch.setattr(ProjectService, "build_project_aggregates_bulk", lambda self, project_ids: [_fake_aggregate(pid) for pid in project_ids])
+ 
+     response = _client().get("/api/projects")
+     assert response.status_code == 200
+@@ -282,7 +286,7 @@ def test_list_projects_scope_all_ignores_owner_name(monkeypatch):
+         return [{"id": "7722"}]
+ 
+     monkeypatch.setattr(ProjectService, "_query_projects_from_db", _fake_query)
+-    monkeypatch.setattr(ProjectService, "build_project_aggregate", lambda self, project_id, record_capability=True: _fake_aggregate(project_id))
++    monkeypatch.setattr(ProjectService, "build_project_aggregates_bulk", lambda self, project_ids: [_fake_aggregate(pid) for pid in project_ids])
+ 
+     response = _client().get("/api/projects?scope=all")
+     assert response.status_code == 200
+@@ -320,7 +324,10 @@ def test_list_projects_skips_capability_bookkeeping_for_speed(monkeypatch):
+         ProjectService, "_query_projects_from_db",
+         lambda self, limit=10, owner_name=None: [{"id": "7722"}],
+     )
+-    monkeypatch.setattr(ProjectService, "_build_project_aggregate_impl", lambda self, project_id: _fake_aggregate(project_id))
++    monkeypatch.setattr(
++        ProjectService, "_build_project_data_batch",
++        lambda self, project_ids: {pid: _fake_aggregate(pid).data for pid in project_ids},
++    )
+ 
+     response = _client().get("/api/projects")
+     assert response.status_code == 200

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Badge, Card, SectionHeader } from "@/components/design-system";
 import { getProduct } from "@/lib/api-client";
 
-type Params = { params: { logsCode: string } };
+type Params = { params: { productId: string } };
 
 interface PurchaseOrderLine {
   ID: number;
@@ -89,7 +89,7 @@ export default function ProductDetailPage({ params }: Params) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getProduct(params.logsCode).then((data: any) => {
+    getProduct(params.productId).then((data: any) => {
       setLoading(false);
       if (data?.success === false) {
         setError(data.error ?? "商品データの取得に失敗しました");
@@ -97,7 +97,7 @@ export default function ProductDetailPage({ params }: Params) {
       }
       setProduct(data?.product ?? null);
     });
-  }, [params.logsCode]);
+  }, [params.productId]);
 
   if (loading) {
     return <p className="px-4 py-8 text-center text-sm text-sub">読み込み中...</p>;
@@ -116,9 +116,9 @@ export default function ProductDetailPage({ params }: Params) {
   return (
     <div className="space-y-5">
       <header className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h1 className="page-title">商品: {m.商品名 ?? m.LOGS_CODE}</h1>
+        <h1 className="page-title">商品: {m.商品名 ?? `商品ID ${m.ID}`}</h1>
         <p className="page-subtitle">
-          LOGS_CODE: {m.LOGS_CODE}{m.Sample_CODE ? ` ／ Sample_CODE: ${m.Sample_CODE}` : ""}
+          Sample_CODE: {m.Sample_CODE ?? "—"} ／ LOGS_CODE: {m.LOGS_CODE ?? "（未発注）"}
         </p>
       </header>
 

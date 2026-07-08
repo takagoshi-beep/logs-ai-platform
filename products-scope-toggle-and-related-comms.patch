@@ -1,0 +1,482 @@
+diff --git a/backend/api/router.py b/backend/api/router.py
+index 2fcb0d6..23afb1d 100644
+--- a/backend/api/router.py
++++ b/backend/api/router.py
+@@ -373,18 +373,30 @@ def list_products(limit: int = 20, scope: str = "mine", user: dict = Depends(req
+     対応の回答者/依頼元）に関連する商品だけを返す。本人特定できない
+     場合は空リストを返す（案件と異なり、商品では「担当者不明なら全件」
+     にすると母数が大きすぎるため）。
+-    scope="all"は今回未実装（商品マスタ全件は件数が大きく、別途ページング
+-    等の設計が必要なため）。
++    scope="all": 商品マスタから直近登録分をlimit件返す（MVP実装。
++    総件数を考慮したページングは今後の検討課題）。
+     """
+-    from services.product_service import get_products_master_batch, get_related_logs_codes, sample_code_sort_key
++    from services.product_service import get_all_products, get_products_master_batch, get_related_logs_codes, sample_code_sort_key
++
++    if scope == "all":
++        rows = get_all_products(limit=limit)
++        products = [
++            {
++                "logs_code": r.get("LOGS_CODE"),
++                "product_name": r.get("商品名"),
++                "model_no": r.get("型番"),
++                "supplier_name": r.get("仕入先名"),
++                "sample_code": r.get("Sample_CODE"),
++            }
++            for r in rows
++        ]
++        return {"success": True, "products": products, "count": len(products), "scope": "all"}
+ 
+-    owner_name = None
+-    if scope == "mine":
+-        from services.auth_service import get_staff_name_by_email
+-        owner_name = get_staff_name_by_email(user.get("email"))
++    from services.auth_service import get_staff_name_by_email
++    owner_name = get_staff_name_by_email(user.get("email"))
+ 
+     if not owner_name:
+-        return {"success": True, "products": [], "count": 0, "scope": "mine" if scope == "mine" else "all"}
++        return {"success": True, "products": [], "count": 0, "scope": "mine"}
+ 
+     logs_codes = get_related_logs_codes(owner_name, limit=limit)
+     master_map = get_products_master_batch(logs_codes)
+@@ -408,9 +420,11 @@ def list_products(limit: int = 20, scope: str = "mine", user: dict = Depends(req
+ 
+ 
+ @router.get("/products/{logs_code}")
+-def get_product(logs_code: str) -> dict:
+-    """1商品について、マスタ情報 + PO/売上/仕入/サンプルの横断履歴を返す。"""
+-    from services.product_service import get_product_detail
++def get_product(logs_code: str, user: dict = Depends(require_login)) -> dict:
++    """1商品について、マスタ情報 + PO/売上/仕入/サンプルの横断履歴、
++    および本人のGmail/Slackから見た関連メッセージを返す。
++    """
++    from services.product_service import get_product_detail, get_related_communications_for_product
+ 
+     try:
+         detail = get_product_detail(logs_code)
+@@ -420,4 +434,16 @@ def get_product(logs_code: str) -> dict:
+     if not detail:
+         raise HTTPException(status_code=404, detail=f"Product {logs_code} not found")
+ 
++    try:
++        detail["related_communications"] = get_related_communications_for_product(
++            user_email=user.get("email"),
++            logs_code=logs_code,
++            sample_code=detail["master"].get("Sample_CODE"),
++        )
++    except Exception as e:
++        detail["related_communications"] = {
++            "gmail": {"status": "error", "summary": str(e), "records": []},
++            "slack": {"status": "error", "summary": str(e), "records": []},
++        }
++
+     return {"success": True, "product": detail}
+\ No newline at end of file
+diff --git a/backend/services/product_service.py b/backend/services/product_service.py
+index aa87ea7..c3e2840 100644
+--- a/backend/services/product_service.py
++++ b/backend/services/product_service.py
+@@ -76,6 +76,37 @@ def sample_code_sort_key(sample_code: Any) -> tuple:
+         return (0, s)
+ 
+ 
++def get_all_products(limit: int = 50) -> list[dict[str, Any]]:
++    """商品マスタ全件から、直近登録分をlimit件だけ取得する(scope=all)。
++
++    現時点ではMVP実装: "ID"降順（直近登録順）でlimit件だけ取得してから
++    Sample_CODEでソートし直している。商品マスタの総件数が大きい場合、
++    本当の意味での「Sample_CODE全体で見た上位N件」にはならない
++    （limit件に絞り込んだ後でのソートのため）。ページング等を含めた
++    設計は、Noritsuguの指摘の通り今後の検討課題（2026-07-08）。
++    """
++    try:
++        conn = get_connection()
++        try:
++            with conn.cursor() as cur:
++                cur.execute(
++                    'SELECT "LOGS_CODE", "Sample_CODE", "商品名", "型番", "仕入先名" '
++                    'FROM products ORDER BY "ID" DESC LIMIT %s',
++                    (limit,),
++                )
++                rows = cur.fetchall()
++                columns = [desc[0] for desc in cur.description]
++        finally:
++            conn.close()
++    except Exception as e:
++        print(f"Error fetching all products: {e}")
++        return []
++
++    products = _rows_to_dicts(rows, columns)
++    products.sort(key=lambda p: sample_code_sort_key(p.get("Sample_CODE")), reverse=True)
++    return products
++
++
+ def get_related_logs_codes(owner_name: str, limit: int = 50) -> list[str]:
+     """自分に直接・間接的に関連する商品のLOGS_CODE一覧を、1回のクエリで
+     まとめて取得する。owner_nameが空、もしくはDB接続に失敗した場合は
+@@ -143,6 +174,50 @@ def get_products_master_batch(logs_codes: list[str]) -> dict[str, dict[str, Any]
+     return result
+ 
+ 
++def get_related_communications_for_product(
++    user_email: str | None,
++    logs_code: str,
++    sample_code: str | None,
++    max_results: int = 5,
++) -> dict[str, Any]:
++    """ログイン中の本人のGmail/Slackを、LOGS_CODE・Sample_CODE（SPL品番）
++    をキーに検索する。案件のPO番号のような「担当者メールへのフォール
++    バック」は行わない — LOGS_CODE/Sample_CODEはどちらもそれ自体が
++    十分に一意な識別子であり、案件のような「PO番号は一致しないが
++    担当者は一致する」という精度低下の心配がないため、単純にOR結合で
++    良いと判断した（2026-07-08）。
++
++    未連携の場合はgmail_service/slack_serviceが返す'unavailable'を
++    そのまま伝える（架空の関連メッセージを作らない）。
++    """
++    if not user_email:
++        unavailable = {"status": "unavailable", "summary": "ログインユーザーが特定できません。", "records": []}
++        return {"gmail": unavailable, "slack": unavailable}
++
++    parts = [f'"{logs_code}"'] if logs_code else []
++    if sample_code:
++        parts.append(f'"{sample_code}"')
++    query = " OR ".join(parts)
++
++    if not query:
++        unavailable = {"status": "unavailable", "summary": "検索に使えるキーがありませんでした。", "records": []}
++        return {"gmail": unavailable, "slack": unavailable}
++
++    try:
++        from services import gmail_service
++        gmail_result = gmail_service.search_messages(user_email, query, max_results)
++    except Exception as e:
++        gmail_result = {"status": "error", "summary": f"Gmail検索中にエラーが発生しました: {e}", "records": []}
++
++    try:
++        from services import slack_service
++        slack_result = slack_service.search_messages(user_email, query, max_results)
++    except Exception as e:
++        slack_result = {"status": "error", "summary": f"Slack検索中にエラーが発生しました: {e}", "records": []}
++
++    return {"gmail": gmail_result, "slack": slack_result}
++
++
+ def get_product_detail(logs_code: str) -> dict[str, Any] | None:
+     """1商品(LOGS_CODE)について、マスタ情報 + PO/売上/仕入/サンプルの
+     横断履歴をまとめて返す。商品マスタに存在しない場合はNone。
+diff --git a/frontend/app/products/[logsCode]/page.tsx b/frontend/app/products/[logsCode]/page.tsx
+index ba446dd..6fdb600 100644
+--- a/frontend/app/products/[logsCode]/page.tsx
++++ b/frontend/app/products/[logsCode]/page.tsx
+@@ -52,12 +52,24 @@ interface SampleLine {
+   通知状況: string | null;
+ }
+ 
++interface RelatedMessage {
++  status: string;
++  summary: string;
++  records: Array<Record<string, any>>;
++}
++
++interface RelatedCommunications {
++  gmail: RelatedMessage;
++  slack: RelatedMessage;
++}
++
+ interface ProductDetail {
+   master: Record<string, any>;
+   purchase_orders: PurchaseOrderLine[];
+   sales: SalesLine[];
+   purchases: PurchaseLine[];
+   samples: SampleLine[];
++  related_communications?: RelatedCommunications;
+   status: {
+     po_issued: boolean;
+     sales_recorded: boolean;
+@@ -211,6 +223,57 @@ export default function ProductDetailPage({ params }: Params) {
+           </div>
+         </Card>
+       )}
++      {product.related_communications && (
++        <Card>
++          <SectionHeader
++            title="関連するメール・Slack"
++            subtitle="LOGS_CODE・Sample_CODEで、あなた自身のGmail/Slackから検索した結果です。"
++          />
++          <div className="mt-3 grid gap-4 sm:grid-cols-2">
++            <div>
++              <h4 className="mb-2 text-xs font-semibold text-ink">Gmail</h4>
++              {product.related_communications.gmail.status === "ok" && product.related_communications.gmail.records.length > 0 ? (
++                <div className="space-y-2">
++                  {product.related_communications.gmail.records.map((r, idx) => (
++                    <div key={idx} className="rounded-lg border border-slate-200 p-3 text-xs">
++                      <p className="font-medium text-ink">{r.subject}</p>
++                      <p className="text-sub">{r.from} ・ {r.date}</p>
++                      {r.snippet && <p className="mt-1 text-sub">{r.snippet}</p>}
++                    </div>
++                  ))}
++                </div>
++              ) : product.related_communications.gmail.status === "unavailable" ? (
++                <p className="text-xs text-sub">
++                  {product.related_communications.gmail.summary}{" "}
++                  <a href="/settings" className="text-accent hover:underline">設定画面へ</a>
++                </p>
++              ) : (
++                <p className="text-xs text-sub">{product.related_communications.gmail.summary || "関連するメールは見つかりませんでした。"}</p>
++              )}
++            </div>
++            <div>
++              <h4 className="mb-2 text-xs font-semibold text-ink">Slack</h4>
++              {product.related_communications.slack.status === "ok" && product.related_communications.slack.records.length > 0 ? (
++                <div className="space-y-2">
++                  {product.related_communications.slack.records.map((r, idx) => (
++                    <div key={idx} className="rounded-lg border border-slate-200 p-3 text-xs">
++                      <p className="font-medium text-ink">#{r.channel} ・ {r.username}</p>
++                      <p className="mt-1 text-sub">{r.text}</p>
++                    </div>
++                  ))}
++                </div>
++              ) : product.related_communications.slack.status === "unavailable" ? (
++                <p className="text-xs text-sub">
++                  {product.related_communications.slack.summary}{" "}
++                  <a href="/settings" className="text-accent hover:underline">設定画面へ</a>
++                </p>
++              ) : (
++                <p className="text-xs text-sub">{product.related_communications.slack.summary || "関連するメッセージは見つかりませんでした。"}</p>
++              )}
++            </div>
++          </div>
++        </Card>
++      )}
+     </div>
+   );
+ }
+diff --git a/frontend/app/products/page.tsx b/frontend/app/products/page.tsx
+index 30c0914..f7d7479 100644
+--- a/frontend/app/products/page.tsx
++++ b/frontend/app/products/page.tsx
+@@ -14,22 +14,23 @@ interface ApiProduct {
+ 
+ export default function ProductsListPage() {
+   const [search, setSearch] = useState("");
++  const [scopeChoice, setScopeChoice] = useState<"mine" | "all">("mine");
+   const [products, setProducts] = useState<ApiProduct[]>([]);
+-  const [scope, setScope] = useState<string>("mine");
+   const [loading, setLoading] = useState(true);
+   const [error, setError] = useState<string | null>(null);
+ 
+   useEffect(() => {
+-    getProducts(50).then((data: any) => {
++    setLoading(true);
++    getProducts(50, scopeChoice).then((data: any) => {
+       setLoading(false);
+       if (data?.success === false) {
+         setError(data.error ?? "データの取得に失敗しました");
+         return;
+       }
++      setError(null);
+       setProducts(data?.products ?? []);
+-      setScope(data?.scope ?? "mine");
+     });
+-  }, []);
++  }, [scopeChoice]);
+ 
+   const filtered = products.filter((p) => {
+     if (!search) return true;
+@@ -46,7 +47,7 @@ export default function ProductsListPage() {
+       <header className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+         <h1 className="page-title">商品</h1>
+         <p className="page-subtitle">
+-          自分が直接・間接的に関連する商品（LOGS_CODE単位）を表示しています。PO・売上・仕入・サンプル対応を横断できます。
++          商品（LOGS_CODE単位）を表示しています。PO・売上・仕入・サンプル対応を横断できます。
+         </p>
+       </header>
+ 
+@@ -56,13 +57,32 @@ export default function ProductsListPage() {
+         </div>
+       )}
+ 
+-      {!loading && !error && scope === "mine" && products.length === 0 && (
++      {!loading && !error && scopeChoice === "mine" && products.length === 0 && (
+         <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-sub">
+-          関連する商品が見つかりませんでした（社員マスタの氏名と、PO・売上・仕入・商品マスタ上の担当者名が一致しない可能性があります）。
++          関連する商品が見つかりませんでした（社員マスタの氏名と、PO・売上・仕入・商品マスタ上の担当者名が一致しない可能性があります）。「すべての商品」に切り替えてご覧いただけます。
+         </div>
+       )}
+ 
+-      <div className="flex flex-wrap gap-2">
++      <div className="flex flex-wrap items-center gap-3">
++        {/* 2026-07-08: トグルの選択肢・他の検索オプションは今後検討予定 */}
++        <div className="inline-flex rounded-lg border border-slate-300 bg-white p-0.5 text-sm">
++          <button
++            onClick={() => setScopeChoice("mine")}
++            className={`rounded-md px-3 py-1.5 font-medium transition ${
++              scopeChoice === "mine" ? "bg-accent text-white" : "text-ink hover:bg-slate-100"
++            }`}
++          >
++            自分の商品
++          </button>
++          <button
++            onClick={() => setScopeChoice("all")}
++            className={`rounded-md px-3 py-1.5 font-medium transition ${
++              scopeChoice === "all" ? "bg-accent text-white" : "text-ink hover:bg-slate-100"
++            }`}
++          >
++            すべての商品
++          </button>
++        </div>
+         <input
+           type="text"
+           value={search}
+@@ -104,3 +124,4 @@ export default function ProductsListPage() {
+     </div>
+   );
+ }
++
+diff --git a/frontend/lib/api-client.ts b/frontend/lib/api-client.ts
+index 185f676..afb4552 100644
+--- a/frontend/lib/api-client.ts
++++ b/frontend/lib/api-client.ts
+@@ -267,8 +267,8 @@ export async function getProject(projectId: string) {
+ /**
+  * Get products related to the logged-in user (docs/architecture.md 14.30)
+  */
+-export async function getProducts(limit: number = 20) {
+-  return apiCall(`/api/products?limit=${limit}`);
++export async function getProducts(limit: number = 20, scope: "mine" | "all" = "mine") {
++  return apiCall(`/api/products?limit=${limit}&scope=${scope}`);
+ }
+ 
+ /**
+diff --git a/tests/backend/test_product_service.py b/tests/backend/test_product_service.py
+index 6ca5a1a..5df2863 100644
+--- a/tests/backend/test_product_service.py
++++ b/tests/backend/test_product_service.py
+@@ -76,6 +76,68 @@ def test_sample_code_sort_key_places_non_numeric_and_none_last():
+     assert set(ordered[2:]) == {None, "abc"}
+ 
+ 
++def test_get_all_products_returns_sorted_by_sample_code(monkeypatch):
++    columns = ["LOGS_CODE", "Sample_CODE", "商品名", "型番", "仕入先名"]
++    rows = [
++        ("a", "5", "P1", "M1", "S1"),
++        ("b", "100", "P2", "M2", "S2"),
++        ("c", "20", "P3", "M3", "S3"),
++    ]
++    monkeypatch.setattr(product_service, "get_connection", lambda: _FakeConnection(rows, columns))
++
++    result = product_service.get_all_products(limit=10)
++    assert [r["LOGS_CODE"] for r in result] == ["b", "c", "a"]
++
++
++def test_get_all_products_returns_empty_on_query_failure(monkeypatch):
++    def _raise():
++        raise RuntimeError("SUPABASE_DB_URL is not configured")
++
++    monkeypatch.setattr(product_service, "get_connection", _raise)
++    assert product_service.get_all_products() == []
++
++
++def test_get_related_communications_for_product_returns_unavailable_without_user_email():
++    result = product_service.get_related_communications_for_product(None, "5145", "S1")
++    assert result["gmail"]["status"] == "unavailable"
++    assert result["slack"]["status"] == "unavailable"
++
++
++def test_get_related_communications_for_product_searches_both_codes(monkeypatch):
++    from services import gmail_service, slack_service
++
++    captured = {}
++
++    def _fake_gmail(email, query, max_results):
++        captured["gmail_query"] = query
++        return {"status": "ok", "summary": "1件", "records": [{"subject": "見積書"}]}
++
++    def _fake_slack(email, query, max_results):
++        captured["slack_query"] = query
++        return {"status": "ok", "summary": "1件", "records": [{"text": "在庫確認"}]}
++
++    monkeypatch.setattr(gmail_service, "search_messages", _fake_gmail)
++    monkeypatch.setattr(slack_service, "search_messages", _fake_slack)
++
++    result = product_service.get_related_communications_for_product("user@logs.co.jp", "5145", "S1")
++
++    assert captured["gmail_query"] == '"5145" OR "S1"'
++    assert captured["slack_query"] == '"5145" OR "S1"'
++    assert result["gmail"]["records"] == [{"subject": "見積書"}]
++    assert result["slack"]["records"] == [{"text": "在庫確認"}]
++
++
++def test_get_related_communications_for_product_without_sample_code(monkeypatch):
++    from services import gmail_service, slack_service
++
++    captured = {}
++    monkeypatch.setattr(gmail_service, "search_messages", lambda email, query, max_results: captured.setdefault("q", query) or {"status": "ok", "summary": "0件", "records": []})
++    monkeypatch.setattr(slack_service, "search_messages", lambda email, query, max_results: {"status": "ok", "summary": "0件", "records": []})
++
++    product_service.get_related_communications_for_product("user@logs.co.jp", "5145", None)
++    assert captured["q"] == '"5145"'
++
++
+ def test_get_related_logs_codes_returns_codes_from_union_query(monkeypatch):
+     rows = [("5145",), ("6054",)]
+     monkeypatch.setattr(product_service, "get_connection", lambda: _FakeConnection(rows, ["LOGS_CODE"]))
+diff --git a/tests/backend/test_router.py b/tests/backend/test_router.py
+index dc4c5fa..6b81e25 100644
+--- a/tests/backend/test_router.py
++++ b/tests/backend/test_router.py
+@@ -445,11 +445,28 @@ def test_list_products_sorted_by_sample_code_descending(monkeypatch):
+     assert [p["logs_code"] for p in response.json()["products"]] == ["c", "b", "a"]
+ 
+ 
++def test_list_products_scope_all_returns_master_products(monkeypatch):
++    from services import product_service
++
++    monkeypatch.setattr(
++        product_service, "get_all_products",
++        lambda limit=20: [{"LOGS_CODE": "5145", "Sample_CODE": "100", "商品名": "Baseball Cap", "型番": "K01", "仕入先名": "1064STUDIO"}],
++    )
++
++    response = _client().get("/api/products?scope=all")
++    assert response.status_code == 200
++    body = response.json()
++    assert body["scope"] == "all"
++    assert body["products"] == [
++        {"logs_code": "5145", "product_name": "Baseball Cap", "model_no": "K01", "supplier_name": "1064STUDIO", "sample_code": "100"}
++    ]
++
++
+ def test_get_product_via_http(monkeypatch):
+     from services import product_service
+ 
+     fake_detail = {
+-        "master": {"LOGS_CODE": "5145", "商品名": "Baseball Cap"},
++        "master": {"LOGS_CODE": "5145", "商品名": "Baseball Cap", "Sample_CODE": "S1"},
+         "purchase_orders": [],
+         "sales": [],
+         "purchases": [],
+@@ -457,10 +474,19 @@ def test_get_product_via_http(monkeypatch):
+         "status": {"po_issued": False, "sales_recorded": False, "purchase_recorded": False, "sample_requested": False},
+     }
+     monkeypatch.setattr(product_service, "get_product_detail", lambda logs_code: fake_detail if logs_code == "5145" else None)
++    monkeypatch.setattr(
++        product_service, "get_related_communications_for_product",
++        lambda user_email, logs_code, sample_code: {
++            "gmail": {"status": "ok", "summary": "1件", "records": [{"subject": "test"}]},
++            "slack": {"status": "unavailable", "summary": "Slack未連携です。", "records": []},
++        },
++    )
+ 
+     response = _client().get("/api/products/5145")
+     assert response.status_code == 200
+-    assert response.json()["product"]["master"]["商品名"] == "Baseball Cap"
++    body = response.json()
++    assert body["product"]["master"]["商品名"] == "Baseball Cap"
++    assert body["product"]["related_communications"]["gmail"]["records"] == [{"subject": "test"}]
+ 
+     missing = _client().get("/api/products/does-not-exist")
+     assert missing.status_code == 404
+\ No newline at end of file

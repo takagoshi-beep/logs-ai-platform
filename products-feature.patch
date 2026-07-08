@@ -1,0 +1,962 @@
+diff --git a/backend/api/router.py b/backend/api/router.py
+index b12670f..b4be460 100644
+--- a/backend/api/router.py
++++ b/backend/api/router.py
+@@ -359,4 +359,61 @@ def download_proposal_image(trace_id: str):
+     path = GENERATED_IMAGES_DIR / f"{trace_id}.png"
+     if not path.exists():
+         raise HTTPException(status_code=404, detail="Generated image not found")
+-    return FileResponse(path, media_type="image/png", filename=f"{trace_id}.png")
+\ No newline at end of file
++    return FileResponse(path, media_type="image/png", filename=f"{trace_id}.png")
++
++
++# ===== NEW: Product Endpoints (docs/architecture.md 14.30) =====
++
++@router.get("/products")
++def list_products(limit: int = 20, scope: str = "mine", user: dict = Depends(require_login)) -> dict:
++    """商品(LOGS_CODE)一覧を返す。
++
++    scope="mine"（既定）: ログイン中の本人が直接（商品マスタの作成者）、
++    または間接（PO/売上/仕入の担当者、仕入先の生産管理担当者、サンプル
++    対応の回答者/依頼元）に関連する商品だけを返す。本人特定できない
++    場合は空リストを返す（案件と異なり、商品では「担当者不明なら全件」
++    にすると母数が大きすぎるため）。
++    scope="all"は今回未実装（商品マスタ全件は件数が大きく、別途ページング
++    等の設計が必要なため）。
++    """
++    from services.product_service import get_products_master_batch, get_related_logs_codes
++
++    owner_name = None
++    if scope == "mine":
++        from services.auth_service import get_staff_name_by_email
++        owner_name = get_staff_name_by_email(user.get("email"))
++
++    if not owner_name:
++        return {"success": True, "products": [], "count": 0, "scope": "mine" if scope == "mine" else "all"}
++
++    logs_codes = get_related_logs_codes(owner_name, limit=limit)
++    master_map = get_products_master_batch(logs_codes)
++
++    products = []
++    for code in logs_codes:
++        m = master_map.get(code)
++        if m:
++            products.append({
++                "logs_code": code,
++                "product_name": m.get("商品名"),
++                "model_no": m.get("型番"),
++                "supplier_name": m.get("仕入先名"),
++            })
++
++    return {"success": True, "products": products, "count": len(products), "scope": "mine"}
++
++
++@router.get("/products/{logs_code}")
++def get_product(logs_code: str) -> dict:
++    """1商品について、マスタ情報 + PO/売上/仕入/サンプルの横断履歴を返す。"""
++    from services.product_service import get_product_detail
++
++    try:
++        detail = get_product_detail(logs_code)
++    except Exception as e:
++        raise HTTPException(status_code=500, detail=str(e))
++
++    if not detail:
++        raise HTTPException(status_code=404, detail=f"Product {logs_code} not found")
++
++    return {"success": True, "product": detail}
+\ No newline at end of file
+diff --git a/backend/services/product_service.py b/backend/services/product_service.py
+new file mode 100644
+index 0000000..dff53b2
+--- /dev/null
++++ b/backend/services/product_service.py
+@@ -0,0 +1,200 @@
++"""商品(LOGS_CODE)を軸にした横断参照 (docs/architecture.md 14.30)。
++
++案件(purchase_orders)はPO単位、商品はLOGS_CODE単位という別の粒度を持つ。
++1つのPOに数十商品が含まれることも珍しくない実データ（例: PO
++914-20260630_1は27商品）ため、案件詳細に商品明細まで全部持たせると
++重くなりすぎる。代わりに「商品」を独立した単位として扱い、その商品が
++どのPO・売上・仕入に含まれているかを横断的に見られるようにする。
++
++商品への「関連」判定（Noritsuguの明示的な整理、2026-07-08）:
++  直接: products.作成者名 == 本人
++  間接（取引経由）: purchase_orders/sales/purchasesの担当者列のいずれかが
++      本人と一致する明細のLOGS_CODE
++      - purchasesだけ担当者列が伝票・明細の二重構造。明細を優先し、
++        明細が空なら伝票の値を採用する（COALESCE）。
++  間接（仕入先経由）: products.仕入先ID → suppliers.生産管理担当者名 が本人
++  間接（サンプル経由）: products.Sample_CODE を production_samples.SPL品番
++      に接続し、回答者または依頼元が本人
++
++これら全てをUNIONした1回のクエリで取得する（案件一覧の高速化
++（14.28）で学んだ「N回接続ではなく1回にまとめる」教訓を踏襲）。
++"""
++from __future__ import annotations
++
++from typing import Any
++
++from services.supabase_client import get_connection
++
++_RELATED_LOGS_CODES_SQL = """
++SELECT DISTINCT "LOGS_CODE" FROM purchase_orders
++WHERE "営業担当者名" = %(name)s OR "営業事務担当者名" = %(name)s
++   OR "生産管理担当者名" = %(name)s OR "企画担当者名" = %(name)s
++
++UNION
++
++SELECT DISTINCT "LOGS_CODE" FROM sales
++WHERE "営業担当者名" = %(name)s OR "事務処理担当者名" = %(name)s OR "経理担当者名" = %(name)s
++
++UNION
++
++SELECT DISTINCT "LOGS_CODE" FROM purchases
++WHERE COALESCE(NULLIF("明細営業担当者名", ''), "営業担当者名") = %(name)s
++   OR COALESCE(NULLIF("明細営業事務担当者名", ''), "営業事務担当者名") = %(name)s
++   OR "生産管理担当者名" = %(name)s
++
++UNION
++
++SELECT DISTINCT "LOGS_CODE" FROM products
++WHERE "作成者名" = %(name)s
++
++UNION
++
++SELECT DISTINCT p."LOGS_CODE" FROM products p
++JOIN suppliers s ON p."仕入先ID" = s."ID"
++WHERE s."生産管理担当者名" = %(name)s
++
++UNION
++
++SELECT DISTINCT p."LOGS_CODE" FROM products p
++JOIN production_samples ps ON p."Sample_CODE" = ps."SPL品番"
++WHERE ps."回答者" = %(name)s OR ps."依頼元" = %(name)s
++"""
++
++
++def get_related_logs_codes(owner_name: str, limit: int = 50) -> list[str]:
++    """自分に直接・間接的に関連する商品のLOGS_CODE一覧を、1回のクエリで
++    まとめて取得する。owner_nameが空、もしくはDB接続に失敗した場合は
++    空リストを返す（架空の一覧を作らない）。
++    """
++    if not owner_name:
++        return []
++
++    try:
++        conn = get_connection()
++        try:
++            with conn.cursor() as cur:
++                cur.execute(_RELATED_LOGS_CODES_SQL, {"name": owner_name})
++                rows = cur.fetchall()
++        finally:
++            conn.close()
++    except Exception as e:
++        print(f"Error looking up related products: {e}")
++        return []
++
++    codes = [row[0] for row in rows if row[0]]
++    return codes[:limit]
++
++
++def _query_all(conn, sql: str, params: tuple) -> tuple[list[tuple], list[str]]:
++    with conn.cursor() as cur:
++        cur.execute(sql, params)
++        rows = cur.fetchall()
++        columns = [desc[0] for desc in cur.description]
++    return rows, columns
++
++
++def _rows_to_dicts(rows: list[tuple], columns: list[str]) -> list[dict[str, Any]]:
++    return [dict(zip(columns, row)) for row in rows]
++
++
++def get_products_master_batch(logs_codes: list[str]) -> dict[str, dict[str, Any]]:
++    """複数のLOGS_CODEの商品マスタ情報（+仕入先の生産管理担当者名）を、
++    1回のクエリでまとめて取得する。"""
++    if not logs_codes:
++        return {}
++
++    conn = get_connection()
++    try:
++        rows, columns = _query_all(
++            conn,
++            'SELECT p."LOGS_CODE", p."Sample_CODE", p."商品名", p."型番", p."商品分類", '
++            'p."仕入先ID", p."仕入先名", p."作成者名", p."通常売価", p."論理原価", '
++            's."生産管理担当者名" AS "supplier_production_staff" '
++            'FROM products p '
++            'LEFT JOIN suppliers s ON p."仕入先ID" = s."ID" '
++            'WHERE p."LOGS_CODE" = ANY(%s)',
++            (list(logs_codes),),
++        )
++    except Exception as e:
++        print(f"Error batch-fetching product master: {e}")
++        return {}
++    finally:
++        conn.close()
++
++    result = {}
++    for d in _rows_to_dicts(rows, columns):
++        code = str(d.get("LOGS_CODE"))
++        result[code] = d
++    return result
++
++
++def get_product_detail(logs_code: str) -> dict[str, Any] | None:
++    """1商品(LOGS_CODE)について、マスタ情報 + PO/売上/仕入/サンプルの
++    横断履歴をまとめて返す。商品マスタに存在しない場合はNone。
++    """
++    conn = get_connection()
++    try:
++        master_rows, master_cols = _query_all(
++            conn,
++            'SELECT p.*, s."生産管理担当者名" AS "supplier_production_staff" '
++            'FROM products p LEFT JOIN suppliers s ON p."仕入先ID" = s."ID" '
++            'WHERE p."LOGS_CODE" = %s',
++            (logs_code,),
++        )
++        if not master_rows:
++            return None
++        master = _rows_to_dicts(master_rows, master_cols)[0]
++        sample_code = master.get("Sample_CODE")
++
++        po_rows, po_cols = _query_all(
++            conn,
++            'SELECT "ID", "PO_No", "顧客名", "営業担当者名", "営業事務担当者名", '
++            '"生産管理担当者名", "企画担当者名", "発注数量", "発注金額", "PO発行日" '
++            'FROM purchase_orders WHERE "LOGS_CODE" = %s ORDER BY "PO発行日" DESC',
++            (logs_code,),
++        )
++        sales_rows, sales_cols = _query_all(
++            conn,
++            'SELECT "得意先名", "営業担当者名", "事務処理担当者名", "経理担当者名", '
++            '"数量pcs", "売上金額", "売上入力日" '
++            'FROM sales WHERE "LOGS_CODE" = %s ORDER BY "売上入力日" DESC',
++            (logs_code,),
++        )
++        purchase_rows, purchase_cols = _query_all(
++            conn,
++            'SELECT "仕入先名", '
++            'COALESCE(NULLIF("明細営業担当者名", \'\'), "営業担当者名") AS "営業担当者名", '
++            'COALESCE(NULLIF("明細営業事務担当者名", \'\'), "営業事務担当者名") AS "営業事務担当者名", '
++            '"生産管理担当者名", "仕入数量pcs", "仕入金額円", "伝票日" '
++            'FROM purchases WHERE "LOGS_CODE" = %s ORDER BY "伝票日" DESC',
++            (logs_code,),
++        )
++        sample_rows: list[dict[str, Any]] = []
++        if sample_code:
++            raw_sample_rows, sample_cols = _query_all(
++                conn,
++                'SELECT "見積No", "仕入先名", "依頼内容", "カラー", "サイズ", "数量", '
++                '"回答者", "依頼元", "回答日", "通知状況" '
++                'FROM production_samples WHERE "SPL品番" = %s ORDER BY "回答日" DESC',
++                (sample_code,),
++            )
++            sample_rows = _rows_to_dicts(raw_sample_rows, sample_cols)
++    except Exception as e:
++        print(f"Error building product detail: {e}")
++        return None
++    finally:
++        conn.close()
++
++    return {
++        "master": master,
++        "purchase_orders": _rows_to_dicts(po_rows, po_cols),
++        "sales": _rows_to_dicts(sales_rows, sales_cols),
++        "purchases": _rows_to_dicts(purchase_rows, purchase_cols),
++        "samples": sample_rows,
++        "status": {
++            "po_issued": len(po_rows) > 0,
++            "sales_recorded": len(sales_rows) > 0,
++            "purchase_recorded": len(purchase_rows) > 0,
++            "sample_requested": len(sample_rows) > 0,
++        },
++    }
+diff --git a/backend/services/tool_registry.py b/backend/services/tool_registry.py
+index 9c1eacb..6c4b9ae 100644
+--- a/backend/services/tool_registry.py
++++ b/backend/services/tool_registry.py
+@@ -204,6 +204,23 @@ TOOLS: list[dict[str, Any]] = [
+             },
+         },
+     },
++    {
++        "name": "get_my_products",
++        "description": (
++            "ログインユーザー自身に直接・間接的に関連する商品（LOGS_CODE）を取得する。"
++            "関連の判定: 商品マスタの作成者本人（直接）、PO/売上/仕入の担当者・"
++            "仕入先の生産管理担当者・サンプル対応の回答者/依頼元のいずれかが本人"
++            "（間接）。「自分が関わった商品」「自分の商品」のような質問に使う。"
++            "ログイン中のメールアドレスが社員マスタの氏名と一致しない場合は取得"
++            "できない（'unavailable'）。架空の商品を作ってはいけない。"
++        ),
++        "input_schema": {
++            "type": "object",
++            "properties": {
++                "limit": {"type": "integer", "description": "取得件数（既定20）"},
++            },
++        },
++    },
+ ]
+ 
+ 
+@@ -343,6 +360,39 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
+                         "summary": f"{owner_name}さんが担当する案件を{len(records)}件取得しました。" if records else f"{owner_name}さんが担当する案件は見つかりませんでした。",
+                         "records": records,
+                     }
++        elif tool_name == "get_my_products":
++            if not user_email:
++                result = {"status": "unavailable", "summary": "ユーザーが特定できないため取得できません。", "records": []}
++            else:
++                from services.auth_service import get_staff_name_by_email
++                from services.product_service import get_products_master_batch, get_related_logs_codes
++
++                owner_name = get_staff_name_by_email(user_email)
++                if not owner_name:
++                    result = {
++                        "status": "unavailable",
++                        "summary": "ログイン中のメールアドレスが社員マスタの氏名と一致しないため、関連商品を特定できません。",
++                        "records": [],
++                    }
++                else:
++                    limit = tool_input.get("limit", 20)
++                    logs_codes = get_related_logs_codes(owner_name, limit=limit)
++                    master_map = get_products_master_batch(logs_codes)
++                    records = []
++                    for code in logs_codes:
++                        m = master_map.get(code)
++                        if m:
++                            records.append({
++                                "logs_code": code,
++                                "product_name": m.get("商品名"),
++                                "model_no": m.get("型番"),
++                                "supplier_name": m.get("仕入先名"),
++                            })
++                    result = {
++                        "status": "ok" if records else "unavailable",
++                        "summary": f"{owner_name}さんに関連する商品を{len(records)}件取得しました。" if records else f"{owner_name}さんに関連する商品は見つかりませんでした。",
++                        "records": records,
++                    }
+         else:
+             result = {"status": "unavailable", "summary": f"未知のツール: {tool_name}", "records": []}
+     except Exception as e:
+diff --git a/frontend/app/products/[logsCode]/page.tsx b/frontend/app/products/[logsCode]/page.tsx
+new file mode 100644
+index 0000000..ba446dd
+--- /dev/null
++++ b/frontend/app/products/[logsCode]/page.tsx
+@@ -0,0 +1,216 @@
++"use client";
++
++import { useEffect, useState } from "react";
++import { Badge, Card, SectionHeader } from "@/components/design-system";
++import { getProduct } from "@/lib/api-client";
++
++type Params = { params: { logsCode: string } };
++
++interface PurchaseOrderLine {
++  ID: number;
++  PO_No: string;
++  顧客名: string | null;
++  営業担当者名: string | null;
++  営業事務担当者名: string | null;
++  生産管理担当者名: string | null;
++  企画担当者名: string | null;
++  発注数量: number | null;
++  発注金額: number | null;
++  PO発行日: string | null;
++}
++
++interface SalesLine {
++  得意先名: string | null;
++  営業担当者名: string | null;
++  事務処理担当者名: string | null;
++  経理担当者名: string | null;
++  数量pcs: number | null;
++  売上金額: number | null;
++  売上入力日: string | null;
++}
++
++interface PurchaseLine {
++  仕入先名: string | null;
++  営業担当者名: string | null;
++  営業事務担当者名: string | null;
++  生産管理担当者名: string | null;
++  仕入数量pcs: number | null;
++  仕入金額円: number | null;
++  伝票日: string | null;
++}
++
++interface SampleLine {
++  見積No: string | null;
++  仕入先名: string | null;
++  依頼内容: string | null;
++  カラー: string | null;
++  サイズ: string | null;
++  数量: number | null;
++  回答者: string | null;
++  依頼元: string | null;
++  回答日: string | null;
++  通知状況: string | null;
++}
++
++interface ProductDetail {
++  master: Record<string, any>;
++  purchase_orders: PurchaseOrderLine[];
++  sales: SalesLine[];
++  purchases: PurchaseLine[];
++  samples: SampleLine[];
++  status: {
++    po_issued: boolean;
++    sales_recorded: boolean;
++    purchase_recorded: boolean;
++    sample_requested: boolean;
++  };
++}
++
++function fmtYen(v: number | null | undefined): string {
++  if (v === null || v === undefined) return "—";
++  return `${Math.round(v).toLocaleString()}円`;
++}
++
++export default function ProductDetailPage({ params }: Params) {
++  const [product, setProduct] = useState<ProductDetail | null>(null);
++  const [error, setError] = useState<string | null>(null);
++  const [loading, setLoading] = useState(true);
++
++  useEffect(() => {
++    getProduct(params.logsCode).then((data: any) => {
++      setLoading(false);
++      if (data?.success === false) {
++        setError(data.error ?? "商品データの取得に失敗しました");
++        return;
++      }
++      setProduct(data?.product ?? null);
++    });
++  }, [params.logsCode]);
++
++  if (loading) {
++    return <p className="px-4 py-8 text-center text-sm text-sub">読み込み中...</p>;
++  }
++
++  if (error || !product) {
++    return (
++      <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
++        {error ?? "商品が見つかりませんでした"}
++      </div>
++    );
++  }
++
++  const m = product.master;
++
++  return (
++    <div className="space-y-5">
++      <header className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
++        <h1 className="page-title">商品: {m.商品名 ?? m.LOGS_CODE}</h1>
++        <p className="page-subtitle">
++          LOGS_CODE: {m.LOGS_CODE}{m.Sample_CODE ? ` ／ Sample_CODE: ${m.Sample_CODE}` : ""}
++        </p>
++      </header>
++
++      <Card>
++        <div className="flex flex-wrap items-center gap-2">
++          <Badge label={product.status.po_issued ? "PO発行済み" : "PO未発行"} tone={product.status.po_issued ? "success" : "default"} />
++          <Badge label={product.status.sales_recorded ? "売上入力済み" : "売上未入力"} tone={product.status.sales_recorded ? "success" : "default"} />
++          <Badge label={product.status.purchase_recorded ? "仕入入力済み" : "仕入未入力"} tone={product.status.purchase_recorded ? "success" : "default"} />
++          <Badge label={product.status.sample_requested ? "サンプル対応あり" : "サンプル対応なし"} tone={product.status.sample_requested ? "success" : "default"} />
++        </div>
++        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-sub sm:grid-cols-3">
++          <div>型番: {m.型番 ?? "—"}</div>
++          <div>商品分類: {m.商品分類 ?? "—"}</div>
++          <div>仕入先: {m.仕入先名 ?? "—"}</div>
++          <div>作成者: {m.作成者名 ?? "—"}</div>
++          <div>仕入先の生産管理担当: {m.supplier_production_staff ?? "—"}</div>
++          <div>通常売価: {fmtYen(m.通常売価)}</div>
++        </div>
++      </Card>
++
++      <Card>
++        <SectionHeader title="PO(発注)履歴" subtitle="この商品が含まれるPurchase Orderの一覧です。" />
++        <div className="mt-3 space-y-2">
++          {product.purchase_orders.length > 0 ? (
++            product.purchase_orders.map((po, idx) => (
++              <div key={idx} className="rounded-lg border border-slate-200 p-3 text-xs">
++                <div className="flex items-center justify-between">
++                  <span className="font-medium text-ink">{po.PO_No}</span>
++                  <span className="text-sub">{po.PO発行日 ?? "—"}</span>
++                </div>
++                <p className="mt-1 text-sub">
++                  顧客: {po.顧客名 ?? "—"} ・ 営業: {po.営業担当者名 ?? "—"} ・ 数量: {po.発注数量 ?? "—"} ・ 金額: {fmtYen(po.発注金額)}
++                </p>
++              </div>
++            ))
++          ) : (
++            <p className="text-sm text-sub">PO発行の記録はありません</p>
++          )}
++        </div>
++      </Card>
++
++      <div className="grid gap-4 lg:grid-cols-2">
++        <Card>
++          <SectionHeader title="売上履歴" subtitle="この商品の売上明細です。" />
++          <div className="mt-3 space-y-2">
++            {product.sales.length > 0 ? (
++              product.sales.map((s, idx) => (
++                <div key={idx} className="rounded-lg border border-slate-200 p-3 text-xs">
++                  <div className="flex items-center justify-between">
++                    <span className="font-medium text-ink">{s.得意先名 ?? "—"}</span>
++                    <span className="text-sub">{s.売上入力日 ?? "—"}</span>
++                  </div>
++                  <p className="mt-1 text-sub">営業: {s.営業担当者名 ?? "—"} ・ 数量: {s.数量pcs ?? "—"} ・ 金額: {fmtYen(s.売上金額)}</p>
++                </div>
++              ))
++            ) : (
++              <p className="text-sm text-sub">売上入力の記録はありません</p>
++            )}
++          </div>
++        </Card>
++
++        <Card>
++          <SectionHeader title="仕入履歴" subtitle="この商品の仕入明細です（明細レベルの担当者を優先表示）。" />
++          <div className="mt-3 space-y-2">
++            {product.purchases.length > 0 ? (
++              product.purchases.map((p, idx) => (
++                <div key={idx} className="rounded-lg border border-slate-200 p-3 text-xs">
++                  <div className="flex items-center justify-between">
++                    <span className="font-medium text-ink">{p.仕入先名 ?? "—"}</span>
++                    <span className="text-sub">{p.伝票日 ?? "—"}</span>
++                  </div>
++                  <p className="mt-1 text-sub">
++                    営業: {p.営業担当者名 ?? "—"} ・ 生産管理: {p.生産管理担当者名 ?? "—"} ・ 数量: {p.仕入数量pcs ?? "—"} ・ 金額: {fmtYen(p.仕入金額円)}
++                  </p>
++                </div>
++              ))
++            ) : (
++              <p className="text-sm text-sub">仕入入力の記録はありません</p>
++            )}
++          </div>
++        </Card>
++      </div>
++
++      {product.samples.length > 0 && (
++        <Card>
++          <SectionHeader
++            title="サンプル対応履歴"
++            subtitle="生産管理チームのスプレッドシートから、Sample_CODEで突合したサンプル対応状況です。"
++          />
++          <div className="mt-3 space-y-2">
++            {product.samples.map((s, idx) => (
++              <div key={idx} className="rounded-lg border border-slate-200 p-3 text-xs">
++                <div className="flex items-center justify-between">
++                  <span className="font-medium text-ink">{s.依頼内容 ?? "サンプル依頼"}</span>
++                  {s.通知状況 && <Badge label={s.通知状況} />}
++                </div>
++                <p className="mt-1 text-sub">
++                  回答者: {s.回答者 ?? "—"} ・ 依頼元: {s.依頼元 ?? "—"} ・ カラー: {s.カラー ?? "—"} ・ サイズ: {s.サイズ ?? "—"}
++                </p>
++              </div>
++            ))}
++          </div>
++        </Card>
++      )}
++    </div>
++  );
++}
+diff --git a/frontend/app/products/page.tsx b/frontend/app/products/page.tsx
+new file mode 100644
+index 0000000..36976c2
+--- /dev/null
++++ b/frontend/app/products/page.tsx
+@@ -0,0 +1,103 @@
++"use client";
++
++import { useEffect, useState } from "react";
++import Link from "next/link";
++import { getProducts } from "@/lib/api-client";
++
++interface ApiProduct {
++  logs_code: string;
++  product_name: string | null;
++  model_no: string | null;
++  supplier_name: string | null;
++}
++
++export default function ProductsListPage() {
++  const [search, setSearch] = useState("");
++  const [products, setProducts] = useState<ApiProduct[]>([]);
++  const [scope, setScope] = useState<string>("mine");
++  const [loading, setLoading] = useState(true);
++  const [error, setError] = useState<string | null>(null);
++
++  useEffect(() => {
++    getProducts(50).then((data: any) => {
++      setLoading(false);
++      if (data?.success === false) {
++        setError(data.error ?? "データの取得に失敗しました");
++        return;
++      }
++      setProducts(data?.products ?? []);
++      setScope(data?.scope ?? "mine");
++    });
++  }, []);
++
++  const filtered = products.filter((p) => {
++    if (!search) return true;
++    const q = search.toLowerCase();
++    return (
++      (p.product_name ?? "").toLowerCase().includes(q) ||
++      p.logs_code.toLowerCase().includes(q) ||
++      (p.supplier_name ?? "").toLowerCase().includes(q)
++    );
++  });
++
++  return (
++    <div className="space-y-5">
++      <header className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
++        <h1 className="page-title">商品</h1>
++        <p className="page-subtitle">
++          自分が直接・間接的に関連する商品（LOGS_CODE単位）を表示しています。PO・売上・仕入・サンプル対応を横断できます。
++        </p>
++      </header>
++
++      {error && (
++        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
++          {error}
++        </div>
++      )}
++
++      {!loading && !error && scope === "mine" && products.length === 0 && (
++        <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-sub">
++          関連する商品が見つかりませんでした（社員マスタの氏名と、PO・売上・仕入・商品マスタ上の担当者名が一致しない可能性があります）。
++        </div>
++      )}
++
++      <div className="flex flex-wrap gap-2">
++        <input
++          type="text"
++          value={search}
++          onChange={(e) => setSearch(e.target.value)}
++          placeholder="商品名・LOGS_CODE・仕入先名で検索"
++          className="rounded border border-slate-300 px-3 py-2 text-sm"
++        />
++      </div>
++
++      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
++        <div className="grid grid-cols-3 gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs font-medium text-sub">
++          <span>LOGS_CODE / 商品名</span>
++          <span>型番</span>
++          <span>仕入先</span>
++        </div>
++        {loading && (
++          <p className="px-4 py-8 text-center text-sm text-sub">読み込み中...</p>
++        )}
++        {!loading && filtered.map((p) => (
++          <Link
++            key={p.logs_code}
++            href={`/products/${p.logs_code}`}
++            className="grid grid-cols-3 items-center gap-2 border-b border-slate-100 px-4 py-3 text-sm text-ink last:border-b-0 hover:bg-slate-50"
++          >
++            <span>
++              <span className="font-medium">{p.product_name ?? "(商品名なし)"}</span>
++              <span className="ml-2 text-xs text-sub">{p.logs_code}</span>
++            </span>
++            <span className="text-sub">{p.model_no ?? "—"}</span>
++            <span className="text-sub">{p.supplier_name ?? "—"}</span>
++          </Link>
++        ))}
++        {!loading && filtered.length === 0 && products.length > 0 && (
++          <p className="px-4 py-8 text-center text-sm text-sub">該当する商品がありません</p>
++        )}
++      </div>
++    </div>
++  );
++}
+diff --git a/frontend/components/navigation.tsx b/frontend/components/navigation.tsx
+index 272e309..2ee4d50 100644
+--- a/frontend/components/navigation.tsx
++++ b/frontend/components/navigation.tsx
+@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth-context";
+ const navItems = [
+   { href: "/", label: "ホーム" },
+   { href: "/workspace", label: "案件" },
++  { href: "/products", label: "商品" },
+   { href: "/tasks", label: "今日のタスク" },
+   { href: "/proposals", label: "資料作成" },
+   { href: "/chat", label: "相談" },
+diff --git a/frontend/lib/api-client.ts b/frontend/lib/api-client.ts
+index a7cabb2..185f676 100644
+--- a/frontend/lib/api-client.ts
++++ b/frontend/lib/api-client.ts
+@@ -264,6 +264,20 @@ export async function getProject(projectId: string) {
+   return apiCall(`/api/projects/${projectId}`);
+ }
+ 
++/**
++ * Get products related to the logged-in user (docs/architecture.md 14.30)
++ */
++export async function getProducts(limit: number = 20) {
++  return apiCall(`/api/products?limit=${limit}`);
++}
++
++/**
++ * Get full cross-referenced detail for a single product (PO/sales/purchases/samples)
++ */
++export async function getProduct(logsCode: string) {
++  return apiCall(`/api/products/${logsCode}`);
++}
++
+ /**
+  * Get project trace (Event → State → Goal → Decision → Action)
+  */
+diff --git a/tests/backend/test_product_service.py b/tests/backend/test_product_service.py
+new file mode 100644
+index 0000000..4c987df
+--- /dev/null
++++ b/tests/backend/test_product_service.py
+@@ -0,0 +1,177 @@
++"""Tests for `backend/services/product_service.py` (docs/architecture.md 14.30)."""
++from __future__ import annotations
++
++from services import product_service
++
++
++class _FakeCursor:
++    def __init__(self, rows: list[tuple], columns: list[str]):
++        self._rows = rows
++        self.description = [(c,) for c in columns]
++
++    def __enter__(self):
++        return self
++
++    def __exit__(self, *a):
++        return False
++
++    def execute(self, sql, params=None):
++        pass
++
++    def fetchall(self):
++        return self._rows
++
++    def fetchone(self):
++        return self._rows[0] if self._rows else None
++
++
++class _FakeConnection:
++    """1回のクエリだけを返す単純なフェイク接続（get_related_logs_codes,
++    get_products_master_batch用）。"""
++
++    def __init__(self, rows: list[tuple], columns: list[str]):
++        self._cursor = _FakeCursor(rows, columns)
++        self.closed = False
++
++    def cursor(self):
++        return self._cursor
++
++    def close(self):
++        self.closed = True
++
++
++class _SequentialFakeConnection:
++    """get_product_detailのように、同じ接続で複数回クエリを発行する
++    関数向けのフェイク。呼び出し順に(rows, columns)を返す。"""
++
++    def __init__(self, responses: list[tuple[list[tuple], list[str]]]):
++        self._responses = list(responses)
++        self.closed = False
++
++    def cursor(self):
++        rows, columns = self._responses.pop(0)
++        return _FakeCursor(rows, columns)
++
++    def close(self):
++        self.closed = True
++
++
++def test_get_related_logs_codes_returns_empty_for_blank_owner_name():
++    assert product_service.get_related_logs_codes("") == []
++    assert product_service.get_related_logs_codes(None) == []
++
++
++def test_get_related_logs_codes_returns_codes_from_union_query(monkeypatch):
++    rows = [("5145",), ("6054",)]
++    monkeypatch.setattr(product_service, "get_connection", lambda: _FakeConnection(rows, ["LOGS_CODE"]))
++
++    codes = product_service.get_related_logs_codes("山田太郎")
++    assert codes == ["5145", "6054"]
++
++
++def test_get_related_logs_codes_returns_empty_on_query_failure(monkeypatch):
++    def _raise():
++        raise RuntimeError("SUPABASE_DB_URL is not configured")
++
++    monkeypatch.setattr(product_service, "get_connection", _raise)
++    assert product_service.get_related_logs_codes("山田太郎") == []
++
++
++def test_get_related_logs_codes_respects_limit(monkeypatch):
++    rows = [(str(i),) for i in range(10)]
++    monkeypatch.setattr(product_service, "get_connection", lambda: _FakeConnection(rows, ["LOGS_CODE"]))
++
++    codes = product_service.get_related_logs_codes("山田太郎", limit=3)
++    assert len(codes) == 3
++
++
++def test_get_products_master_batch_returns_empty_for_empty_input(monkeypatch):
++    call_count = {"n": 0}
++
++    def _fake_get_connection():
++        call_count["n"] += 1
++        return _FakeConnection([], ["LOGS_CODE"])
++
++    monkeypatch.setattr(product_service, "get_connection", _fake_get_connection)
++    assert product_service.get_products_master_batch([]) == {}
++    assert call_count["n"] == 0
++
++
++def test_get_products_master_batch_maps_by_logs_code(monkeypatch):
++    columns = ["LOGS_CODE", "Sample_CODE", "商品名", "型番", "商品分類", "仕入先ID", "仕入先名",
++               "作成者名", "通常売価", "論理原価", "supplier_production_staff"]
++    rows = [("5145", "S1", "Baseball Cap", "K01", 1, "s1", "1064STUDIO", "山田太郎", 1000, 500, "木村美菜")]
++    monkeypatch.setattr(product_service, "get_connection", lambda: _FakeConnection(rows, columns))
++
++    result = product_service.get_products_master_batch(["5145"])
++    assert result["5145"]["商品名"] == "Baseball Cap"
++    assert result["5145"]["supplier_production_staff"] == "木村美菜"
++
++
++def test_get_product_detail_returns_none_when_master_row_missing(monkeypatch):
++    monkeypatch.setattr(
++        product_service, "get_connection",
++        lambda: _SequentialFakeConnection([([], ["LOGS_CODE"])]),
++    )
++    assert product_service.get_product_detail("does-not-exist") is None
++
++
++def test_get_product_detail_aggregates_all_sources(monkeypatch):
++    master_cols = ["LOGS_CODE", "Sample_CODE", "商品名", "supplier_production_staff"]
++    master_rows = [("5145", "S1", "Baseball Cap", "木村美菜")]
++
++    po_cols = ["ID", "PO_No", "顧客名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "企画担当者名", "発注数量", "発注金額", "PO発行日"]
++    po_rows = [(1, "914-1", "US_LOGS Inc.", "山田太郎", None, None, None, 10, 1000, "2026-01-01")]
++
++    sales_cols = ["得意先名", "営業担当者名", "事務処理担当者名", "経理担当者名", "数量pcs", "売上金額", "売上入力日"]
++    sales_rows = [("US_LOGS Inc.", "山田太郎", None, None, 10, 2000, "2026-02-01")]
++
++    purchase_cols = ["仕入先名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "仕入数量pcs", "仕入金額円", "伝票日"]
++    purchase_rows = [("1064STUDIO", "山田太郎", None, "木村美菜", 10, 500, "2026-01-15")]
++
++    sample_cols = ["見積No", "仕入先名", "依頼内容", "カラー", "サイズ", "数量", "回答者", "依頼元", "回答日", "通知状況"]
++    sample_rows = [("Q1", "1064STUDIO", "サンプル依頼", "black", "M", 1, "木村美菜", "山田太郎", "2025-12-01", "通知完了")]
++
++    monkeypatch.setattr(
++        product_service, "get_connection",
++        lambda: _SequentialFakeConnection([
++            (master_rows, master_cols),
++            (po_rows, po_cols),
++            (sales_rows, sales_cols),
++            (purchase_rows, purchase_cols),
++            (sample_rows, sample_cols),
++        ]),
++    )
++
++    detail = product_service.get_product_detail("5145")
++
++    assert detail["master"]["商品名"] == "Baseball Cap"
++    assert detail["purchase_orders"][0]["PO_No"] == "914-1"
++    assert detail["sales"][0]["得意先名"] == "US_LOGS Inc."
++    assert detail["purchases"][0]["仕入先名"] == "1064STUDIO"
++    assert detail["samples"][0]["回答者"] == "木村美菜"
++    assert detail["status"] == {
++        "po_issued": True,
++        "sales_recorded": True,
++        "purchase_recorded": True,
++        "sample_requested": True,
++    }
++
++
++def test_get_product_detail_skips_sample_lookup_when_no_sample_code(monkeypatch):
++    master_cols = ["LOGS_CODE", "Sample_CODE", "商品名"]
++    master_rows = [("5145", None, "Baseball Cap")]
++
++    monkeypatch.setattr(
++        product_service, "get_connection",
++        lambda: _SequentialFakeConnection([
++            (master_rows, master_cols),
++            ([], ["ID"]),
++            ([], ["得意先名"]),
++            ([], ["仕入先名"]),
++        ]),
++    )
++
++    detail = product_service.get_product_detail("5145")
++    assert detail["samples"] == []
++    assert detail["status"]["sample_requested"] is False
+diff --git a/tests/backend/test_router.py b/tests/backend/test_router.py
+index 9f8f565..96a6881 100644
+--- a/tests/backend/test_router.py
++++ b/tests/backend/test_router.py
+@@ -388,4 +388,60 @@ def test_today_actions_via_http_sorted_by_priority(monkeypatch):
+     assert response.status_code == 200
+     body = response.json()
+     assert body["count"] == 1
+-    assert body["actions"][0]["reason"] == "納期超過"
+\ No newline at end of file
++    assert body["actions"][0]["reason"] == "納期超過"
++
++
++# ---------------------------------------------------------------------------
++# products (docs/architecture.md 14.30)
++# ---------------------------------------------------------------------------
++
++def test_list_products_returns_empty_when_staff_name_unresolved(monkeypatch):
++    from services import auth_service
++
++    monkeypatch.setattr(auth_service, "get_staff_name_by_email", lambda email: None)
++
++    response = _client().get("/api/products")
++    assert response.status_code == 200
++    body = response.json()
++    assert body["products"] == []
++    assert body["count"] == 0
++
++
++def test_list_products_returns_related_products_for_resolved_staff_name(monkeypatch):
++    from services import auth_service, product_service
++
++    monkeypatch.setattr(auth_service, "get_staff_name_by_email", lambda email: "山田太郎")
++    monkeypatch.setattr(product_service, "get_related_logs_codes", lambda owner_name, limit=20: ["5145"])
++    monkeypatch.setattr(
++        product_service, "get_products_master_batch",
++        lambda codes: {"5145": {"商品名": "Baseball Cap", "型番": "K01", "仕入先名": "1064STUDIO"}},
++    )
++
++    response = _client().get("/api/products")
++    assert response.status_code == 200
++    body = response.json()
++    assert body["scope"] == "mine"
++    assert body["products"] == [
++        {"logs_code": "5145", "product_name": "Baseball Cap", "model_no": "K01", "supplier_name": "1064STUDIO"}
++    ]
++
++
++def test_get_product_via_http(monkeypatch):
++    from services import product_service
++
++    fake_detail = {
++        "master": {"LOGS_CODE": "5145", "商品名": "Baseball Cap"},
++        "purchase_orders": [],
++        "sales": [],
++        "purchases": [],
++        "samples": [],
++        "status": {"po_issued": False, "sales_recorded": False, "purchase_recorded": False, "sample_requested": False},
++    }
++    monkeypatch.setattr(product_service, "get_product_detail", lambda logs_code: fake_detail if logs_code == "5145" else None)
++
++    response = _client().get("/api/products/5145")
++    assert response.status_code == 200
++    assert response.json()["product"]["master"]["商品名"] == "Baseball Cap"
++
++    missing = _client().get("/api/products/does-not-exist")
++    assert missing.status_code == 404
+\ No newline at end of file

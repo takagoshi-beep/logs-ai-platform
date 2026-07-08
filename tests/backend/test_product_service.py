@@ -1,4 +1,10 @@
-"""Tests for `backend/services/product_service.py` (docs/architecture.md 14.30)."""
+"""Tests for `backend/services/product_service.py` (docs/architecture.md 14.30).
+
+Key design point under test: products.ID (internal key, always present) is
+the identity used throughout, not LOGS_CODE — LOGS_CODE is legitimately
+NULL for products that haven't been ordered yet (商品ID → Sample_CODE →
+LOGS_CODE is a staged identifier lifecycle, not a data-quality issue).
+"""
 from __future__ import annotations
 
 from services import product_service
@@ -26,8 +32,7 @@ class _FakeCursor:
 
 
 class _FakeConnection:
-    """1回のクエリだけを返す単純なフェイク接続（get_related_logs_codes,
-    get_products_master_batch用）。"""
+    """1回のクエリだけを返す単純なフェイク接続。"""
 
     def __init__(self, rows: list[tuple], columns: list[str]):
         self._cursor = _FakeCursor(rows, columns)
@@ -56,14 +61,36 @@ class _SequentialFakeConnection:
         self.closed = True
 
 
-def test_get_related_logs_codes_returns_empty_for_blank_owner_name():
-    assert product_service.get_related_logs_codes("") == []
-    assert product_service.get_related_logs_codes(None) == []
+def test_get_related_product_ids_returns_empty_for_blank_owner_name():
+    assert product_service.get_related_product_ids("") == []
+    assert product_service.get_related_product_ids(None) == []
+
+
+def test_get_related_product_ids_returns_ids_from_union_query(monkeypatch):
+    rows = [(101,), (202,)]
+    monkeypatch.setattr(product_service, "get_connection", lambda: _FakeConnection(rows, ["ID"]))
+
+    ids = product_service.get_related_product_ids("山田太郎")
+    assert ids == ["101", "202"]
+
+
+def test_get_related_product_ids_returns_empty_on_query_failure(monkeypatch):
+    def _raise():
+        raise RuntimeError("SUPABASE_DB_URL is not configured")
+
+    monkeypatch.setattr(product_service, "get_connection", _raise)
+    assert product_service.get_related_product_ids("山田太郎") == []
+
+
+def test_get_related_product_ids_respects_limit(monkeypatch):
+    rows = [(i,) for i in range(10)]
+    monkeypatch.setattr(product_service, "get_connection", lambda: _FakeConnection(rows, ["ID"]))
+
+    ids = product_service.get_related_product_ids("山田太郎", limit=3)
+    assert len(ids) == 3
 
 
 def test_sample_code_sort_key_orders_numeric_values_correctly():
-    """文字列比較だと"9" > "10"になってしまう誤りを避け、数値として
-    比較できることを確認する（2026-07-08、降順ソートの指定）。"""
     codes = ["9", "10", "100", "2"]
     ordered = sorted(codes, key=product_service.sample_code_sort_key, reverse=True)
     assert ordered == ["100", "10", "9", "2"]
@@ -77,16 +104,17 @@ def test_sample_code_sort_key_places_non_numeric_and_none_last():
 
 
 def test_get_all_products_returns_sorted_by_sample_code(monkeypatch):
-    columns = ["LOGS_CODE", "Sample_CODE", "商品名", "型番", "仕入先名"]
+    columns = ["ID", "LOGS_CODE", "Sample_CODE", "商品名", "型番", "仕入先名"]
     rows = [
-        ("a", "5", "P1", "M1", "S1"),
-        ("b", "100", "P2", "M2", "S2"),
-        ("c", "20", "P3", "M3", "S3"),
+        (1, "a", "5", "P1", "M1", "S1"),
+        (2, None, "100", "P2", "M2", "S2"),  # LOGS_CODEがNULL（未発注）でも正常に含まれる
+        (3, "c", "20", "P3", "M3", "S3"),
     ]
     monkeypatch.setattr(product_service, "get_connection", lambda: _FakeConnection(rows, columns))
 
     result = product_service.get_all_products(limit=10)
-    assert [r["LOGS_CODE"] for r in result] == ["b", "c", "a"]
+    assert [r["ID"] for r in result] == [2, 3, 1]
+    assert result[0]["LOGS_CODE"] is None
 
 
 def test_get_all_products_returns_empty_on_query_failure(monkeypatch):
@@ -95,6 +123,30 @@ def test_get_all_products_returns_empty_on_query_failure(monkeypatch):
 
     monkeypatch.setattr(product_service, "get_connection", _raise)
     assert product_service.get_all_products() == []
+
+
+def test_get_products_master_batch_returns_empty_for_empty_input(monkeypatch):
+    call_count = {"n": 0}
+
+    def _fake_get_connection():
+        call_count["n"] += 1
+        return _FakeConnection([], ["ID"])
+
+    monkeypatch.setattr(product_service, "get_connection", _fake_get_connection)
+    assert product_service.get_products_master_batch([]) == {}
+    assert call_count["n"] == 0
+
+
+def test_get_products_master_batch_maps_by_id(monkeypatch):
+    columns = ["ID", "LOGS_CODE", "Sample_CODE", "商品名", "型番", "商品分類", "仕入先ID", "仕入先名",
+               "作成者名", "通常売価", "論理原価", "supplier_production_staff"]
+    rows = [(101, None, "S1", "Baseball Cap", "K01", 1, "s1", "1064STUDIO", "山田太郎", 1000, 500, "木村美菜")]
+    monkeypatch.setattr(product_service, "get_connection", lambda: _FakeConnection(rows, columns))
+
+    result = product_service.get_products_master_batch(["101"])
+    assert result["101"]["商品名"] == "Baseball Cap"
+    assert result["101"]["LOGS_CODE"] is None
+    assert result["101"]["supplier_production_staff"] == "木村美菜"
 
 
 def test_get_related_communications_for_product_returns_unavailable_without_user_email():
@@ -127,75 +179,35 @@ def test_get_related_communications_for_product_searches_both_codes(monkeypatch)
     assert result["slack"]["records"] == [{"text": "在庫確認"}]
 
 
-def test_get_related_communications_for_product_without_sample_code(monkeypatch):
+def test_get_related_communications_for_product_with_only_sample_code(monkeypatch):
+    """LOGS_CODEが無い（未発注の）商品でも、Sample_CODEだけで検索できる。"""
     from services import gmail_service, slack_service
 
     captured = {}
     monkeypatch.setattr(gmail_service, "search_messages", lambda email, query, max_results: captured.setdefault("q", query) or {"status": "ok", "summary": "0件", "records": []})
     monkeypatch.setattr(slack_service, "search_messages", lambda email, query, max_results: {"status": "ok", "summary": "0件", "records": []})
 
-    product_service.get_related_communications_for_product("user@logs.co.jp", "5145", None)
-    assert captured["q"] == '"5145"'
+    product_service.get_related_communications_for_product("user@logs.co.jp", None, "S1")
+    assert captured["q"] == '"S1"'
 
 
-def test_get_related_logs_codes_returns_codes_from_union_query(monkeypatch):
-    rows = [("5145",), ("6054",)]
-    monkeypatch.setattr(product_service, "get_connection", lambda: _FakeConnection(rows, ["LOGS_CODE"]))
-
-    codes = product_service.get_related_logs_codes("山田太郎")
-    assert codes == ["5145", "6054"]
-
-
-def test_get_related_logs_codes_returns_empty_on_query_failure(monkeypatch):
-    def _raise():
-        raise RuntimeError("SUPABASE_DB_URL is not configured")
-
-    monkeypatch.setattr(product_service, "get_connection", _raise)
-    assert product_service.get_related_logs_codes("山田太郎") == []
-
-
-def test_get_related_logs_codes_respects_limit(monkeypatch):
-    rows = [(str(i),) for i in range(10)]
-    monkeypatch.setattr(product_service, "get_connection", lambda: _FakeConnection(rows, ["LOGS_CODE"]))
-
-    codes = product_service.get_related_logs_codes("山田太郎", limit=3)
-    assert len(codes) == 3
-
-
-def test_get_products_master_batch_returns_empty_for_empty_input(monkeypatch):
-    call_count = {"n": 0}
-
-    def _fake_get_connection():
-        call_count["n"] += 1
-        return _FakeConnection([], ["LOGS_CODE"])
-
-    monkeypatch.setattr(product_service, "get_connection", _fake_get_connection)
-    assert product_service.get_products_master_batch([]) == {}
-    assert call_count["n"] == 0
-
-
-def test_get_products_master_batch_maps_by_logs_code(monkeypatch):
-    columns = ["LOGS_CODE", "Sample_CODE", "商品名", "型番", "商品分類", "仕入先ID", "仕入先名",
-               "作成者名", "通常売価", "論理原価", "supplier_production_staff"]
-    rows = [("5145", "S1", "Baseball Cap", "K01", 1, "s1", "1064STUDIO", "山田太郎", 1000, 500, "木村美菜")]
-    monkeypatch.setattr(product_service, "get_connection", lambda: _FakeConnection(rows, columns))
-
-    result = product_service.get_products_master_batch(["5145"])
-    assert result["5145"]["商品名"] == "Baseball Cap"
-    assert result["5145"]["supplier_production_staff"] == "木村美菜"
+def test_get_related_communications_for_product_returns_unavailable_with_no_keys():
+    result = product_service.get_related_communications_for_product("user@logs.co.jp", None, None)
+    assert result["gmail"]["status"] == "unavailable"
+    assert result["slack"]["status"] == "unavailable"
 
 
 def test_get_product_detail_returns_none_when_master_row_missing(monkeypatch):
     monkeypatch.setattr(
         product_service, "get_connection",
-        lambda: _SequentialFakeConnection([([], ["LOGS_CODE"])]),
+        lambda: _SequentialFakeConnection([([], ["ID"])]),
     )
     assert product_service.get_product_detail("does-not-exist") is None
 
 
 def test_get_product_detail_aggregates_all_sources(monkeypatch):
-    master_cols = ["LOGS_CODE", "Sample_CODE", "商品名", "supplier_production_staff"]
-    master_rows = [("5145", "S1", "Baseball Cap", "木村美菜")]
+    master_cols = ["ID", "LOGS_CODE", "Sample_CODE", "商品名", "supplier_production_staff"]
+    master_rows = [(101, "5145", "S1", "Baseball Cap", "木村美菜")]
 
     po_cols = ["ID", "PO_No", "顧客名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "企画担当者名", "発注数量", "発注金額", "PO発行日"]
     po_rows = [(1, "914-1", "US_LOGS Inc.", "山田太郎", None, None, None, 10, 1000, "2026-01-01")]
@@ -220,7 +232,7 @@ def test_get_product_detail_aggregates_all_sources(monkeypatch):
         ]),
     )
 
-    detail = product_service.get_product_detail("5145")
+    detail = product_service.get_product_detail("101")
 
     assert detail["master"]["商品名"] == "Baseball Cap"
     assert detail["purchase_orders"][0]["PO_No"] == "914-1"
@@ -235,9 +247,33 @@ def test_get_product_detail_aggregates_all_sources(monkeypatch):
     }
 
 
+def test_get_product_detail_skips_po_sales_purchase_lookup_when_no_logs_code(monkeypatch):
+    """LOGS_CODEがNULL（未発注）の商品は、PO/売上/仕入クエリ自体を
+    発行せず、空リストとして正常に返す（クラッシュしない）。"""
+    master_cols = ["ID", "LOGS_CODE", "Sample_CODE", "商品名"]
+    master_rows = [(101, None, None, "Baseball Cap")]
+
+    monkeypatch.setattr(
+        product_service, "get_connection",
+        lambda: _SequentialFakeConnection([(master_rows, master_cols)]),
+    )
+
+    detail = product_service.get_product_detail("101")
+    assert detail["purchase_orders"] == []
+    assert detail["sales"] == []
+    assert detail["purchases"] == []
+    assert detail["samples"] == []
+    assert detail["status"] == {
+        "po_issued": False,
+        "sales_recorded": False,
+        "purchase_recorded": False,
+        "sample_requested": False,
+    }
+
+
 def test_get_product_detail_skips_sample_lookup_when_no_sample_code(monkeypatch):
-    master_cols = ["LOGS_CODE", "Sample_CODE", "商品名"]
-    master_rows = [("5145", None, "Baseball Cap")]
+    master_cols = ["ID", "LOGS_CODE", "Sample_CODE", "商品名"]
+    master_rows = [(101, "5145", None, "Baseball Cap")]
 
     monkeypatch.setattr(
         product_service, "get_connection",
@@ -249,6 +285,6 @@ def test_get_product_detail_skips_sample_lookup_when_no_sample_code(monkeypatch)
         ]),
     )
 
-    detail = product_service.get_product_detail("5145")
+    detail = product_service.get_product_detail("101")
     assert detail["samples"] == []
     assert detail["status"]["sample_requested"] is False

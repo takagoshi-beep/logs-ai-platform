@@ -274,8 +274,8 @@ export async function getProducts(limit: number = 20, scope: "mine" | "all" = "m
 /**
  * Get full cross-referenced detail for a single product (PO/sales/purchases/samples)
  */
-export async function getProduct(logsCode: string) {
-  return apiCall(`/api/products/${logsCode}`);
+export async function getProduct(productId: string) {
+  return apiCall(`/api/products/${productId}`);
 }
 
 /**

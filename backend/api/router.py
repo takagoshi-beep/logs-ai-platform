@@ -366,7 +366,9 @@ def download_proposal_image(trace_id: str):
 
 @router.get("/products")
 def list_products(limit: int = 20, scope: str = "mine", user: dict = Depends(require_login)) -> dict:
-    """商品(LOGS_CODE)一覧を返す。
+    """商品一覧を返す。キーは商品ID（products."ID"、常に存在する内部キー）。
+    LOGS_CODEは発注フラグが立った時点で初めて払い出されるため、未発注の
+    商品はLOGS_CODEがNULLのまま一覧に含まれる（正常な状態、docs/architecture.md 14.30）。
 
     scope="mine"（既定）: ログイン中の本人が直接（商品マスタの作成者）、
     または間接（PO/売上/仕入の担当者、仕入先の生産管理担当者、サンプル
@@ -376,12 +378,13 @@ def list_products(limit: int = 20, scope: str = "mine", user: dict = Depends(req
     scope="all": 商品マスタから直近登録分をlimit件返す（MVP実装。
     総件数を考慮したページングは今後の検討課題）。
     """
-    from services.product_service import get_all_products, get_products_master_batch, get_related_logs_codes, sample_code_sort_key
+    from services.product_service import get_all_products, get_products_master_batch, get_related_product_ids, sample_code_sort_key
 
     if scope == "all":
         rows = get_all_products(limit=limit)
         products = [
             {
+                "product_id": str(r.get("ID")),
                 "logs_code": r.get("LOGS_CODE"),
                 "product_name": r.get("商品名"),
                 "model_no": r.get("型番"),
@@ -398,15 +401,16 @@ def list_products(limit: int = 20, scope: str = "mine", user: dict = Depends(req
     if not owner_name:
         return {"success": True, "products": [], "count": 0, "scope": "mine"}
 
-    logs_codes = get_related_logs_codes(owner_name, limit=limit)
-    master_map = get_products_master_batch(logs_codes)
+    product_ids = get_related_product_ids(owner_name, limit=limit)
+    master_map = get_products_master_batch(product_ids)
 
     products = []
-    for code in logs_codes:
-        m = master_map.get(code)
+    for pid in product_ids:
+        m = master_map.get(pid)
         if m:
             products.append({
-                "logs_code": code,
+                "product_id": pid,
+                "logs_code": m.get("LOGS_CODE"),
                 "product_name": m.get("商品名"),
                 "model_no": m.get("型番"),
                 "supplier_name": m.get("仕入先名"),
@@ -419,25 +423,25 @@ def list_products(limit: int = 20, scope: str = "mine", user: dict = Depends(req
     return {"success": True, "products": products, "count": len(products), "scope": "mine"}
 
 
-@router.get("/products/{logs_code}")
-def get_product(logs_code: str, user: dict = Depends(require_login)) -> dict:
-    """1商品について、マスタ情報 + PO/売上/仕入/サンプルの横断履歴、
-    および本人のGmail/Slackから見た関連メッセージを返す。
+@router.get("/products/{product_id}")
+def get_product(product_id: str, user: dict = Depends(require_login)) -> dict:
+    """1商品(products.ID)について、マスタ情報 + PO/売上/仕入/サンプルの
+    横断履歴、および本人のGmail/Slackから見た関連メッセージを返す。
     """
     from services.product_service import get_product_detail, get_related_communications_for_product
 
     try:
-        detail = get_product_detail(logs_code)
+        detail = get_product_detail(product_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
     if not detail:
-        raise HTTPException(status_code=404, detail=f"Product {logs_code} not found")
+        raise HTTPException(status_code=404, detail=f"Product {product_id} not found")
 
     try:
         detail["related_communications"] = get_related_communications_for_product(
             user_email=user.get("email"),
-            logs_code=logs_code,
+            logs_code=detail["master"].get("LOGS_CODE"),
             sample_code=detail["master"].get("Sample_CODE"),
         )
     except Exception as e:

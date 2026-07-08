@@ -1,0 +1,165 @@
+diff --git a/backend/services/data_providers.py b/backend/services/data_providers.py
+index 3a8df92..768dea2 100644
+--- a/backend/services/data_providers.py
++++ b/backend/services/data_providers.py
+@@ -72,7 +72,7 @@ class LogsysProvider:
+         # 赤伝（ステータス=3）は返品として含める。仮出庫（決済方法=4）は除外する。
+         sql = (
+             'SELECT "売上入力日", "得意先ID", "得意先名", "登録商品名", '
+-            '"事業分類", "数量pcs", "売上金額", "明細粗利" '
++            '"事業分類", "数量pcs", "売上金額", "明細粗利", "営業担当者名" '
+             'FROM sales '
+             "WHERE \"ステータス\" IN (2, 3, 4, 5) AND \"決済方法\" != '4'"
+         )
+@@ -86,6 +86,9 @@ class LogsysProvider:
+         if params.get("customer_keyword"):
+             sql += ' AND "得意先名" LIKE %s'
+             args.append(f"%{params['customer_keyword']}%")
++        if params.get("sales_rep_keyword"):
++            sql += ' AND "営業担当者名" LIKE %s'
++            args.append(f"%{params['sales_rep_keyword']}%")
+         sql += ' ORDER BY "売上入力日"'
+         rows = self._query(sql, tuple(args))
+         period = (
+@@ -101,9 +104,13 @@ class LogsysProvider:
+     def _purchase_lines(self, params: dict[str, Any]) -> dict[str, Any]:
+         # ステータスIN(2,3)は本番運用中のシステムプロンプトで確認済みの
+         # 仕入集計時の正式フィルタ条件。
++        # 営業担当者名は伝票レベル・明細レベルの両方に存在するため、
++        # 明細を優先し、空欄の場合のみ伝票の値を採用する（14.30で確認した
++        # purchasesテーブル特有の二重構造）。
+         sql = (
+             'SELECT "伝票日", "仕入先名", "商品分類", "仕入数量pcs", '
+-            '"仕入金額円", "諸掛込金額円" '
++            '"仕入金額円", "諸掛込金額円", '
++            'COALESCE(NULLIF("明細営業担当者名", \'\'), "営業担当者名") AS "営業担当者名" '
+             'FROM purchases '
+             'WHERE "ステータス" IN (2, 3)'
+         )
+@@ -114,6 +121,9 @@ class LogsysProvider:
+         if params.get("period_end"):
+             sql += ' AND "伝票日" <= %s'
+             args.append(params["period_end"])
++        if params.get("sales_rep_keyword"):
++            sql += ' AND COALESCE(NULLIF("明細営業担当者名", \'\'), "営業担当者名") LIKE %s'
++            args.append(f"%{params['sales_rep_keyword']}%")
+         sql += ' ORDER BY "伝票日"'
+         rows = self._query(sql, tuple(args))
+         return _evidence(
+diff --git a/backend/services/tool_registry.py b/backend/services/tool_registry.py
+index 6c4b9ae..b707d80 100644
+--- a/backend/services/tool_registry.py
++++ b/backend/services/tool_registry.py
+@@ -26,6 +26,9 @@ TOOLS: list[dict[str, Any]] = [
+             "期間を絞り込んで呼び出すこと（「今月」なら今月の初日〜末日を指定する）。"
+             "取得した行には「事業分類」という数値コード列が含まれるが、"
+             "その意味を推測してはいけない。get_code_masterで実際の意味を確認すること。"
++            "「〇〇さんの売上」のように営業担当者で絞り込みたい場合はsales_rep_keywordを使う"
++            "（架空の担当者名で検索しても0件になるだけなので、実在するか不安な場合は"
++            "get_customer_master等で事前確認する必要はない。0件ならそのまま正直に伝えること）。"
+         ),
+         "input_schema": {
+             "type": "object",
+@@ -33,17 +36,24 @@ TOOLS: list[dict[str, Any]] = [
+                 "period_start": {"type": "string", "description": "期間開始日（YYYY-MM-DD形式）"},
+                 "period_end": {"type": "string", "description": "期間終了日（YYYY-MM-DD形式）"},
+                 "customer_keyword": {"type": "string", "description": "顧客名の部分一致キーワード"},
++                "sales_rep_keyword": {"type": "string", "description": "営業担当者名の部分一致キーワード"},
+             },
+         },
+     },
+     {
+         "name": "get_purchase_lines",
+-        "description": "実際の仕入明細（諸掛り込み金額）を取得する。仕入原価の分析に使う。件数が多くなりやすいため、可能な限りperiod_start/period_endで期間を絞り込むこと。",
++        "description": (
++            "実際の仕入明細（諸掛り込み金額）を取得する。仕入原価の分析に使う。"
++            "件数が多くなりやすいため、可能な限りperiod_start/period_endで期間を絞り込むこと。"
++            "「〇〇さんの仕入」のように営業担当者で絞り込みたい場合はsales_rep_keywordを使う"
++            "（明細レベルの担当者を優先し、空欄の場合のみ伝票レベルの担当者を採用済み）。"
++        ),
+         "input_schema": {
+             "type": "object",
+             "properties": {
+                 "period_start": {"type": "string", "description": "期間開始日（YYYY-MM-DD形式）"},
+                 "period_end": {"type": "string", "description": "期間終了日（YYYY-MM-DD形式）"},
++                "sales_rep_keyword": {"type": "string", "description": "営業担当者名の部分一致キーワード"},
+             },
+         },
+     },
+diff --git a/tests/backend/test_sales_rep_filtering.py b/tests/backend/test_sales_rep_filtering.py
+new file mode 100644
+index 0000000..4957aa5
+--- /dev/null
++++ b/tests/backend/test_sales_rep_filtering.py
+@@ -0,0 +1,71 @@
++"""Regression tests for docs/architecture.md 14.31: get_sales_lines/
++get_purchase_lines previously didn't select or filter by 営業担当者名,
++even though the underlying sales/purchases tables have always had that
++column — the SELECT statements just predated the discovery of that
++column (made while building the 14.28 owner-based project filtering).
++"""
++from __future__ import annotations
++
++from services.data_providers import LogsysProvider
++
++
++def test_sales_lines_selects_sales_rep_name(monkeypatch):
++    captured = {}
++
++    def _fake_query(self, sql, params=()):
++        captured["sql"] = sql
++        captured["params"] = params
++        return []
++
++    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
++
++    LogsysProvider()._sales_lines({})
++
++    assert '"営業担当者名"' in captured["sql"]
++
++
++def test_sales_lines_filters_by_sales_rep_keyword(monkeypatch):
++    captured = {}
++
++    def _fake_query(self, sql, params=()):
++        captured["sql"] = sql
++        captured["params"] = params
++        return []
++
++    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
++
++    LogsysProvider()._sales_lines({"sales_rep_keyword": "石川"})
++
++    assert '"営業担当者名" LIKE %s' in captured["sql"]
++    assert "%石川%" in captured["params"]
++
++
++def test_purchase_lines_selects_sales_rep_name_with_detail_priority(monkeypatch):
++    captured = {}
++
++    def _fake_query(self, sql, params=()):
++        captured["sql"] = sql
++        captured["params"] = params
++        return []
++
++    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
++
++    LogsysProvider()._purchase_lines({})
++
++    assert 'COALESCE(NULLIF("明細営業担当者名"' in captured["sql"]
++    assert '"営業担当者名"' in captured["sql"]
++
++
++def test_purchase_lines_filters_by_sales_rep_keyword(monkeypatch):
++    captured = {}
++
++    def _fake_query(self, sql, params=()):
++        captured["sql"] = sql
++        captured["params"] = params
++        return []
++
++    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
++
++    LogsysProvider()._purchase_lines({"sales_rep_keyword": "石川"})
++
++    assert "%石川%" in captured["params"]
