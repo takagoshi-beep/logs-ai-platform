@@ -273,7 +273,7 @@ def test_generate_document_fills_single_fields_from_user_data():
     assert result["filled_fields"] == ["顧客名"]
     assert result["missing_fields"] == []
 
-    wb = load_workbook(result["output_path"])
+    wb = load_workbook(io.BytesIO(df.file_storage.download_file(df.GENERATED_DOCS_BUCKET, f"{result['output_id']}.xlsx")))
     assert wb.active["B1"].value == "US_LOGS Inc."
 
 
@@ -309,7 +309,7 @@ def test_generate_document_writes_multiple_table_rows_below_header():
     )
     assert result["tables_written"][table_id] == 2
 
-    wb = load_workbook(result["output_path"])
+    wb = load_workbook(io.BytesIO(df.file_storage.download_file(df.GENERATED_DOCS_BUCKET, f"{result['output_id']}.xlsx")))
     ws = wb.active
     assert (ws["A13"].value, ws["B13"].value, ws["C13"].value) == ("LUL157", "IVORY", "92")
     assert (ws["A14"].value, ws["B14"].value, ws["C14"].value) == ("LUL157", "BLACK", "313")

@@ -2112,6 +2112,133 @@ explicitly clears that override per-test to verify what actually
 happens *without* it (401 unauthenticated, 403 non-admin). 248 total
 passing.
 
+## 14.23 Web化準備 (1/4): moving off local-file storage, starting
+with document formats (2026-07-06/07)
+
+Noritsugu wants to deploy this for ~20 coworkers (Vercel for Next.js +
+Render for FastAPI + existing Supabase, decided after ruling out a
+single-Next.js-only deployment — the backend's logic is entirely
+Python, rewriting it in JavaScript just to collapse two hosts into one
+was correctly judged not worth it). Surfaced a real, previously-hidden
+problem while planning this: **every one of `backend/`'s "runtime
+data" stores this whole session — Governance approvals, Learning,
+capability execution history, conversation history, reasoning traces,
+document formats — is a local JSONL file (or, for document formats,
+also local files on disk for the actual template/output `.xlsx`
+content)**. On a local machine this never mattered; on Render, a
+redeploy (or even a routine restart) wipes the filesystem, and
+everything in those files disappears. Explicitly confirmed with
+Noritsugu: currently-accumulated data is test data, fine to lose;
+going forward it must land in Supabase instead. Scope: all seven
+JSONL-based stores, done as one combined effort — this entry covers
+the first and highest-priority one (document formats, since losing it
+breaks a real, currently-working feature, not just history), the
+remaining six follow in the same pattern.
+
+**Key discovery that shaped the whole design:** every one of these
+seven stores turned out to follow the *exact same shape* — append a
+JSON-serializable dict as one "record", read all records back as a
+list, and (in Python, not SQL) reduce that list to "the latest record
+per some ID wins" or similar. That meant the fix didn't need seven
+different schema designs; it needed one generic mechanism reused seven
+times.
+
+**New `services/record_store.py`**: `append_record(table, record)` /
+`read_all_records(table)`, backed by a table shaped
+`(id BIGSERIAL, record JSONB, created_at TIMESTAMPTZ)` — no per-field
+columns, deliberately. This is *not* how you'd design a fresh
+relational schema, but it's the smallest, lowest-risk change: every
+store's own business logic (its own "latest write wins" reducer, its
+own filtering) doesn't change at all, since it never did SQL-level
+filtering to begin with — it always loaded everything and reduced in
+Python. Reproducing that exact behavior against Supabase, rather than
+redesigning each store as a "real" table with typed columns, avoids
+touching logic that's been tested across this entire session.
+
+**New `services/file_storage.py`**: wraps the `supabase-py` client's
+Storage API (a separate service from the Postgres DB `record_store.py`
+talks to — needs its own `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`,
+not `SUPABASE_DB_URL`) for the two binary-file directories
+`document_formats.py` used to write to directly:
+`upload_file(bucket, path, data)` / `download_file(bucket, path)`.
+
+**`document_formats.py` changes**: `_append_jsonl`/`_read_jsonl` (names
+kept for minimal diff, bodies now delegate to `record_store`) replace
+local JSONL I/O. `create_format()` uploads the raw template bytes to
+the `document-templates` bucket instead of writing
+`TEMPLATES_DIR/{format_id}.xlsx`, and loads the workbook straight from
+the in-memory bytes it already has (no round-trip through Storage
+needed at creation time). `generate_document()` downloads the template
+from Storage, fills it, and uploads the result to `generated-documents`
+instead of saving to `GENERATED_DOCS_DIR` — `load_workbook`/`.save()`
+both work against `io.BytesIO` just as well as a file path, so neither
+openpyxl call itself needed to change, only what surrounds it. Record
+fields renamed to reflect reality: `template_path` → `template_storage_path`,
+`output_path` → `output_storage_path` (confirmed via grep that the
+frontend only ever consumed `output_id`, never `output_path`, so this
+was safe). `document_formats_router.py`'s download endpoint now
+downloads from Storage and returns a `Response` with a
+`Content-Disposition` header instead of `FileResponse` against a local
+path.
+
+**Test isolation redesigned, not just patched.** The old
+`tests/backend/conftest.py` fixture redirected `document_formats`'
+path constants (`TEMPLATES_DIR`, `FORMATS_PATH`, `GENERATED_DOCS_DIR`)
+to `tmp_path` — those constants don't exist anymore. Rather than mock
+psycopg/Supabase-client internals in every one of the ~20
+document-formats-related tests, the fixture now replaces
+`record_store.append_record`/`read_all_records` and
+`file_storage.upload_file`/`download_file` themselves with simple
+in-memory equivalents (a dict of lists, a dict of bytes) — every
+existing test kept working completely unchanged, since
+`document_formats.py` never touches `record_store`/`file_storage`'s
+internals directly, only their public functions. `test_record_store.py`/
+`test_file_storage.py` (testing those two modules' own real
+implementations) explicitly restore the real functions first via
+`monkeypatch.setattr(module, "fn", _REAL_FN)`, captured at import time
+before the autouse fixture ever runs — otherwise they'd just be testing
+the fake, not the real code. 14 new tests total (4 `record_store`, 3
+`file_storage`, plus 2 existing `document_formats`/`document_formats_router`
+tests updated for the renamed output field). 255 total passing.
+
+**Also fixed while auditing dependencies for deployment:**
+`backend/requirements.txt` was badly stale — only 3 packages
+(`fastapi`/`uvicorn`/`pydantic`), missing everything else the app
+actually imports (`anthropic`, `openai`, `psycopg`, `openpyxl`,
+`google-auth`, `supabase`, `itsdangerous`, `python-multipart` — the
+latter two only surfaced as *installation* gaps earlier this session,
+14.22, precisely because nothing had ever declared them as real
+dependencies). Render installs from this file on every deploy — an
+incomplete `requirements.txt` would have failed the very first
+deployment. Rebuilt from an actual import scan of `backend/`,
+`learning/`, `capability/` (including imports nested inside function
+bodies, which a naive top-of-file-only grep misses — `psycopg`,
+`anthropic`, `google.auth` etc. are all imported lazily inside
+specific functions, not at module top level).
+
+**Noted but not touched:** there's a second, stale root-level
+`requirements.txt` (different package set and versions — `jinja2`,
+`httpx`, `google-api-python-client`, etc.) that appears to predate
+14.14's deletion of the old `app/`-era ecosystem and is not used by
+anything currently running; worth deleting in a future cleanup pass
+but out of scope for this entry.
+
+**Setup docs**: `docs/sql/14_23_document_formats.sql` (the one
+`CREATE TABLE` statement to run once in Supabase's SQL Editor) and
+`docs/deployment_setup.md` (creating the two Storage buckets, the two
+new env vars, `pip install supabase`, and what to verify after
+restarting).
+
+**Remaining for the rest of this Web化 effort** (same
+`record_store.py` pattern, six more stores): `governance_store.py`,
+`capability_instance.py`, `learning/repository.py` (five separate
+JSONL files), `conversation_store.py`, `trace_store.py`,
+`status_reporting.py`'s event log — then the actual Vercel/Render
+deployment steps themselves (env var transfer, CORS/session-cookie
+`same_site` reconsideration once frontend and backend live on
+different domains, per the cross-origin cookie concern flagged when
+Web化 was first discussed).
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.

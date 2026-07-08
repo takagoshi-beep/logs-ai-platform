@@ -18,7 +18,6 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from services import document_formats
@@ -108,11 +107,16 @@ def generate(format_id: str, request: GenerateRequest) -> dict:
 
 @router.get("/generated/{output_id}/download")
 def download_generated(output_id: str):
-    path = document_formats.GENERATED_DOCS_DIR / f"{output_id}.xlsx"
-    if not path.exists():
+    from fastapi.responses import Response
+
+    try:
+        data = document_formats.file_storage.download_file(
+            document_formats.GENERATED_DOCS_BUCKET, f"{output_id}.xlsx",
+        )
+    except Exception:
         raise HTTPException(status_code=404, detail="Generated document not found")
-    return FileResponse(
-        path,
+    return Response(
+        content=data,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        filename=f"{output_id}.xlsx",
+        headers={"Content-Disposition": f'attachment; filename="{output_id}.xlsx"'},
     )

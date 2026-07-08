@@ -50,13 +50,39 @@ def _isolate_backend_storage(tmp_path, monkeypatch):
     monkeypatch.setattr(governance_store, "APPROVALS_PATH", data_dir / "governance_approvals.jsonl")
     monkeypatch.setattr(governance_store, "AUDIT_PATH", data_dir / "governance_audit.jsonl")
 
-    # --- document_formats.py ---
-    from services import document_formats
+    # --- document_formats.py (2026-07-06: migrated to Supabase via
+    # record_store/file_storage — docs/architecture.md 14.23). Rather than
+    # mocking psycopg2 cursors in every test, replace record_store's/
+    # file_storage's public functions with simple in-memory equivalents
+    # that behave exactly like the real thing (append-then-read-back,
+    # upload-then-download) — every existing document_formats test then
+    # keeps working unchanged, since document_formats.py itself never
+    # touches record_store/file_storage's internals directly. ---
+    from services import record_store, file_storage
 
-    monkeypatch.setattr(document_formats, "DATA_DIR", data_dir)
-    monkeypatch.setattr(document_formats, "TEMPLATES_DIR", data_dir / "document_templates")
-    monkeypatch.setattr(document_formats, "FORMATS_PATH", data_dir / "document_formats.jsonl")
-    monkeypatch.setattr(document_formats, "GENERATED_DOCS_DIR", data_dir / "generated_documents")
+    _fake_tables: dict[str, list[dict]] = {}
+
+    def _fake_append_record(table, record):
+        _fake_tables.setdefault(table, []).append(record)
+
+    def _fake_read_all_records(table):
+        return list(_fake_tables.get(table, []))
+
+    monkeypatch.setattr(record_store, "append_record", _fake_append_record)
+    monkeypatch.setattr(record_store, "read_all_records", _fake_read_all_records)
+
+    _fake_buckets: dict[tuple[str, str], bytes] = {}
+
+    def _fake_upload_file(bucket, path, data):
+        _fake_buckets[(bucket, path)] = data
+
+    def _fake_download_file(bucket, path):
+        if (bucket, path) not in _fake_buckets:
+            raise FileNotFoundError(f"{bucket}/{path} not found in fake storage")
+        return _fake_buckets[(bucket, path)]
+
+    monkeypatch.setattr(file_storage, "upload_file", _fake_upload_file)
+    monkeypatch.setattr(file_storage, "download_file", _fake_download_file)
 
     # --- trace_store.py ---
     from services import trace_store

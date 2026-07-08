@@ -151,7 +151,7 @@ def test_download_generated_returns_the_real_file_after_generation():
         json={"user_data": {"顧客名": "US_LOGS Inc."}},
     ).json()
 
-    output_id = generated["output_path"].split("/")[-1].replace(".xlsx", "")
+    output_id = generated["output_id"]
     response = client.get(f"/document-formats/generated/{output_id}/download")
     assert response.status_code == 200
     assert response.headers["content-type"] == (

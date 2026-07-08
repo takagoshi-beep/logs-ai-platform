@@ -21,9 +21,9 @@ approval state can live.
 """
 from __future__ import annotations
 
+import io
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -32,13 +32,16 @@ from openpyxl.cell.cell import MergedCell
 
 from capability.domain import Capability, CapabilityStatus, ExecutionStatus, GovernanceLevel
 from services.capability_instance import ensure_registered, registry as capability_registry
-from services import governance_store
+from services import governance_store, file_storage, record_store
 from services.llm_client import generate_text
 
-ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = ROOT / "data"
-TEMPLATES_DIR = DATA_DIR / "document_templates"
-FORMATS_PATH = DATA_DIR / "document_formats.jsonl"
+# 2026-07-06 (Web化準備、docs/architecture.md 14.23): ローカルファイルへの
+# 保存から、record_store（定義情報）+ file_storage（実ファイル）を使った
+# Supabase保存に切り替えた。クラウド上でサーバーが再起動しても、承認済み
+# フォーマットの定義や生成済みファイルが消えないようにするため。
+FORMATS_TABLE = "app_document_formats"
+TEMPLATES_BUCKET = "document-templates"
+GENERATED_DOCS_BUCKET = "generated-documents"
 
 DOCUMENT_FORMAT_CAPABILITY = Capability(
     capability_id="document_format_structure_inference",
@@ -69,25 +72,14 @@ def _now() -> str:
 
 
 def _append_jsonl(record: dict[str, Any]) -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with FORMATS_PATH.open("a", encoding="utf-8") as fp:
-        fp.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+    """名前はJSONL時代のまま残しているが、実体はrecord_store経由で
+    Supabaseに保存する（呼び出し元を一切変更せずに済むように）。"""
+    record_store.append_record(FORMATS_TABLE, record)
 
 
 def _read_jsonl() -> list[dict[str, Any]]:
-    if not FORMATS_PATH.exists():
-        return []
-    records = []
-    with FORMATS_PATH.open("r", encoding="utf-8") as fp:
-        for line in fp:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    return records
+    """同上 — 名前はJSONL時代のまま、実体はSupabaseから読む。"""
+    return record_store.read_all_records(FORMATS_TABLE)
 
 
 def _latest_by_format_id() -> dict[str, dict[str, Any]]:
@@ -260,9 +252,7 @@ def create_format(name: str, file_bytes: bytes) -> dict[str, Any]:
     ensure_registered(DOCUMENT_FORMAT_CAPABILITY)
 
     format_id = f"fmt-{uuid4().hex[:8]}"
-    TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
-    template_path = TEMPLATES_DIR / f"{format_id}.xlsx"
-    template_path.write_bytes(file_bytes)
+    file_storage.upload_file(TEMPLATES_BUCKET, f"{format_id}.xlsx", file_bytes)
 
     trace_id = f"docformat-{uuid4().hex[:8]}"
     execution = capability_registry.execute_capability(
@@ -274,7 +264,7 @@ def create_format(name: str, file_bytes: bytes) -> dict[str, Any]:
     )
 
     try:
-        workbook = load_workbook(template_path)
+        workbook = load_workbook(io.BytesIO(file_bytes))
         worksheet = workbook.active
         field_mappings = infer_structure(worksheet)
         table_regions = detect_table_regions(field_mappings)
@@ -309,7 +299,7 @@ def create_format(name: str, file_bytes: bytes) -> dict[str, Any]:
     record = {
         "format_id": format_id,
         "name": name,
-        "template_path": str(template_path),
+        "template_storage_path": f"{format_id}.xlsx",
         "field_mappings": field_mappings,
         "table_regions": table_regions,
         "governance_approval_id": approval.approval_id,
@@ -564,7 +554,6 @@ def parse_instruction_to_fields(format_id: str, instruction: str) -> dict[str, A
     return {"field_values": field_values, "trace_id": trace_id}
 
 
-GENERATED_DOCS_DIR = DATA_DIR / "generated_documents"
 
 DOCUMENT_GENERATION_CAPABILITY = Capability(
     capability_id="document_generation",
@@ -687,7 +676,8 @@ def generate_document(
     )
 
     try:
-        workbook = load_workbook(fmt["template_path"])
+        template_bytes = file_storage.download_file(TEMPLATES_BUCKET, fmt["template_storage_path"])
+        workbook = load_workbook(io.BytesIO(template_bytes))
         worksheet = workbook.active
 
         filled: list[str] = []
@@ -731,10 +721,10 @@ def generate_document(
                 for column in region["columns"]:
                     missing.append(f"{column['field_name']}（テーブル: {region['table_id']}）")
 
-        GENERATED_DOCS_DIR.mkdir(parents=True, exist_ok=True)
         output_id = f"doc-{uuid4().hex[:8]}"
-        output_path = GENERATED_DOCS_DIR / f"{output_id}.xlsx"
-        workbook.save(output_path)
+        output_buffer = io.BytesIO()
+        workbook.save(output_buffer)
+        file_storage.upload_file(GENERATED_DOCS_BUCKET, f"{output_id}.xlsx", output_buffer.getvalue())
     except Exception as e:
         capability_registry.record_execution_result(
             execution_id=execution.execution_id, outputs={},
@@ -750,7 +740,7 @@ def generate_document(
 
     return {
         "output_id": output_id,
-        "output_path": str(output_path),
+        "output_storage_path": f"{output_id}.xlsx",
         "format_id": format_id,
         "format_name": fmt["name"],
         "filled_fields": filled,
