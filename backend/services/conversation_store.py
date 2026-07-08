@@ -1,29 +1,30 @@
 """Session-scoped conversation history for the Function-Calling chat path
-(docs/architecture.md 14.21).
+(docs/architecture.md 14.21, migrated to Supabase in 14.23).
 
-Append-only JSONL, matching the storage convention used throughout
-`backend/` (governance_store.py, document_formats.py, trace_store.py):
-plain append-only file, full-file scan on read. Messages are never
+Append-only records, matching the storage convention used throughout
+`backend/`: append-only, full-table scan on read. Messages are never
 edited after being written, only appended, so there is no "latest
-record wins" concern here — every line for a given session_id is part
-of that session's real history.
+record wins" concern here — every record for a given session_id is
+part of that session's real history.
 
-Deliberately NOT started until now: earlier work (reasoning_pipeline.py's
+Deliberately NOT started until 14.21: earlier work (reasoning_pipeline.py's
 Q1-Q6) had no concept of conversation state at all — every question was
 answered in total isolation. This module is what makes turn-to-turn
 memory possible for `chat`, while `推論エンジン` (reasoning_pipeline.py)
 deliberately keeps its fully-stateless, fully-deterministic behavior
 unchanged (see docs/architecture.md 14.21 for why both are kept).
+
+2026-07-07 (Web化準備、14.23): moved off local JSONL to Supabase via
+record_store.py, same reason/pattern as every other store this session
+— a local file wouldn't survive a Render redeploy.
 """
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = ROOT / "data"
-CONVERSATION_LOG_PATH = DATA_DIR / "conversations.jsonl"
+from services import record_store
+
+CONVERSATIONS_TABLE = "app_conversations"
 
 
 def append_message(session_id: str, role: str, content: str) -> None:
@@ -33,10 +34,9 @@ def append_message(session_id: str, role: str, content: str) -> None:
     """
     if not session_id:
         return
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    record = {"session_id": session_id, "role": role, "content": content}
-    with CONVERSATION_LOG_PATH.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    record_store.append_record(CONVERSATIONS_TABLE, {
+        "session_id": session_id, "role": role, "content": content,
+    })
 
 
 def get_history(session_id: str, limit: int = 20) -> list[dict[str, str]]:
@@ -44,20 +44,12 @@ def get_history(session_id: str, limit: int = 20) -> list[dict[str, str]]:
     {"role": ..., "content": ...} の形式で古い順に返す。
     session_idが空、またはまだ履歴がなければ空リストを返す。
     """
-    if not session_id or not CONVERSATION_LOG_PATH.exists():
+    if not session_id:
         return []
 
     messages: list[dict[str, str]] = []
-    with CONVERSATION_LOG_PATH.open("r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record: dict[str, Any] = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if record.get("session_id") == session_id:
-                messages.append({"role": record["role"], "content": record["content"]})
+    for record in record_store.read_all_records(CONVERSATIONS_TABLE):
+        if record.get("session_id") == session_id:
+            messages.append({"role": record["role"], "content": record["content"]})
 
     return messages[-limit:]

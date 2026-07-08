@@ -13,18 +13,26 @@ Two things every test here needs, handled once:
    confusion that ambiguity caused before the old root-level `services/`,
    `domain/` etc. were deleted).
 
-2. Full isolation from real `backend/data/` files. Every service here
-   (`governance_store`, `document_formats`, `capability_instance`,
-   `trace_store`, `learning.repository`) resolves its storage paths at
-   *import time* relative to `backend/`, so without this, running the
-   test suite would read and write the same JSONL files the developer's
-   real running server uses — corrupting real Governance/Learning/
-   Capability history, or (worse) leaking real business data into a
-   test's assertions. `_isolate_backend_storage` monkeypatches every one
-   of those path constants to a fresh `tmp_path` for every single test,
-   and resets each module's in-memory state (the `CapabilityRegistry`
-   singleton's dicts, `learning.repository`'s lazily-constructed
-   singletons) so no state leaks between tests either.
+2. Full isolation from real Supabase data. As of 2026-07-07
+   (docs/architecture.md 14.23), every one of `backend/`'s "runtime
+   data" stores (`governance_store`, `document_formats`,
+   `capability_instance`, `trace_store`, `status_reporting`,
+   `conversation_store`, `learning.repository`) is backed by
+   `services.record_store` (Supabase Postgres, JSONB rows) and, for
+   `document_formats`, also `services.file_storage` (Supabase Storage).
+   Rather than mock psycopg/Supabase-client internals in every test,
+   `_isolate_backend_storage` replaces `record_store.append_record`/
+   `read_all_records` and `file_storage.upload_file`/`download_file`
+   themselves with simple in-memory equivalents (a dict of lists, a
+   dict of bytes), fresh for every single test. Every store's own
+   business logic is completely unaffected by this swap, since none of
+   them ever touch `record_store`/`file_storage` internals directly —
+   only their public functions, which behave identically whether
+   backed by memory or a real database. Each store's in-memory
+   singletons/caches (the `CapabilityRegistry` instance's dicts,
+   `learning.repository`'s lazily-constructed singletons,
+   `status_reporting._events`) are also reset per test so no state
+   leaks between tests.
 """
 from __future__ import annotations
 
@@ -39,26 +47,12 @@ if str(_BACKEND_DIR) not in sys.path:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_backend_storage(tmp_path, monkeypatch):
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-
-    # --- governance_store.py ---
-    from services import governance_store
-
-    monkeypatch.setattr(governance_store, "DATA_DIR", data_dir)
-    monkeypatch.setattr(governance_store, "APPROVALS_PATH", data_dir / "governance_approvals.jsonl")
-    monkeypatch.setattr(governance_store, "AUDIT_PATH", data_dir / "governance_audit.jsonl")
-
-    # --- document_formats.py (2026-07-06: migrated to Supabase via
-    # record_store/file_storage — docs/architecture.md 14.23). Rather than
-    # mocking psycopg2 cursors in every test, replace record_store's/
-    # file_storage's public functions with simple in-memory equivalents
-    # that behave exactly like the real thing (append-then-read-back,
-    # upload-then-download) — every existing document_formats test then
-    # keeps working unchanged, since document_formats.py itself never
-    # touches record_store/file_storage's internals directly. ---
-    from services import record_store, file_storage
+def _isolate_backend_storage(monkeypatch):
+    # --- record_store.py: the shared Supabase-backed persistence used by
+    # governance_store, document_formats, capability_instance,
+    # trace_store, status_reporting, conversation_store, and
+    # learning.repository. One in-memory fake covers all of them. ---
+    from services import record_store
 
     _fake_tables: dict[str, list[dict]] = {}
 
@@ -70,6 +64,10 @@ def _isolate_backend_storage(tmp_path, monkeypatch):
 
     monkeypatch.setattr(record_store, "append_record", _fake_append_record)
     monkeypatch.setattr(record_store, "read_all_records", _fake_read_all_records)
+
+    # --- file_storage.py: Supabase Storage, used only by
+    # document_formats.py (template/generated-document binary files). ---
+    from services import file_storage
 
     _fake_buckets: dict[tuple[str, str], bytes] = {}
 
@@ -84,51 +82,34 @@ def _isolate_backend_storage(tmp_path, monkeypatch):
     monkeypatch.setattr(file_storage, "upload_file", _fake_upload_file)
     monkeypatch.setattr(file_storage, "download_file", _fake_download_file)
 
-    # --- trace_store.py ---
-    from services import trace_store
-
-    monkeypatch.setattr(trace_store, "TRACE_LOG_DIR", data_dir)
-    monkeypatch.setattr(trace_store, "TRACE_LOG_PATH", data_dir / "traces.jsonl")
-
-    # --- capability_instance.py: redirect future writes, and reset the
-    # shared singleton's in-memory state so tests never see real dev
-    # data (loaded once at import time, before this fixture ever runs)
-    # or leftovers from a previous test in the same session. ---
+    # --- capability_instance.py: reset the shared singleton's in-memory
+    # state so tests never see real dev data (loaded once at import
+    # time, before this fixture ever runs) or leftovers from a previous
+    # test in the same session. ---
     from services import capability_instance
 
-    monkeypatch.setattr(capability_instance, "EXECUTION_LOG_DIR", data_dir)
-    monkeypatch.setattr(capability_instance, "EXECUTION_LOG_PATH", data_dir / "capability_executions.jsonl")
     monkeypatch.setattr(capability_instance.registry, "_capabilities", {})
     monkeypatch.setattr(capability_instance.registry, "_execution_history", [])
 
-    # --- learning/repository.py: redirect future writes, and clear the
-    # lazily-constructed singletons so the next get_xxx() call rebuilds
-    # them fresh against the new (empty) tmp path instead of returning
-    # an already-loaded instance from a previous test's tmp path. ---
+    # --- learning/repository.py: clear the lazily-constructed
+    # singletons so the next get_xxx() call rebuilds them fresh against
+    # the fake (empty) record_store instead of returning an
+    # already-loaded instance from a previous test. ---
     from learning import repository as learning_repository
 
-    monkeypatch.setattr(learning_repository, "_DATA_DIR", data_dir / "learning")
     monkeypatch.setattr(learning_repository, "_CANDIDATE_REPO", None)
     monkeypatch.setattr(learning_repository, "_OPERATIONAL_MEMORY", None)
     monkeypatch.setattr(learning_repository, "_APPROVAL_QUEUE", None)
     monkeypatch.setattr(learning_repository, "_POLICY_MEMORY", None)
     monkeypatch.setattr(learning_repository, "_ACTIVITY_FEED", None)
 
-    # --- status_reporting.py: redirect events.jsonl, and reset the
-    # module-level `_events` list it accumulates in memory. ---
+    # --- status_reporting.py: reset the module-level `_events` list it
+    # accumulates in memory (in addition to record_store persistence). ---
     from services import status_reporting
 
-    monkeypatch.setattr(status_reporting, "EVENT_LOG_DIR", data_dir)
-    monkeypatch.setattr(status_reporting, "EVENT_LOG_PATH", data_dir / "events.jsonl")
     monkeypatch.setattr(status_reporting, "_events", [])
 
-    # --- conversation_store.py ---
-    from services import conversation_store
-
-    monkeypatch.setattr(conversation_store, "DATA_DIR", data_dir)
-    monkeypatch.setattr(conversation_store, "CONVERSATION_LOG_PATH", data_dir / "conversations.jsonl")
-
-    yield data_dir
+    yield
 
 
 @pytest.fixture(autouse=True)

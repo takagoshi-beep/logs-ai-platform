@@ -12,17 +12,14 @@ alongside `mock_store.py`'s genuinely-fake functions.
 """
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from services.capability_instance import registry as capability_registry
-from services import governance_store
+from services import governance_store, record_store
 
-ROOT = Path(__file__).resolve().parents[1]
-EVENT_LOG_DIR = ROOT / "data"
-EVENT_LOG_PATH = EVENT_LOG_DIR / "events.jsonl"
+# 2026-07-07 (Web化準備、14.23): ローカルJSONLからSupabase保存に切り替え。
+EVENTS_TABLE = "app_events"
 
 _events: list[dict[str, Any]] = []
 
@@ -165,7 +162,5 @@ def get_evaluation_summary() -> dict[str, Any]:
 
 def store_event(event: dict[str, Any]) -> dict[str, Any]:
     _events.append(event)
-    EVENT_LOG_DIR.mkdir(parents=True, exist_ok=True)
-    with EVENT_LOG_PATH.open("a", encoding="utf-8") as fp:
-        fp.write(json.dumps(event, ensure_ascii=False) + "\n")
-    return {"stored": True, "event_count": len(_events), "log_path": str(EVENT_LOG_PATH)}
+    record_store.append_record(EVENTS_TABLE, event)
+    return {"stored": True, "event_count": len(_events)}

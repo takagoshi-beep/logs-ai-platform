@@ -1,24 +1,33 @@
 """
-Repositories for the Learning Domain, with durable JSONL persistence
-(added 2026-07-06, closing the gap this module's original docstring
-flagged as deferred to "the Memory domain, Blueprint v0.1 Phase 4").
+Repositories for the Learning Domain, with durable persistence (added
+2026-07-06, closing the gap this module's original docstring flagged as
+deferred to "the Memory domain, Blueprint v0.1 Phase 4"; migrated off
+local JSONL to Supabase on 2026-07-07, docs/architecture.md 14.23, same
+reason/pattern as every other store this session — a local file
+wouldn't survive a Render redeploy).
 
 Storage convention matches the rest of backend/ (governance_store.py,
-document_formats.py): plain append-only JSONL files under
-backend/data/learning/, "latest record per id wins" for anything
-updated over its lifecycle (LearningCandidate, ApprovalQueueEntry), plain
-accumulation for anything append-only/immutable (PolicyMemoryEntry,
-ActivityFeedEntry, OperationalMemoryStore entries).
+document_formats.py): append-only records, "latest record per id wins"
+for anything updated over its lifecycle (LearningCandidate,
+ApprovalQueueEntry), plain accumulation for anything append-only/
+immutable (PolicyMemoryEntry, ActivityFeedEntry, OperationalMemoryStore
+entries).
 
 Repositories keep the same in-memory, in-process shape/behavior as
-before — they just load from disk on first access and write through on
-every mutation, so a server restart no longer silently erases Learning
-Domain history (previously purely in-memory, lost on every restart).
+before — they just load from Supabase on first access and write
+through on every mutation, so a server restart no longer silently
+erases Learning Domain history.
+
+Lives at the repo root (not under `backend/`), so `services.record_store`
+is only importable here when `backend/` is already on `sys.path` — true
+at runtime (`backend/main.py` adds the repo root, and is itself run
+from inside `backend/`) and true in every test in this repo (all
+Learning tests live under `tests/backend/`, where `conftest.py` puts
+`backend/` on `sys.path` for every test).
 """
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
@@ -35,32 +44,23 @@ from learning.models import (
     LearningType,
     PolicyMemoryEntry,
 )
+from services import record_store
 
-_DATA_DIR = Path(__file__).resolve().parent.parent / "backend" / "data" / "learning"
+_TABLE_PREFIX = "app_learning_"
 
 
 def _append_jsonl(filename: str, record: dict[str, Any]) -> None:
-    _DATA_DIR.mkdir(parents=True, exist_ok=True)
-    path = _DATA_DIR / filename
-    with path.open("a", encoding="utf-8") as fp:
-        fp.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+    """名前はJSONL時代のまま、実体はrecord_store経由でSupabaseに保存する
+    （filenameは各クラスの`_FILE`、例: "candidates.jsonl" → テーブル名
+    "app_learning_candidates" に変換する）。"""
+    table = _TABLE_PREFIX + filename.replace(".jsonl", "")
+    record_store.append_record(table, record)
 
 
 def _read_jsonl(filename: str) -> list[dict[str, Any]]:
-    path = _DATA_DIR / filename
-    if not path.exists():
-        return []
-    records: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as fp:
-        for line in fp:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    return records
+    """同上 — 名前はJSONL時代のまま、実体はSupabaseから読む。"""
+    table = _TABLE_PREFIX + filename.replace(".jsonl", "")
+    return record_store.read_all_records(table)
 
 
 def _candidate_from_dict(d: dict[str, Any]) -> LearningCandidate:

@@ -18,19 +18,19 @@ so this doesn't require a startup hook or import-order guarantee.
 """
 from __future__ import annotations
 
-import json
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
 from capability.domain import Capability, CapabilityStatus, ExecutionStatus, GovernanceLevel
 from capability.registry import CapabilityExecution, CapabilityRegistry
+from services import record_store
 
 registry = CapabilityRegistry()
 
-ROOT = Path(__file__).resolve().parents[1]
-EXECUTION_LOG_DIR = ROOT / "data"
-EXECUTION_LOG_PATH = EXECUTION_LOG_DIR / "capability_executions.jsonl"
+# 2026-07-06 (Web化準備、docs/architecture.md 14.23): ローカルJSONLから
+# Supabase保存に切り替えた。document_formats.py/governance_store.pyと
+# 同じ理由・同じ方式。
+EXECUTIONS_TABLE = "app_capability_executions"
 
 
 def ensure_registered(capability: Capability) -> None:
@@ -92,9 +92,7 @@ def _persist_execution(execution: CapabilityExecution) -> None:
         "memory_updated": execution.memory_updated,
     }
     try:
-        EXECUTION_LOG_DIR.mkdir(parents=True, exist_ok=True)
-        with EXECUTION_LOG_PATH.open("a", encoding="utf-8") as fp:
-            fp.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+        record_store.append_record(EXECUTIONS_TABLE, record)
     except Exception:
         # Persistence must never block the actual response.
         pass
@@ -109,40 +107,32 @@ def _replay_persisted_executions() -> None:
     re-running `execute_capability`/`record_execution_result`) so original
     timestamps are preserved exactly instead of being regenerated as "now".
     """
-    if not EXECUTION_LOG_PATH.exists():
-        return
-
-    with EXECUTION_LOG_PATH.open("r", encoding="utf-8") as fp:
-        for line in fp:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rec = json.loads(line)
-                execution = CapabilityExecution(
-                    execution_id=rec["execution_id"],
-                    capability_id=rec["capability_id"],
-                    capability_version=rec.get("capability_version", ""),
-                    project_id=rec.get("project_id", ""),
-                    user_id=rec.get("user_id", ""),
-                    trace_id=rec.get("trace_id", ""),
-                    status=ExecutionStatus(rec["status"]),
-                    inputs=rec.get("inputs", {}),
-                    outputs=rec.get("outputs", {}),
-                    started_at=datetime.fromisoformat(rec["started_at"]),
-                    completed_at=(
-                        datetime.fromisoformat(rec["completed_at"])
-                        if rec.get("completed_at") else None
-                    ),
-                    execution_time_seconds=rec.get("execution_time_seconds", 0.0),
-                    error_message=rec.get("error_message"),
-                    memory_accessed=rec.get("memory_accessed", []),
-                    memory_updated=rec.get("memory_updated", []),
-                )
-                registry._execution_history.append(execution)
-            except Exception:
-                # A malformed line must never prevent startup.
-                continue
+    for rec in record_store.read_all_records(EXECUTIONS_TABLE):
+        try:
+            execution = CapabilityExecution(
+                execution_id=rec["execution_id"],
+                capability_id=rec["capability_id"],
+                capability_version=rec.get("capability_version", ""),
+                project_id=rec.get("project_id", ""),
+                user_id=rec.get("user_id", ""),
+                trace_id=rec.get("trace_id", ""),
+                status=ExecutionStatus(rec["status"]),
+                inputs=rec.get("inputs", {}),
+                outputs=rec.get("outputs", {}),
+                started_at=datetime.fromisoformat(rec["started_at"]),
+                completed_at=(
+                    datetime.fromisoformat(rec["completed_at"])
+                    if rec.get("completed_at") else None
+                ),
+                execution_time_seconds=rec.get("execution_time_seconds", 0.0),
+                error_message=rec.get("error_message"),
+                memory_accessed=rec.get("memory_accessed", []),
+                memory_updated=rec.get("memory_updated", []),
+            )
+            registry._execution_history.append(execution)
+        except Exception:
+            # A malformed record must never prevent startup.
+            continue
 
 
 def _install_persistence_hook() -> None:

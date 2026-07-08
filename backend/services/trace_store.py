@@ -7,9 +7,7 @@ was backed by `services.mock_store.get_trace`, which only ever returns
 canned/mock data disconnected from the trace_ids `ProjectService` actually
 generates.
 
-This module gives those trace_ids a durable home, following the same
-append-only JSONL convention already used by `mock_store.store_event`
-(`backend/data/events.jsonl`).
+This module gives those trace_ids a durable home.
 
 Note: `ProjectService._generate_trace_id` is a *deterministic* hash of
 `project_id`, not a unique ID per call. Re-analyzing the same project
@@ -17,24 +15,22 @@ produces the same trace_id. We therefore append (not overwrite) on every
 save, and `get_trace` returns the most recent record for that trace_id —
 this preserves a lightweight history of snapshots over time rather than
 losing prior runs.
+
+2026-07-07 (Web化準備、14.23): moved off local JSONL to Supabase via
+record_store.py, same reason/pattern as every other store this session.
 """
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
-TRACE_LOG_DIR = ROOT / "data"
-TRACE_LOG_PATH = TRACE_LOG_DIR / "traces.jsonl"
+from services import record_store
+
+TRACES_TABLE = "app_traces"
 
 
 def save_trace(trace_id: str, payload: dict[str, Any]) -> None:
     """Append a trace record to the durable trace log."""
-    record = {"trace_id": trace_id, **payload}
-    TRACE_LOG_DIR.mkdir(parents=True, exist_ok=True)
-    with TRACE_LOG_PATH.open("a", encoding="utf-8") as fp:
-        fp.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+    record_store.append_record(TRACES_TABLE, {"trace_id": trace_id, **payload})
 
 
 def get_trace(trace_id: str) -> dict[str, Any]:
@@ -44,21 +40,10 @@ def get_trace(trace_id: str) -> dict[str, Any]:
     record exists yet, matching the shape `mock_store.get_trace` used to
     return for unknown IDs.
     """
-    if not TRACE_LOG_PATH.exists():
-        return {"trace_id": trace_id, "status": "not_found"}
-
     latest: dict[str, Any] | None = None
-    with TRACE_LOG_PATH.open("r", encoding="utf-8") as fp:
-        for line in fp:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if record.get("trace_id") == trace_id:
-                latest = record
+    for record in record_store.read_all_records(TRACES_TABLE):
+        if record.get("trace_id") == trace_id:
+            latest = record
 
     if latest is None:
         return {"trace_id": trace_id, "status": "not_found"}

@@ -27,17 +27,17 @@ behavior without a person deliberately doing it.
 """
 from __future__ import annotations
 
-import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
 
-ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = ROOT / "data"
-APPROVALS_PATH = DATA_DIR / "governance_approvals.jsonl"
-AUDIT_PATH = DATA_DIR / "governance_audit.jsonl"
+from services import record_store
+
+# 2026-07-06 (Web化準備、docs/architecture.md 14.23): ローカルJSONLから
+# Supabase保存に切り替えた。document_formats.pyと全く同じ理由・同じ方式。
+APPROVALS_TABLE = "app_governance_approvals"
+AUDIT_TABLE = "app_governance_audit"
 
 
 def _now() -> str:
@@ -65,34 +65,22 @@ class GovernanceApproval:
         return asdict(self)
 
 
-def _append_jsonl(path: Path, record: dict[str, Any]) -> None:
+def _append_jsonl(table: str, record: dict[str, Any]) -> None:
+    """名前はJSONL時代のまま、実体はrecord_store経由でSupabaseに保存する。"""
     try:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as fp:
-            fp.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+        record_store.append_record(table, record)
     except Exception:
         # Persistence must never block the actual response.
         pass
 
 
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    records: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as fp:
-        for line in fp:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    return records
+def _read_jsonl(table: str) -> list[dict[str, Any]]:
+    """同上 — 名前はJSONL時代のまま、実体はSupabaseから読む。"""
+    return record_store.read_all_records(table)
 
 
 def _record_audit(approval_id: str, action: str, actor: str, details: dict[str, Any]) -> None:
-    _append_jsonl(AUDIT_PATH, {
+    _append_jsonl(AUDIT_TABLE, {
         "audit_id": f"audit-{uuid4().hex[:8]}",
         "approval_id": approval_id,
         "action": action,
@@ -156,7 +144,7 @@ def submit_proposal(
         ) if auto_approved else None,
         decided_at=now if auto_approved else None,
     )
-    _append_jsonl(APPROVALS_PATH, approval.to_dict())
+    _append_jsonl(APPROVALS_TABLE, approval.to_dict())
     _record_audit(
         approval.approval_id,
         "AUTO_APPROVED" if auto_approved else "PROPOSAL_RECEIVED",
@@ -172,7 +160,7 @@ def _latest_by_approval_id() -> dict[str, dict[str, Any]]:
     `trace_store.get_trace`.
     """
     latest: dict[str, dict[str, Any]] = {}
-    for record in _read_jsonl(APPROVALS_PATH):
+    for record in _read_jsonl(APPROVALS_TABLE):
         approval_id = record.get("approval_id")
         if approval_id:
             latest[approval_id] = record
@@ -223,13 +211,13 @@ def decide(
     updated["approval_reason"] = reason
     updated["decided_at"] = _now()
 
-    _append_jsonl(APPROVALS_PATH, updated)
+    _append_jsonl(APPROVALS_TABLE, updated)
     _record_audit(approval_id, decision, actor=approver_id, details={"reason": reason})
     return updated
 
 
 def get_audit_trail(approval_id: Optional[str] = None) -> list[dict[str, Any]]:
-    records = _read_jsonl(AUDIT_PATH)
+    records = _read_jsonl(AUDIT_TABLE)
     if approval_id:
         records = [r for r in records if r.get("approval_id") == approval_id]
     return records

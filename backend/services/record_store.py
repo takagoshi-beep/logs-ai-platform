@@ -35,8 +35,17 @@ from services.supabase_client import get_connection
 def append_record(table: str, record: dict[str, Any]) -> None:
     """1件のレコードを追記する。`record`はJSON化できる辞書であればよい
     （既存のJSONLファイルへの1行追記と、意味的に完全に同じ操作）。
+
+    接続自体に失敗した場合も含め、例外は外に漏らさない — この
+    バックエンド全体で一貫している「永続化の失敗が、本来のレスポンス
+    自体をブロックしてはいけない」という方針に合わせるため（例:
+    capability_instance.py の _persist_execution も同じ考え方）。
     """
-    conn = get_connection()
+    try:
+        conn = get_connection()
+    except Exception as e:
+        print(f"Error connecting to Supabase while appending to {table}: {e}")
+        return
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -44,6 +53,8 @@ def append_record(table: str, record: dict[str, Any]) -> None:
                 (json.dumps(record, ensure_ascii=False, default=str),),
             )
         conn.commit()
+    except Exception as e:
+        print(f"Error appending record to {table}: {e}")
     finally:
         conn.close()
 
@@ -54,7 +65,11 @@ def read_all_records(table: str) -> list[dict[str, Any]]:
     （呼び出し元の「latest wins」系ロジックは、空リストに対しても
     安全に動作する設計になっているため）。
     """
-    conn = get_connection()
+    try:
+        conn = get_connection()
+    except Exception as e:
+        print(f"Error connecting to Supabase while reading from {table}: {e}")
+        return []
     try:
         with conn.cursor() as cur:
             cur.execute(f'SELECT record FROM "{table}" ORDER BY id')

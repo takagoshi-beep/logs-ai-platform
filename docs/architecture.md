@@ -2239,6 +2239,89 @@ deployment steps themselves (env var transfer, CORS/session-cookie
 different domains, per the cross-origin cookie concern flagged when
 Web化 was first discussed).
 
+## 14.24 Web化準備 (2/4): the remaining six local-file stores
+(2026-07-07)
+
+Completes the "migrate everything, not just document formats" scope
+Noritsugu chose after 14.23's first entry. Same `record_store.py`
+mechanism from 14.23, applied to `governance_store.py`,
+`capability_instance.py`, `conversation_store.py`, `trace_store.py`,
+`status_reporting.py`'s event log, and all five files in
+`learning/repository.py` — every one of them already followed the
+identical append-then-reduce-in-Python shape 14.23 identified, so each
+migration was the same small edit repeated: replace the local
+`_append_jsonl`/`_read_jsonl` (or equivalent) with calls to
+`record_store.append_record`/`read_all_records`, keep everything else
+(the "latest write wins" reducers, the dataclass round-tripping, the
+in-memory singletons) completely unchanged.
+
+`governance_store.py`/`capability_instance.py`: two straightforward
+swaps (`APPROVALS_PATH`/`AUDIT_PATH` → `APPROVALS_TABLE`/`AUDIT_TABLE`;
+`EXECUTION_LOG_PATH` → `EXECUTIONS_TABLE`).
+`conversation_store.py`/`trace_store.py`/`status_reporting.py`: same
+pattern, simpler still (no "latest wins" reduction needed for
+conversations/traces-by-id/events). `learning/repository.py` was the
+most interesting one: all five of its classes
+(`LearningCandidateRepository`, `OperationalMemoryStore`,
+`ApprovalQueueRepository`, `PolicyMemoryRepository`,
+`ActivityFeedRepository`) already shared one pair of module-level
+`_append_jsonl(filename, record)`/`_read_jsonl(filename)` helpers, each
+class only supplying its own `_FILE = "xxx.jsonl"` — so this migration
+touched exactly those two shared helpers (mapping `"xxx.jsonl"` →
+table `"app_learning_xxx"`) and nothing in any of the five classes
+themselves.
+
+**Real bug found and fixed while running the test suite immediately
+after this migration**: `record_store.append_record()`/
+`read_all_records()` (built in 14.23) called `get_connection()`
+*outside* their own `try`/`except` blocks — meaning a connection
+failure itself (as opposed to a query failure) propagated straight to
+the caller uncaught. This was invisible in 14.23 because
+`document_formats.py`'s tests never exercise a real connection
+failure. It became a real, test-suite-breaking problem the moment
+`capability_instance.py` was migrated: `_replay_persisted_executions()`
+runs at **module import time** (a pre-existing design, unchanged from
+its JSONL days — replaying execution history into the shared registry
+before any request can be served), and in this sandbox environment
+`psycopg` can't actually connect (`no pq wrapper available` — no libpq
+installed here) — so merely *importing* `capability_instance` crashed
+outright, taking down `pytest`'s test collection for six otherwise
+unrelated test files. Fixed by moving `conn = get_connection()` inside
+each function's own `try` block in `record_store.py` — matching the
+"persistence must never block the actual response" principle already
+established elsewhere in this codebase (`capability_instance.py`'s own
+`_persist_execution`, `governance_store.py`'s `_append_jsonl`) but
+which `record_store.py` itself hadn't actually honored for connection
+failures specifically. Two new regression tests confirm both
+`append_record` and `read_all_records` survive a `get_connection()`
+failure (not just a query failure) without raising. This is also a
+real, meaningful resilience property for the actual Render deployment:
+if Supabase has a brief hiccup during a cold start, the app now starts
+up anyway (with empty history for that request) rather than crashing
+outright.
+
+`tests/backend/conftest.py`'s fixture was simplified along with this:
+previously a `tmp_path`-based redirect per module (six different path
+constants across five modules), now a single in-memory fake of
+`record_store.append_record`/`read_all_records` covers all seven
+stores at once, since they all go through the same two functions now.
+All ~240 pre-existing tests for these six modules needed zero changes
+— none of them ever touched `record_store` internals directly, only
+the same public functions they always called.
+
+`docs/sql/14_23_remaining_stores.sql` — the six additional
+`CREATE TABLE` statements (all identical JSONB-column shape) to run
+once in Supabase, alongside 14.23's first one. 257 total tests passing
+(255 + 2 new `record_store.py` regression tests for the connection-
+failure bug above).
+
+**Remaining for this Web化 effort**: the actual Vercel/Render
+deployment steps (env var transfer, and the cross-origin session-cookie
+`same_site` reconsideration flagged when Web化 was first discussed —
+`chat_agent`/`auth`'s session cookie currently assumes frontend and
+backend are effectively the same origin for cookie purposes, which
+stops being true once they live on different domains).
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.

@@ -94,6 +94,32 @@ def test_read_all_records_returns_empty_list_on_failure(monkeypatch):
     assert record_store.read_all_records("app_test_table") == []
 
 
+def test_read_all_records_returns_empty_list_when_get_connection_itself_fails(monkeypatch):
+    """再発防止テスト: get_connection()自体が例外を投げるケース
+    （例: この環境にlibpqがインストールされておらずpsycopg importが
+    失敗する等）。以前は conn = get_connection() がtry文の外にあり、
+    ここで発生した例外がそのまま呼び出し元に伝播していた
+    — capability_instance.py がモジュールimport時にこれを呼ぶため、
+    テスト収集そのものが失敗する実バグとして発覚した。"""
+    monkeypatch.setattr(record_store, "read_all_records", _REAL_READ_ALL_RECORDS)
+
+    def _boom():
+        raise ImportError("no pq wrapper available")
+
+    monkeypatch.setattr(record_store, "get_connection", _boom)
+    assert record_store.read_all_records("app_test_table") == []
+
+
+def test_append_record_does_not_raise_when_get_connection_itself_fails(monkeypatch):
+    monkeypatch.setattr(record_store, "append_record", _REAL_APPEND_RECORD)
+
+    def _boom():
+        raise ImportError("no pq wrapper available")
+
+    monkeypatch.setattr(record_store, "get_connection", _boom)
+    record_store.append_record("app_test_table", {"foo": "bar"})  # 例外を投げないことを確認
+
+
 def test_read_all_records_returns_empty_list_when_table_is_empty(monkeypatch):
     monkeypatch.setattr(record_store, "read_all_records", _REAL_READ_ALL_RECORDS)
     fake_conn = _FakeConnection([])
