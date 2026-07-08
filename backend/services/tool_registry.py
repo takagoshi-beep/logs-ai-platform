@@ -204,6 +204,23 @@ TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "name": "get_my_products",
+        "description": (
+            "ログインユーザー自身に直接・間接的に関連する商品（LOGS_CODE）を取得する。"
+            "関連の判定: 商品マスタの作成者本人（直接）、PO/売上/仕入の担当者・"
+            "仕入先の生産管理担当者・サンプル対応の回答者/依頼元のいずれかが本人"
+            "（間接）。「自分が関わった商品」「自分の商品」のような質問に使う。"
+            "ログイン中のメールアドレスが社員マスタの氏名と一致しない場合は取得"
+            "できない（'unavailable'）。架空の商品を作ってはいけない。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "取得件数（既定20）"},
+            },
+        },
+    },
 ]
 
 
@@ -341,6 +358,39 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
                     result = {
                         "status": "ok" if records else "unavailable",
                         "summary": f"{owner_name}さんが担当する案件を{len(records)}件取得しました。" if records else f"{owner_name}さんが担当する案件は見つかりませんでした。",
+                        "records": records,
+                    }
+        elif tool_name == "get_my_products":
+            if not user_email:
+                result = {"status": "unavailable", "summary": "ユーザーが特定できないため取得できません。", "records": []}
+            else:
+                from services.auth_service import get_staff_name_by_email
+                from services.product_service import get_products_master_batch, get_related_logs_codes
+
+                owner_name = get_staff_name_by_email(user_email)
+                if not owner_name:
+                    result = {
+                        "status": "unavailable",
+                        "summary": "ログイン中のメールアドレスが社員マスタの氏名と一致しないため、関連商品を特定できません。",
+                        "records": [],
+                    }
+                else:
+                    limit = tool_input.get("limit", 20)
+                    logs_codes = get_related_logs_codes(owner_name, limit=limit)
+                    master_map = get_products_master_batch(logs_codes)
+                    records = []
+                    for code in logs_codes:
+                        m = master_map.get(code)
+                        if m:
+                            records.append({
+                                "logs_code": code,
+                                "product_name": m.get("商品名"),
+                                "model_no": m.get("型番"),
+                                "supplier_name": m.get("仕入先名"),
+                            })
+                    result = {
+                        "status": "ok" if records else "unavailable",
+                        "summary": f"{owner_name}さんに関連する商品を{len(records)}件取得しました。" if records else f"{owner_name}さんに関連する商品は見つかりませんでした。",
                         "records": records,
                     }
         else:

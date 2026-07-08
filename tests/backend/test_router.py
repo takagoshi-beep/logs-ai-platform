@@ -389,3 +389,59 @@ def test_today_actions_via_http_sorted_by_priority(monkeypatch):
     body = response.json()
     assert body["count"] == 1
     assert body["actions"][0]["reason"] == "納期超過"
+
+
+# ---------------------------------------------------------------------------
+# products (docs/architecture.md 14.30)
+# ---------------------------------------------------------------------------
+
+def test_list_products_returns_empty_when_staff_name_unresolved(monkeypatch):
+    from services import auth_service
+
+    monkeypatch.setattr(auth_service, "get_staff_name_by_email", lambda email: None)
+
+    response = _client().get("/api/products")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["products"] == []
+    assert body["count"] == 0
+
+
+def test_list_products_returns_related_products_for_resolved_staff_name(monkeypatch):
+    from services import auth_service, product_service
+
+    monkeypatch.setattr(auth_service, "get_staff_name_by_email", lambda email: "山田太郎")
+    monkeypatch.setattr(product_service, "get_related_logs_codes", lambda owner_name, limit=20: ["5145"])
+    monkeypatch.setattr(
+        product_service, "get_products_master_batch",
+        lambda codes: {"5145": {"商品名": "Baseball Cap", "型番": "K01", "仕入先名": "1064STUDIO"}},
+    )
+
+    response = _client().get("/api/products")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["scope"] == "mine"
+    assert body["products"] == [
+        {"logs_code": "5145", "product_name": "Baseball Cap", "model_no": "K01", "supplier_name": "1064STUDIO"}
+    ]
+
+
+def test_get_product_via_http(monkeypatch):
+    from services import product_service
+
+    fake_detail = {
+        "master": {"LOGS_CODE": "5145", "商品名": "Baseball Cap"},
+        "purchase_orders": [],
+        "sales": [],
+        "purchases": [],
+        "samples": [],
+        "status": {"po_issued": False, "sales_recorded": False, "purchase_recorded": False, "sample_requested": False},
+    }
+    monkeypatch.setattr(product_service, "get_product_detail", lambda logs_code: fake_detail if logs_code == "5145" else None)
+
+    response = _client().get("/api/products/5145")
+    assert response.status_code == 200
+    assert response.json()["product"]["master"]["商品名"] == "Baseball Cap"
+
+    missing = _client().get("/api/products/does-not-exist")
+    assert missing.status_code == 404

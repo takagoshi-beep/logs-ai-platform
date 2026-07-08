@@ -265,6 +265,20 @@ export async function getProject(projectId: string) {
 }
 
 /**
+ * Get products related to the logged-in user (docs/architecture.md 14.30)
+ */
+export async function getProducts(limit: number = 20) {
+  return apiCall(`/api/products?limit=${limit}`);
+}
+
+/**
+ * Get full cross-referenced detail for a single product (PO/sales/purchases/samples)
+ */
+export async function getProduct(logsCode: string) {
+  return apiCall(`/api/products/${logsCode}`);
+}
+
+/**
  * Get project trace (Event → State → Goal → Decision → Action)
  */
 export async function getProjectTrace(projectId: string) {

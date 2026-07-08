@@ -360,3 +360,60 @@ def download_proposal_image(trace_id: str):
     if not path.exists():
         raise HTTPException(status_code=404, detail="Generated image not found")
     return FileResponse(path, media_type="image/png", filename=f"{trace_id}.png")
+
+
+# ===== NEW: Product Endpoints (docs/architecture.md 14.30) =====
+
+@router.get("/products")
+def list_products(limit: int = 20, scope: str = "mine", user: dict = Depends(require_login)) -> dict:
+    """商品(LOGS_CODE)一覧を返す。
+
+    scope="mine"（既定）: ログイン中の本人が直接（商品マスタの作成者）、
+    または間接（PO/売上/仕入の担当者、仕入先の生産管理担当者、サンプル
+    対応の回答者/依頼元）に関連する商品だけを返す。本人特定できない
+    場合は空リストを返す（案件と異なり、商品では「担当者不明なら全件」
+    にすると母数が大きすぎるため）。
+    scope="all"は今回未実装（商品マスタ全件は件数が大きく、別途ページング
+    等の設計が必要なため）。
+    """
+    from services.product_service import get_products_master_batch, get_related_logs_codes
+
+    owner_name = None
+    if scope == "mine":
+        from services.auth_service import get_staff_name_by_email
+        owner_name = get_staff_name_by_email(user.get("email"))
+
+    if not owner_name:
+        return {"success": True, "products": [], "count": 0, "scope": "mine" if scope == "mine" else "all"}
+
+    logs_codes = get_related_logs_codes(owner_name, limit=limit)
+    master_map = get_products_master_batch(logs_codes)
+
+    products = []
+    for code in logs_codes:
+        m = master_map.get(code)
+        if m:
+            products.append({
+                "logs_code": code,
+                "product_name": m.get("商品名"),
+                "model_no": m.get("型番"),
+                "supplier_name": m.get("仕入先名"),
+            })
+
+    return {"success": True, "products": products, "count": len(products), "scope": "mine"}
+
+
+@router.get("/products/{logs_code}")
+def get_product(logs_code: str) -> dict:
+    """1商品について、マスタ情報 + PO/売上/仕入/サンプルの横断履歴を返す。"""
+    from services.product_service import get_product_detail
+
+    try:
+        detail = get_product_detail(logs_code)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    if not detail:
+        raise HTTPException(status_code=404, detail=f"Product {logs_code} not found")
+
+    return {"success": True, "product": detail}
