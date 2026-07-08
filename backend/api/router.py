@@ -378,14 +378,14 @@ def list_products(limit: int = 20, scope: str = "mine", user: dict = Depends(req
     scope="all": 商品マスタから直近登録分をlimit件返す（MVP実装。
     総件数を考慮したページングは今後の検討課題）。
     """
-    from services.product_service import get_all_products, get_products_master_batch, get_related_product_ids, sample_code_sort_key
+    from services.product_service import _format_logs_code, get_all_products, get_products_master_batch, get_related_product_ids, sample_code_sort_key
 
     if scope == "all":
         rows = get_all_products(limit=limit)
         products = [
             {
                 "product_id": str(r.get("ID")),
-                "logs_code": r.get("LOGS_CODE"),
+                "logs_code": _format_logs_code(r.get("LOGS_CODE")),
                 "product_name": r.get("商品名"),
                 "model_no": r.get("型番"),
                 "supplier_name": r.get("仕入先名"),
@@ -410,7 +410,7 @@ def list_products(limit: int = 20, scope: str = "mine", user: dict = Depends(req
         if m:
             products.append({
                 "product_id": pid,
-                "logs_code": m.get("LOGS_CODE"),
+                "logs_code": _format_logs_code(m.get("LOGS_CODE")),
                 "product_name": m.get("商品名"),
                 "model_no": m.get("型番"),
                 "supplier_name": m.get("仕入先名"),

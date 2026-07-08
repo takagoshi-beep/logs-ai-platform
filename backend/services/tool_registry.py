@@ -375,7 +375,7 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
                 result = {"status": "unavailable", "summary": "ユーザーが特定できないため取得できません。", "records": []}
             else:
                 from services.auth_service import get_staff_name_by_email
-                from services.product_service import get_products_master_batch, get_related_product_ids, sample_code_sort_key
+                from services.product_service import _format_logs_code, get_products_master_batch, get_related_product_ids, sample_code_sort_key
 
                 owner_name = get_staff_name_by_email(user_email)
                 if not owner_name:
@@ -394,7 +394,7 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
                         if m:
                             records.append({
                                 "product_id": pid,
-                                "logs_code": m.get("LOGS_CODE"),
+                                "logs_code": _format_logs_code(m.get("LOGS_CODE")),
                                 "product_name": m.get("商品名"),
                                 "model_no": m.get("型番"),
                                 "supplier_name": m.get("仕入先名"),

@@ -149,6 +149,30 @@ def test_get_products_master_batch_maps_by_id(monkeypatch):
     assert result["101"]["supplier_production_staff"] == "木村美菜"
 
 
+def test_format_logs_code_strips_trailing_zero_from_double_precision_float():
+    """LOGS_CODE列はSupabase上でdouble precision型のため、13564のような
+    整数値でも13564.0という浮動小数点で返ってくる。表示・検索文字列では
+    "13564"に正規化する必要がある（2026-07-08、Slack検索が実際には
+    存在しない"13564.0"という文字列で行われ0件になっていた不具合）。"""
+    assert product_service._format_logs_code(13564.0) == "13564"
+    assert product_service._format_logs_code(13564) == "13564"
+    assert product_service._format_logs_code(None) is None
+    assert product_service._format_logs_code("13564") == "13564"
+
+
+def test_get_related_communications_for_product_normalizes_float_logs_code(monkeypatch):
+    from services import gmail_service, slack_service
+
+    captured = {}
+    monkeypatch.setattr(gmail_service, "search_messages", lambda email, query, max_results: captured.setdefault("gmail_q", query) or {"status": "ok", "summary": "0件", "records": []})
+    monkeypatch.setattr(slack_service, "search_messages", lambda email, query, max_results: captured.setdefault("slack_q", query) or {"status": "ok", "summary": "0件", "records": []})
+
+    product_service.get_related_communications_for_product("user@logs.co.jp", 13564.0, "SLG-06120")
+
+    assert captured["gmail_q"] == '"13564" OR "SLG-06120"'
+    assert captured["slack_q"] == '"13564" OR "SLG-06120"'
+
+
 def test_get_related_communications_for_product_returns_unavailable_without_user_email():
     result = product_service.get_related_communications_for_product(None, "5145", "S1")
     assert result["gmail"]["status"] == "unavailable"
@@ -195,6 +219,27 @@ def test_get_related_communications_for_product_returns_unavailable_with_no_keys
     result = product_service.get_related_communications_for_product("user@logs.co.jp", None, None)
     assert result["gmail"]["status"] == "unavailable"
     assert result["slack"]["status"] == "unavailable"
+
+
+def test_get_product_detail_normalizes_float_logs_code_for_display(monkeypatch):
+    """masterのLOGS_CODEは表示用に正規化されるが、PO/売上/仕入クエリの
+    比較には元のdouble precision値がそのまま使われる。"""
+    master_cols = ["ID", "LOGS_CODE", "Sample_CODE", "商品名"]
+    master_rows = [(101, 13564.0, "SLG-06120", "Baseball Cap")]
+
+    monkeypatch.setattr(
+        product_service, "get_connection",
+        lambda: _SequentialFakeConnection([
+            (master_rows, master_cols),
+            ([], ["ID"]),
+            ([], ["得意先名"]),
+            ([], ["仕入先名"]),
+            ([], ["見積No"]),
+        ]),
+    )
+
+    detail = product_service.get_product_detail("101")
+    assert detail["master"]["LOGS_CODE"] == "13564"
 
 
 def test_get_product_detail_returns_none_when_master_row_missing(monkeypatch):

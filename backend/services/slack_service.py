@@ -165,8 +165,6 @@ def search_messages(email: str, query: str, max_results: int = 10) -> dict[str, 
         error = payload.get("error", "unknown_error")
         return {"status": "error", "summary": f"Slack検索でエラーが返されました: {error}", "records": []}
 
-    print(f"[slack debug] query={query!r} total={payload.get('messages', {}).get('total')} raw={payload}")
-
     matches = payload.get("messages", {}).get("matches", [])
     records = [
         {

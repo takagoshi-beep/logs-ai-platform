@@ -89,6 +89,22 @@ def _product_category_label(code: Any) -> str:
     return _PRODUCT_CATEGORY_LABELS.get(code, "その他")
 
 
+def _format_logs_code(value: Any) -> str | None:
+    """LOGS_CODE列はSupabase上でdouble precision型のため、13564のような
+    整数値でもPythonからは13564.0という浮動小数点として返ってくる。
+    表示・外部検索（Gmail/Slack）用に「.0」を取り除いた整数表記へ正規化
+    する（2026-07-08、Slack検索が実際には"13564.0"という存在しない
+    文字列で行われ0件になっていた不具合の修正）。DB側のWHERE句比較には
+    使わない — 元のdouble precision値のまま渡す方が型として素直なため、
+    こちらは表示・検索文字列専用。
+    """
+    if value is None:
+        return None
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
 def sample_code_sort_key(sample_code: Any) -> tuple:
     """Sample_CODEの降順ソート用キー。数値として解釈できる場合は数値として
     比較し（"9"が"10"より前に来る、のような文字列比較の誤りを避ける）、
@@ -223,11 +239,11 @@ def get_related_communications_for_product(
         unavailable = {"status": "unavailable", "summary": "ログインユーザーが特定できません。", "records": []}
         return {"gmail": unavailable, "slack": unavailable}
 
+    logs_code = _format_logs_code(logs_code)
     parts = [f'"{logs_code}"'] if logs_code else []
     if sample_code:
         parts.append(f'"{sample_code}"')
     query = " OR ".join(parts)
-    print(f"[product debug] logs_code={logs_code!r} sample_code={sample_code!r} query={query!r}")
 
     if not query:
         unavailable = {"status": "unavailable", "summary": "検索に使えるキー（LOGS_CODE・Sample_CODE）がありませんでした。", "records": []}
@@ -269,8 +285,9 @@ def get_product_detail(product_id: str) -> dict[str, Any] | None:
             return None
         master = _rows_to_dicts(master_rows, master_cols)[0]
         master["商品分類名"] = _product_category_label(master.get("商品分類"))
-        logs_code = master.get("LOGS_CODE")
+        logs_code = master.get("LOGS_CODE")  # 生の値（double precision）をDBクエリの比較に使う
         sample_code = master.get("Sample_CODE")
+        master["LOGS_CODE"] = _format_logs_code(logs_code)  # レスポンス用に表示を正規化（13564.0 → "13564"）
 
         po_rows: list[tuple] = []
         po_cols: list[str] = []
