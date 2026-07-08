@@ -128,12 +128,9 @@ def _refresh_access_token(refresh_token: str) -> str | None:
 
 def _get_access_token(email: str) -> str | None:
     refresh_token = get_refresh_token(email, PROVIDER)
-    print(f"[gmail debug] get_refresh_token for {email!r} -> {'found' if refresh_token else 'NOT FOUND'}")
     if not refresh_token:
         return None
-    access_token = _refresh_access_token(refresh_token)
-    print(f"[gmail debug] refresh_access_token -> {'ok' if access_token else 'FAILED'}")
-    return access_token
+    return _refresh_access_token(refresh_token)
 
 
 def connect_status(email: str) -> bool:
@@ -171,7 +168,6 @@ def search_messages(email: str, query: str, max_results: int = 10) -> dict[str, 
         message_ids = [m["id"] for m in list_resp.json().get("messages", [])]
     except requests.exceptions.HTTPError as e:
         body = e.response.text if e.response is not None else ""
-        print(f"[gmail debug] Gmail messages.list HTTP error: {e} body={body}")
         return {"status": "error", "summary": f"Gmail検索中にエラーが発生しました: {e} / {body}", "records": []}
     except Exception as e:
         return {"status": "error", "summary": f"Gmail検索中にエラーが発生しました: {e}", "records": []}
