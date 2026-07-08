@@ -16,11 +16,12 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse
 
 from api.auth_router import require_login
-from services import gmail_service
+from services import gmail_service, slack_service
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 
 _STATE_SESSION_KEY = "gmail_oauth_state"
+_SLACK_STATE_SESSION_KEY = "slack_oauth_state"
 
 
 def _frontend_url() -> str:
@@ -69,4 +70,46 @@ def gmail_status(user: dict = Depends(require_login)) -> dict:
 @router.delete("/gmail")
 def gmail_disconnect(user: dict = Depends(require_login)) -> dict:
     gmail_service.disconnect(user["email"])
+    return {"success": True}
+
+
+@router.get("/slack/connect")
+def slack_connect(request: Request, user: dict = Depends(require_login)) -> RedirectResponse:
+    state = secrets.token_urlsafe(24)
+    request.session[_SLACK_STATE_SESSION_KEY] = state
+    return RedirectResponse(slack_service.build_auth_url(state))
+
+
+@router.get("/slack/callback")
+def slack_callback(
+    request: Request,
+    code: str = "",
+    state: str = "",
+    error: str = "",
+    user: dict = Depends(require_login),
+) -> RedirectResponse:
+    expected_state = request.session.pop(_SLACK_STATE_SESSION_KEY, None)
+
+    if error or not code or not state or state != expected_state:
+        return RedirectResponse(f"{_frontend_url()}/settings?slack=error")
+
+    result = slack_service.handle_callback(code)
+    if result is None:
+        return RedirectResponse(f"{_frontend_url()}/settings?slack=error")
+
+    if result["email"].strip().lower() != user["email"].strip().lower():
+        return RedirectResponse(f"{_frontend_url()}/settings?slack=mismatch")
+
+    slack_service.save_connection(user["email"], result["access_token"], result["scope"])
+    return RedirectResponse(f"{_frontend_url()}/settings?slack=connected")
+
+
+@router.get("/slack/status")
+def slack_status(user: dict = Depends(require_login)) -> dict:
+    return {"connected": slack_service.connect_status(user["email"])}
+
+
+@router.delete("/slack")
+def slack_disconnect(user: dict = Depends(require_login)) -> dict:
+    slack_service.disconnect(user["email"])
     return {"success": True}

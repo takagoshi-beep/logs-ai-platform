@@ -169,6 +169,23 @@ TOOLS: list[dict[str, Any]] = [
             "required": ["message_id"],
         },
     },
+    {
+        "name": "search_slack",
+        "description": (
+            "ログインユーザー自身が参加しているSlackのチャンネル・DMからメッセージを検索する。"
+            "Slack検索構文（from:, in:, before:, after: 等）が使える。"
+            "'unavailable' が返ってきた場合はSlack未連携ということなので、"
+            "設定画面からのSlack連携を案内すること。架空のメッセージ内容を作ってはいけない。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Slack検索クエリ"},
+                "max_results": {"type": "integer", "description": "取得件数（既定10、最大25）"},
+            },
+            "required": ["query"],
+        },
+    },
 ]
 
 
@@ -266,6 +283,14 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
             else:
                 from services import gmail_service
                 result = gmail_service.get_message(user_email, tool_input.get("message_id", ""))
+        elif tool_name == "search_slack":
+            if not user_email:
+                result = {"status": "unavailable", "summary": "ユーザーが特定できないため、Slack検索はできません。", "records": []}
+            else:
+                from services import slack_service
+                result = slack_service.search_messages(
+                    user_email, tool_input.get("query", ""), tool_input.get("max_results", 10)
+                )
         else:
             result = {"status": "unavailable", "summary": f"未知のツール: {tool_name}", "records": []}
     except Exception as e:
