@@ -72,7 +72,7 @@ class LogsysProvider:
         # 赤伝（ステータス=3）は返品として含める。仮出庫（決済方法=4）は除外する。
         sql = (
             'SELECT "売上入力日", "得意先ID", "得意先名", "登録商品名", '
-            '"事業分類", "数量pcs", "売上金額", "明細粗利" '
+            '"事業分類", "数量pcs", "売上金額", "明細粗利", "営業担当者名" '
             'FROM sales '
             "WHERE \"ステータス\" IN (2, 3, 4, 5) AND \"決済方法\" != '4'"
         )
@@ -86,6 +86,9 @@ class LogsysProvider:
         if params.get("customer_keyword"):
             sql += ' AND "得意先名" LIKE %s'
             args.append(f"%{params['customer_keyword']}%")
+        if params.get("sales_rep_keyword"):
+            sql += ' AND "営業担当者名" LIKE %s'
+            args.append(f"%{params['sales_rep_keyword']}%")
         sql += ' ORDER BY "売上入力日"'
         rows = self._query(sql, tuple(args))
         period = (
@@ -101,9 +104,13 @@ class LogsysProvider:
     def _purchase_lines(self, params: dict[str, Any]) -> dict[str, Any]:
         # ステータスIN(2,3)は本番運用中のシステムプロンプトで確認済みの
         # 仕入集計時の正式フィルタ条件。
+        # 営業担当者名は伝票レベル・明細レベルの両方に存在するため、
+        # 明細を優先し、空欄の場合のみ伝票の値を採用する（14.30で確認した
+        # purchasesテーブル特有の二重構造）。
         sql = (
             'SELECT "伝票日", "仕入先名", "商品分類", "仕入数量pcs", '
-            '"仕入金額円", "諸掛込金額円" '
+            '"仕入金額円", "諸掛込金額円", '
+            'COALESCE(NULLIF("明細営業担当者名", \'\'), "営業担当者名") AS "営業担当者名" '
             'FROM purchases '
             'WHERE "ステータス" IN (2, 3)'
         )
@@ -114,6 +121,9 @@ class LogsysProvider:
         if params.get("period_end"):
             sql += ' AND "伝票日" <= %s'
             args.append(params["period_end"])
+        if params.get("sales_rep_keyword"):
+            sql += ' AND COALESCE(NULLIF("明細営業担当者名", \'\'), "営業担当者名") LIKE %s'
+            args.append(f"%{params['sales_rep_keyword']}%")
         sql += ' ORDER BY "伝票日"'
         rows = self._query(sql, tuple(args))
         return _evidence(

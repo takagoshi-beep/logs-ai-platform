@@ -26,6 +26,9 @@ TOOLS: list[dict[str, Any]] = [
             "期間を絞り込んで呼び出すこと（「今月」なら今月の初日〜末日を指定する）。"
             "取得した行には「事業分類」という数値コード列が含まれるが、"
             "その意味を推測してはいけない。get_code_masterで実際の意味を確認すること。"
+            "「〇〇さんの売上」のように営業担当者で絞り込みたい場合はsales_rep_keywordを使う"
+            "（架空の担当者名で検索しても0件になるだけなので、実在するか不安な場合は"
+            "get_customer_master等で事前確認する必要はない。0件ならそのまま正直に伝えること）。"
         ),
         "input_schema": {
             "type": "object",
@@ -33,17 +36,24 @@ TOOLS: list[dict[str, Any]] = [
                 "period_start": {"type": "string", "description": "期間開始日（YYYY-MM-DD形式）"},
                 "period_end": {"type": "string", "description": "期間終了日（YYYY-MM-DD形式）"},
                 "customer_keyword": {"type": "string", "description": "顧客名の部分一致キーワード"},
+                "sales_rep_keyword": {"type": "string", "description": "営業担当者名の部分一致キーワード"},
             },
         },
     },
     {
         "name": "get_purchase_lines",
-        "description": "実際の仕入明細（諸掛り込み金額）を取得する。仕入原価の分析に使う。件数が多くなりやすいため、可能な限りperiod_start/period_endで期間を絞り込むこと。",
+        "description": (
+            "実際の仕入明細（諸掛り込み金額）を取得する。仕入原価の分析に使う。"
+            "件数が多くなりやすいため、可能な限りperiod_start/period_endで期間を絞り込むこと。"
+            "「〇〇さんの仕入」のように営業担当者で絞り込みたい場合はsales_rep_keywordを使う"
+            "（明細レベルの担当者を優先し、空欄の場合のみ伝票レベルの担当者を採用済み）。"
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "period_start": {"type": "string", "description": "期間開始日（YYYY-MM-DD形式）"},
                 "period_end": {"type": "string", "description": "期間終了日（YYYY-MM-DD形式）"},
+                "sales_rep_keyword": {"type": "string", "description": "営業担当者名の部分一致キーワード"},
             },
         },
     },
