@@ -376,7 +376,7 @@ def list_products(limit: int = 20, scope: str = "mine", user: dict = Depends(req
     scope="all"は今回未実装（商品マスタ全件は件数が大きく、別途ページング
     等の設計が必要なため）。
     """
-    from services.product_service import get_products_master_batch, get_related_logs_codes
+    from services.product_service import get_products_master_batch, get_related_logs_codes, sample_code_sort_key
 
     owner_name = None
     if scope == "mine":
@@ -398,7 +398,11 @@ def list_products(limit: int = 20, scope: str = "mine", user: dict = Depends(req
                 "product_name": m.get("商品名"),
                 "model_no": m.get("型番"),
                 "supplier_name": m.get("仕入先名"),
+                "sample_code": m.get("Sample_CODE"),
             })
+
+    # Sample_CODEの降順（2026-07-08、Noritsuguの指定）
+    products.sort(key=lambda p: sample_code_sort_key(p["sample_code"]), reverse=True)
 
     return {"success": True, "products": products, "count": len(products), "scope": "mine"}
 

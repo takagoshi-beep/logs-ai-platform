@@ -9,6 +9,7 @@ interface ApiProduct {
   product_name: string | null;
   model_no: string | null;
   supplier_name: string | null;
+  sample_code: string | null;
 }
 
 export default function ProductsListPage() {
@@ -72,8 +73,9 @@ export default function ProductsListPage() {
       </div>
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="grid grid-cols-3 gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs font-medium text-sub">
+        <div className="grid grid-cols-4 gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs font-medium text-sub">
           <span>LOGS_CODE / 商品名</span>
+          <span>Sample_CODE</span>
           <span>型番</span>
           <span>仕入先</span>
         </div>
@@ -84,12 +86,13 @@ export default function ProductsListPage() {
           <Link
             key={p.logs_code}
             href={`/products/${p.logs_code}`}
-            className="grid grid-cols-3 items-center gap-2 border-b border-slate-100 px-4 py-3 text-sm text-ink last:border-b-0 hover:bg-slate-50"
+            className="grid grid-cols-4 items-center gap-2 border-b border-slate-100 px-4 py-3 text-sm text-ink last:border-b-0 hover:bg-slate-50"
           >
             <span>
               <span className="font-medium">{p.product_name ?? "(商品名なし)"}</span>
               <span className="ml-2 text-xs text-sub">{p.logs_code}</span>
             </span>
+            <span className="text-sub">{p.sample_code ?? "—"}</span>
             <span className="text-sub">{p.model_no ?? "—"}</span>
             <span className="text-sub">{p.supplier_name ?? "—"}</span>
           </Link>

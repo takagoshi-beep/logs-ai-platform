@@ -414,7 +414,7 @@ def test_list_products_returns_related_products_for_resolved_staff_name(monkeypa
     monkeypatch.setattr(product_service, "get_related_logs_codes", lambda owner_name, limit=20: ["5145"])
     monkeypatch.setattr(
         product_service, "get_products_master_batch",
-        lambda codes: {"5145": {"商品名": "Baseball Cap", "型番": "K01", "仕入先名": "1064STUDIO"}},
+        lambda codes: {"5145": {"商品名": "Baseball Cap", "型番": "K01", "仕入先名": "1064STUDIO", "Sample_CODE": "100"}},
     )
 
     response = _client().get("/api/products")
@@ -422,8 +422,27 @@ def test_list_products_returns_related_products_for_resolved_staff_name(monkeypa
     body = response.json()
     assert body["scope"] == "mine"
     assert body["products"] == [
-        {"logs_code": "5145", "product_name": "Baseball Cap", "model_no": "K01", "supplier_name": "1064STUDIO"}
+        {"logs_code": "5145", "product_name": "Baseball Cap", "model_no": "K01", "supplier_name": "1064STUDIO", "sample_code": "100"}
     ]
+
+
+def test_list_products_sorted_by_sample_code_descending(monkeypatch):
+    """2026-07-08、Noritsuguの指定: 商品一覧はSample_CODEの降順で返す。"""
+    from services import auth_service, product_service
+
+    monkeypatch.setattr(auth_service, "get_staff_name_by_email", lambda email: "山田太郎")
+    monkeypatch.setattr(product_service, "get_related_logs_codes", lambda owner_name, limit=20: ["a", "b", "c"])
+    monkeypatch.setattr(
+        product_service, "get_products_master_batch",
+        lambda codes: {
+            "a": {"商品名": "P1", "型番": None, "仕入先名": None, "Sample_CODE": "5"},
+            "b": {"商品名": "P2", "型番": None, "仕入先名": None, "Sample_CODE": "20"},
+            "c": {"商品名": "P3", "型番": None, "仕入先名": None, "Sample_CODE": "100"},
+        },
+    )
+
+    response = _client().get("/api/products")
+    assert [p["logs_code"] for p in response.json()["products"]] == ["c", "b", "a"]
 
 
 def test_get_product_via_http(monkeypatch):

@@ -375,7 +375,7 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
                 result = {"status": "unavailable", "summary": "ユーザーが特定できないため取得できません。", "records": []}
             else:
                 from services.auth_service import get_staff_name_by_email
-                from services.product_service import get_products_master_batch, get_related_logs_codes
+                from services.product_service import get_products_master_batch, get_related_logs_codes, sample_code_sort_key
 
                 owner_name = get_staff_name_by_email(user_email)
                 if not owner_name:
@@ -397,7 +397,9 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
                                 "product_name": m.get("商品名"),
                                 "model_no": m.get("型番"),
                                 "supplier_name": m.get("仕入先名"),
+                                "sample_code": m.get("Sample_CODE"),
                             })
+                    records.sort(key=lambda r: sample_code_sort_key(r["sample_code"]), reverse=True)
                     result = {
                         "status": "ok" if records else "unavailable",
                         "summary": f"{owner_name}さんに関連する商品を{len(records)}件取得しました。" if records else f"{owner_name}さんに関連する商品は見つかりませんでした。",

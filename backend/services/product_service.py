@@ -61,6 +61,21 @@ WHERE ps."回答者" = %(name)s OR ps."依頼元" = %(name)s
 """
 
 
+def sample_code_sort_key(sample_code: Any) -> tuple:
+    """Sample_CODEの降順ソート用キー。数値として解釈できる場合は数値として
+    比較し（"9"が"10"より前に来る、のような文字列比較の誤りを避ける）、
+    数値でない場合やNoneは文字列として扱い、常に数値側より後ろに来る
+    （2026-07-08、Noritsuguの指定によるソート順）。
+    """
+    if sample_code is None:
+        return (0, "")
+    s = str(sample_code)
+    try:
+        return (1, float(s))
+    except ValueError:
+        return (0, s)
+
+
 def get_related_logs_codes(owner_name: str, limit: int = 50) -> list[str]:
     """自分に直接・間接的に関連する商品のLOGS_CODE一覧を、1回のクエリで
     まとめて取得する。owner_nameが空、もしくはDB接続に失敗した場合は

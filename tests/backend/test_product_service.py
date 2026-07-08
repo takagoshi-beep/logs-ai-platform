@@ -61,6 +61,21 @@ def test_get_related_logs_codes_returns_empty_for_blank_owner_name():
     assert product_service.get_related_logs_codes(None) == []
 
 
+def test_sample_code_sort_key_orders_numeric_values_correctly():
+    """文字列比較だと"9" > "10"になってしまう誤りを避け、数値として
+    比較できることを確認する（2026-07-08、降順ソートの指定）。"""
+    codes = ["9", "10", "100", "2"]
+    ordered = sorted(codes, key=product_service.sample_code_sort_key, reverse=True)
+    assert ordered == ["100", "10", "9", "2"]
+
+
+def test_sample_code_sort_key_places_non_numeric_and_none_last():
+    codes = ["50", None, "abc", "10"]
+    ordered = sorted(codes, key=product_service.sample_code_sort_key, reverse=True)
+    assert ordered[:2] == ["50", "10"]
+    assert set(ordered[2:]) == {None, "abc"}
+
+
 def test_get_related_logs_codes_returns_codes_from_union_query(monkeypatch):
     rows = [("5145",), ("6054",)]
     monkeypatch.setattr(product_service, "get_connection", lambda: _FakeConnection(rows, ["LOGS_CODE"]))
