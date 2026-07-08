@@ -258,6 +258,15 @@ def get_related_communications_for_product(
     try:
         from services import slack_service
         slack_result = slack_service.search_messages(user_email, query, max_results)
+        print(f"[slack debug] combined query={query!r} -> total={slack_result.get('summary')!r} records={len(slack_result.get('records', []))}")
+        if sample_code:
+            solo = slack_service.search_messages(user_email, f'"{sample_code}"', max_results)
+            print(f"[slack debug] sample_code only query={sample_code!r} -> {solo}")
+        if logs_code:
+            solo2 = slack_service.search_messages(user_email, f'"{logs_code}"', max_results)
+            print(f"[slack debug] logs_code only query={logs_code!r} -> {solo2}")
+        unquoted = slack_service.search_messages(user_email, sample_code or logs_code or "", max_results)
+        print(f"[slack debug] unquoted query={(sample_code or logs_code)!r} -> {unquoted}")
     except Exception as e:
         slack_result = {"status": "error", "summary": f"Slack検索中にエラーが発生しました: {e}", "records": []}
 

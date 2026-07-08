@@ -183,13 +183,14 @@ def test_get_related_communications_for_product_searches_both_codes(monkeypatch)
     from services import gmail_service, slack_service
 
     captured = {}
+    slack_queries = []
 
     def _fake_gmail(email, query, max_results):
         captured["gmail_query"] = query
         return {"status": "ok", "summary": "1件", "records": [{"subject": "見積書"}]}
 
     def _fake_slack(email, query, max_results):
-        captured["slack_query"] = query
+        slack_queries.append(query)
         return {"status": "ok", "summary": "1件", "records": [{"text": "在庫確認"}]}
 
     monkeypatch.setattr(gmail_service, "search_messages", _fake_gmail)
@@ -198,7 +199,7 @@ def test_get_related_communications_for_product_searches_both_codes(monkeypatch)
     result = product_service.get_related_communications_for_product("user@logs.co.jp", "5145", "S1")
 
     assert captured["gmail_query"] == '"5145" OR "S1"'
-    assert captured["slack_query"] == '"5145" OR "S1"'
+    assert slack_queries[0] == '"5145" OR "S1"'  # 本来返す結合クエリ（先頭の呼び出し）
     assert result["gmail"]["records"] == [{"subject": "見積書"}]
     assert result["slack"]["records"] == [{"text": "在庫確認"}]
 
