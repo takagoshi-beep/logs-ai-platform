@@ -173,7 +173,9 @@ TOOLS: list[dict[str, Any]] = [
         "name": "search_slack",
         "description": (
             "ログインユーザー自身が参加しているSlackのチャンネル・DMからメッセージを検索する。"
-            "Slack検索構文（from:, in:, before:, after: 等）が使える。"
+            "Slack検索構文が使える: from:@ユーザー名, in:#チャンネル名, "
+            "before:YYYY-MM-DD, after:YYYY-MM-DD, on:YYYY-MM-DD（日付は必ずハイフン区切り。"
+            "Gmailのafter:YYYY/MM/DDとは書式が異なるので混同しないこと）。"
             "'unavailable' が返ってきた場合はSlack未連携ということなので、"
             "設定画面からのSlack連携を案内すること。架空のメッセージ内容を作ってはいけない。"
         ),
