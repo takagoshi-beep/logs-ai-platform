@@ -142,7 +142,7 @@ def test_slack_search_uses_po_number_only_no_supplier_name_fallback(monkeypatch)
 
     result = project_relations.get_related_communications("user@logs.co.jp", "2091-20250602_2", "unknown", "1064STUDIO")
 
-    assert calls == ['"2091-20250602_2"']  # 仕入先名での検索は一切呼ばれない
+    assert calls == ["2091-20250602_2"]  # 仕入先名での検索は一切呼ばれない、かつ引用符無しで送られる
     assert result["slack"]["match_type"] == "po_number"
     assert result["slack"]["records"] == []
 

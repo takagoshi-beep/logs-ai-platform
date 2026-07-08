@@ -170,7 +170,7 @@ def test_get_related_communications_for_product_normalizes_float_logs_code(monke
     product_service.get_related_communications_for_product("user@logs.co.jp", 13564.0, "SLG-06120")
 
     assert captured["gmail_q"] == '"13564" OR "SLG-06120"'
-    assert captured["slack_q"] == '"13564" OR "SLG-06120"'
+    assert captured["slack_q"] == "SLG-06120"
 
 
 def test_get_related_communications_for_product_returns_unavailable_without_user_email():
@@ -180,17 +180,19 @@ def test_get_related_communications_for_product_returns_unavailable_without_user
 
 
 def test_get_related_communications_for_product_searches_both_codes(monkeypatch):
+    """Gmailは引用符付きでLOGS_CODE・Sample_CODEをOR結合、Slackは
+    Sample_CODEのみを引用符無しで検索する（2026-07-08、実機診断で
+    判明したSlack特有の癖への対応）。"""
     from services import gmail_service, slack_service
 
     captured = {}
-    slack_queries = []
 
     def _fake_gmail(email, query, max_results):
         captured["gmail_query"] = query
         return {"status": "ok", "summary": "1件", "records": [{"subject": "見積書"}]}
 
     def _fake_slack(email, query, max_results):
-        slack_queries.append(query)
+        captured["slack_query"] = query
         return {"status": "ok", "summary": "1件", "records": [{"text": "在庫確認"}]}
 
     monkeypatch.setattr(gmail_service, "search_messages", _fake_gmail)
@@ -199,9 +201,25 @@ def test_get_related_communications_for_product_searches_both_codes(monkeypatch)
     result = product_service.get_related_communications_for_product("user@logs.co.jp", "5145", "S1")
 
     assert captured["gmail_query"] == '"5145" OR "S1"'
-    assert slack_queries[0] == '"5145" OR "S1"'  # 本来返す結合クエリ（先頭の呼び出し）
+    assert captured["slack_query"] == "S1"
     assert result["gmail"]["records"] == [{"subject": "見積書"}]
     assert result["slack"]["records"] == [{"text": "在庫確認"}]
+
+
+def test_get_related_communications_for_product_slack_skipped_without_sample_code(monkeypatch):
+    """Slackの検索キーはSample_CODEのみ。LOGS_CODEしか無い場合は
+    Slack検索自体を行わない（素の数字は無関係な値と衝突しやすく
+    精度が低いと実機診断で判明したため、2026-07-08）。"""
+    from services import gmail_service, slack_service
+
+    slack_calls = []
+    monkeypatch.setattr(gmail_service, "search_messages", lambda email, query, max_results: {"status": "ok", "summary": "0件", "records": []})
+    monkeypatch.setattr(slack_service, "search_messages", lambda email, query, max_results: slack_calls.append(query) or {"status": "ok", "summary": "0件", "records": []})
+
+    result = product_service.get_related_communications_for_product("user@logs.co.jp", "5145", None)
+
+    assert slack_calls == []
+    assert result["slack"]["status"] == "unavailable"
 
 
 def test_get_related_communications_for_product_with_only_sample_code(monkeypatch):
@@ -210,10 +228,11 @@ def test_get_related_communications_for_product_with_only_sample_code(monkeypatc
 
     captured = {}
     monkeypatch.setattr(gmail_service, "search_messages", lambda email, query, max_results: captured.setdefault("q", query) or {"status": "ok", "summary": "0件", "records": []})
-    monkeypatch.setattr(slack_service, "search_messages", lambda email, query, max_results: {"status": "ok", "summary": "0件", "records": []})
+    monkeypatch.setattr(slack_service, "search_messages", lambda email, query, max_results: captured.setdefault("slack_q", query) or {"status": "ok", "summary": "0件", "records": []})
 
     product_service.get_related_communications_for_product("user@logs.co.jp", None, "S1")
     assert captured["q"] == '"S1"'
+    assert captured["slack_q"] == "S1"
 
 
 def test_get_related_communications_for_product_returns_unavailable_with_no_keys():

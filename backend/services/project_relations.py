@@ -109,13 +109,20 @@ def _search_slack_related(
     が別件だった」というノイズの温床になり得るフォールバックを設ける
     実益が薄いと判断した（2026-07-08、Noritsuguの明示的な選択）。
     supplier_nameは将来また使う可能性を考えて引数には残している。
+
+    引用符を付けない理由（2026-07-08、実機診断で判明）: Slackの検索は
+    ハイフンを含む語を引用符で囲むと一致しなくなる現象を確認した
+    （実例: 商品のSample_CODE "SLG-06120" は引用符付きだと0件、
+    引用符無しだと正しくヒットした）。PO番号もハイフンを含む形式
+    （例: "161-20241227_1"）のため、同じ問題を避けるために引用符を
+    付けない。
     """
     from services import slack_service
 
     if not po_number:
         return {"status": "ok", "summary": "PO番号がありません。", "records": []}
 
-    result = slack_service.search_messages(user_email, f'"{po_number}"', max_results)
+    result = slack_service.search_messages(user_email, po_number, max_results)
     if result.get("status") == "ok":
         result["match_type"] = "po_number"
     return result

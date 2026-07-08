@@ -225,52 +225,57 @@ def get_related_communications_for_product(
     max_results: int = 5,
 ) -> dict[str, Any]:
     """ログイン中の本人のGmail/Slackを、LOGS_CODE・Sample_CODE（SPL品番）
-    をキーに検索する。案件のPO番号のような「担当者メールへのフォール
-    バック」は行わない — LOGS_CODE/Sample_CODEはどちらもそれ自体が
-    十分に一意な識別子であり、案件のような「PO番号は一致しないが
-    担当者は一致する」という精度低下の心配がないため、単純にOR結合で
-    良いと判断した（2026-07-08）。LOGS_CODEが無い商品（未発注）は
-    Sample_CODEだけで検索する。
+    をキーに検索する。
+
+    Gmail: LOGS_CODE・Sample_CODEを引用符付きでOR結合する。引用符付き
+    フレーズ検索が正しく機能することを実際のデータで確認済み。
+
+    Slack: **Sample_CODEのみ、引用符なし**で検索する。2026-07-08の実機
+    診断で判明した2つの実際の問題を踏まえた設計:
+      1. Slackの検索は、ハイフンを含む語を引用符で囲むと一致しなくなる
+         （実例: `"SLG-06120"`は0件だが、`SLG-06120`（引用符なし）は
+         正しく1件ヒットした）。そのためSlackでは引用符を使わない。
+      2. LOGS_CODEのような素の数字だけでの検索は、無関係な別の数値
+         （実例: 全く別件の「売上ID：13564」がヒットした）と衝突し
+         やすく精度が低い。そのためSlackではLOGS_CODEを検索キーに
+         含めない（Sample_CODEはハイフン入りの複合文字列で衝突しにくい
+         ため採用）。
 
     未連携の場合はgmail_service/slack_serviceが返す'unavailable'を
     そのまま伝える（架空の関連メッセージを作らない）。
     """
-    print(f"[related-comms debug] called with user_email={user_email!r} logs_code={logs_code!r} sample_code={sample_code!r}")
     if not user_email:
         unavailable = {"status": "unavailable", "summary": "ログインユーザーが特定できません。", "records": []}
         return {"gmail": unavailable, "slack": unavailable}
 
     logs_code = _format_logs_code(logs_code)
-    parts = [f'"{logs_code}"'] if logs_code else []
+    gmail_parts = [f'"{logs_code}"'] if logs_code else []
     if sample_code:
-        parts.append(f'"{sample_code}"')
-    query = " OR ".join(parts)
+        gmail_parts.append(f'"{sample_code}"')
+    gmail_query = " OR ".join(gmail_parts)
+    slack_query = sample_code or ""
 
-    if not query:
-        print("[related-comms debug] query is empty, returning unavailable without calling gmail/slack")
+    if not gmail_query and not slack_query:
         unavailable = {"status": "unavailable", "summary": "検索に使えるキー（LOGS_CODE・Sample_CODE）がありませんでした。", "records": []}
         return {"gmail": unavailable, "slack": unavailable}
 
-    try:
-        from services import gmail_service
-        gmail_result = gmail_service.search_messages(user_email, query, max_results)
-    except Exception as e:
-        gmail_result = {"status": "error", "summary": f"Gmail検索中にエラーが発生しました: {e}", "records": []}
+    if gmail_query:
+        try:
+            from services import gmail_service
+            gmail_result = gmail_service.search_messages(user_email, gmail_query, max_results)
+        except Exception as e:
+            gmail_result = {"status": "error", "summary": f"Gmail検索中にエラーが発生しました: {e}", "records": []}
+    else:
+        gmail_result = {"status": "unavailable", "summary": "検索に使えるキーがありませんでした。", "records": []}
 
-    try:
-        from services import slack_service
-        slack_result = slack_service.search_messages(user_email, query, max_results)
-        print(f"[slack debug] combined query={query!r} -> total={slack_result.get('summary')!r} records={len(slack_result.get('records', []))}")
-        if sample_code:
-            solo = slack_service.search_messages(user_email, f'"{sample_code}"', max_results)
-            print(f"[slack debug] sample_code only query={sample_code!r} -> {solo}")
-        if logs_code:
-            solo2 = slack_service.search_messages(user_email, f'"{logs_code}"', max_results)
-            print(f"[slack debug] logs_code only query={logs_code!r} -> {solo2}")
-        unquoted = slack_service.search_messages(user_email, sample_code or logs_code or "", max_results)
-        print(f"[slack debug] unquoted query={(sample_code or logs_code)!r} -> {unquoted}")
-    except Exception as e:
-        slack_result = {"status": "error", "summary": f"Slack検索中にエラーが発生しました: {e}", "records": []}
+    if slack_query:
+        try:
+            from services import slack_service
+            slack_result = slack_service.search_messages(user_email, slack_query, max_results)
+        except Exception as e:
+            slack_result = {"status": "error", "summary": f"Slack検索中にエラーが発生しました: {e}", "records": []}
+    else:
+        slack_result = {"status": "unavailable", "summary": "Sample_CODEが無いため、Slack検索はできません。", "records": []}
 
     return {"gmail": gmail_result, "slack": slack_result}
 
