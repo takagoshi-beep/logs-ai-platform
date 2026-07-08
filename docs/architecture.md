@@ -2419,6 +2419,166 @@ test of whether this preparation was sufficient... surfaces something
 none of this planning caught" — confirmed exactly that on the very
 first deploy attempt.
 
+## 14.27 Gmail/Slack連携 (Phase 1: 検索・参照専用) (2026-07-08)
+
+「案件や商品に関連するメール・Slackメッセージも見たい」という要望を
+受け、個人単位のOAuth連携を追加した。
+
+**Gmail**: Google Sign-In（IDトークンのみ、本人確認専用）とは別に、
+Authorization Code + refresh_token方式のOAuthを新設（`gmail_service.py`、
+`oauth_token_store.py`、`token_crypto.py`でリフレッシュトークンを
+Fernet暗号化して保存）。スコープは`gmail.readonly`のみ（ドラフト作成・
+送信は将来のPhase 2として見送り、最小権限の原則）。`google-api-python-
+client`のような重いSDKは使わず、`requests`でGmail REST APIを直接叩く。
+
+**Slack**: 同じ`user_oauth_tokens`テーブル（provider列で区別）を再利用。
+Slackのユーザートークンは（トークンローテーション未使用の場合）
+refresh不要の長期間有効なトークンのため、Gmailのような更新サイクルは
+不要で、Gmailより実装が単純だった。スコープは`search:read`,
+`users:read`, `users:read.email`（本人確認用）。
+
+両方とも、本人確認済みの本人アカウントであることを、連携時にGoogle/
+Slackから返ってきたメールアドレスとログイン中の本人のメールアドレスを
+突き合わせて検証する（他人のアカウントを誤って連携できないようにする
+必須チェック）。
+
+デプロイ時に実際に踏んだ不具合（いずれも本番デプロイで初めて発覚、
+ローカルでは再現しなかった）:
+- `google.auth.transport.requests`が`requests`パッケージを別途必要と
+  するが`backend/requirements.txt`に入っていなかった（401連発の原因）
+- Google Cloud側でGmail APIそのものが有効化されていなかった
+  （`SERVICE_DISABLED`エラー）
+- Slack Appの「ユーザートークンのスコープ」に、必要のない
+  `admin.users:read`（組織全体のユーザー管理用の強い権限）が誤って
+  追加されていたので`users:read`に修正
+
+`get_sales_lines`/`get_purchase_lines`と同様に`search_gmail`/
+`search_slack`/`get_my_projects`/`get_my_products`をChat向けツールとして
+`tool_registry.py`に追加。
+
+複数ターンにわたる会話で、Claudeが前のターンの自分の回答（要約テキスト
+のみ、生データは会話履歴に残らない）を見て個別の詳細（送信者名等）を
+推測で埋めてしまう実例が発生（実在しない送信者名を作り出した）。
+システムプロンプトに「過去のターンで取得した生データは残らないので、
+要約に無い個別詳細は必ずツールを再度呼び出して確認する」ルールを明記
+して対応。
+
+## 14.28 案件・タスクの担当者ベース絞り込み (`scope=mine`) + N+1接続に
+よるパフォーマンス問題の発見と解消 (2026-07-08)
+
+「自分に関連する案件・タスクがデフォルトで表示されるようにしたい」
+という要望を受け、`purchase_orders.営業担当者名`/`営業事務担当者名`
+列（ログイン中のメールアドレス→`staff.メールアドレス`→`社員氏名`で
+突合、`auth_service.get_staff_name_by_email`を新設）を使って
+`/api/projects`・`/api/today-actions`・`/api/home`をデフォルトで本人
+担当分に絞り込むようにした（`scope=all`で従来通り全件も見られる）。
+本人の氏名がstaffテーブルと一致しない場合は、誤って絞り込むより安全な
+「全件表示」にフォールバックする設計。
+
+**実際に踏んだ性能問題**: 絞り込み機能をリリース後、「案件一覧が20秒、
+今日のタスクが80秒かかる」と報告があった。原因は`build_project_
+aggregate()`が案件1件ごとに新しいSupabase接続を毎回ゼロから確立して
+いたこと（`services.supabase_client.get_connection()`が呼ばれるたびに
+新規TCP+TLS+認証ハンドシェイクが発生、案件数に比例して遅くなる）。
+
+対応は2段階:
+1. `record_capability`フラグを追加し、一覧系の呼び出しではCapability
+   実行履歴・トレースへのSupabase書き込み（案件1件ごとに複数回発生）を
+   スキップ — これだけでは根本解決にならず、まだ20〜80秒かかった
+2. `_build_project_data_batch()`/`build_project_aggregates_bulk()`を
+   新設し、`WHERE "ID" = ANY(%s)`で全案件を**1回のクエリ・1回の接続**に
+   まとめる方式に変更 — これで案件数に関わらずほぼ一定時間になった
+
+この「N回接続ではなく1回にまとめる」設計は、後続の14.30（商品の関連
+判定）でも踏襲している。
+
+## 14.29 案件・商品詳細へのGmail/Slack関連情報表示 (2026-07-08)
+
+案件詳細（`/api/projects/{id}`）・商品詳細（`/api/products/{id}`）に、
+ログイン中の本人のGmail/Slackから、その案件・商品に関連しそうな
+メッセージを自動検索して表示する機能を追加（`project_relations.py`,
+`product_service.get_related_communications_for_product`）。
+
+案件のキー: PO番号（完全一致）、および顧客担当者のメールアドレス
+（`customer_contacts`テーブル、`purchase_orders.顧客ID`で突合）。
+商品のキー: `LOGS_CODE`、`Sample_CODE`（`production_samples.SPL品番`
+と同じ値）。
+
+**実際に踏んだ精度問題（PO番号とメールアドレスのOR結合）**: 当初、
+PO番号と顧客担当者メールアドレスをOR（どちらか一致すればヒット）で
+組み合わせていたところ、PO番号は一致していないのに「その顧客担当者
+との別件のメール」が紛れ込む実例が発生した（案件2091-20250602_2の
+はずが、無関係なPO#2104/2143/2126のメールが表示された）。PO番号検索
+を優先し、0件だった場合のみ顧客担当者メールにフォールバックする
+段階的な方式に変更。フォールバックでヒットした結果は`match_type`で
+区別し、画面上にも「PO番号の一致ではない」旨を注記する。
+
+Slack側はPO発行時に必ずPO番号入りの自動通知が飛ぶ運用のため、
+仕入先名へのフォールバックは採用せず、PO番号一致のみとした。
+
+## 14.30 商品(products.ID)を軸にした横断参照メニューの新設 (2026-07-08)
+
+案件（purchase_orders）はPO単位、業務の実態は商品（LOGS_CODE）単位で
+語られることも多いが、1PO内に数十商品を含むことが実データで確認され
+（例: PO 914-20260630_1は27商品）、案件詳細に商品明細を全部持たせると
+重くなりすぎるため、「商品」を独立したメニューとして新設した。
+
+「関連する商品」の判定（直接: 商品マスタの作成者本人、間接: PO/売上/
+仕入の担当者・仕入先の生産管理担当者・サンプル対応の回答者/依頼元の
+いずれかが本人）を1回のUNIONクエリで取得する設計は14.28の教訓を踏襲。
+`purchases`テーブルのみ担当者列が伝票・明細の二重構造のため、明細を
+優先し空欄なら伝票の値を採用する（COALESCE）。
+
+**重要な設計訂正**: 当初`LOGS_CODE`を商品一覧・詳細のキーに使って
+いたが、実際には商品ID（内部キー、常に存在）→Sample_CODE（サンプル
+対応時に払い出し）→LOGS_CODE（発注フラグが立った時に払い出し）という
+段階的な識別子付与の仕組みがあり、LOGS_CODEがNULLの商品は「未発注」の
+正常な状態と判明（Noritsuguの指摘）。そのためキーを`products."ID"`
+（常に存在する内部キー）に全面的に変更し、URLも`/products/[logsCode]`
+から`/products/[productId]`に変更した。LOGS_CODEは「あれば表示・あれば
+横断検索に使う」補助情報という扱いに改めた。
+
+一覧はSample_CODEの降順表示（Noritsuguの指定）。`LOGS_CODE`列が
+Supabase上で`double precision`型のため、13564のような整数値でも
+Pythonからは`13564.0`として返ってくる問題が発覚（表示・Gmail/Slack
+検索クエリの両方が誤った文字列になっていた）。`_format_logs_code()`で
+表示・検索用にのみ正規化し、DB内部のクエリ比較には元の値をそのまま
+使うことで影響範囲を分離した。
+
+商品分類コードは既存の`v_product_master`ビュー（`reference/02_database/
+sync/sync.py`）と同じ対応表を複製して名称表示に変換（DBビューのCASE式
+をPython側から直接再利用する手段が無いため、変更時は両方揃える必要が
+ある点に注意）。
+
+一覧には`scope=mine`（既定）/`scope=all`のトグルを追加。`scope=all`は
+直近登録分をlimit件返すMVP実装で、商品マスタ全体を考慮したページング
+は今後の検討課題として明示的に残している。
+
+## 14.31 実機診断で判明したSlack検索特有の2つの精度問題の修正 (2026-07-08)
+
+14.29のGmail/Slack関連情報表示を商品詳細で実際に使ったところ、
+Sample_CODEが実際にSlack通知に含まれていることが確認できた
+（Noritsuguが実例のSlack通知スクリーンショットを提供）にも関わらず
+0件のままだった。一時的な診断ログ（クエリを個別に切り分けて実行）で
+原因を特定:
+
+1. **Slackの検索は、ハイフンを含む語を引用符で囲むと一致しなくなる**
+   （実例: 引用符付き`"SLG-06120"`は0件、引用符無しの`SLG-06120`は
+   正しく1件ヒットした）
+2. **LOGS_CODEのような素の数字だけでの検索は、無関係な値と衝突
+   しやすい**（実例: 引用符付き`"13564"`で、全く別件の「売上ID：
+   13564」がヒットした）
+
+対応として、Slack検索は商品・案件のどちらも**引用符を使わず**、
+商品は**Sample_CODEのみ**（LOGS_CODEは精度が低いため除外）、案件は
+PO番号のみを検索キーとする方式に統一した。Gmail検索は引用符付きの
+まま（正しく機能することを確認済み）で変更していない。
+
+この一件は、Slack API特有の検索構文の癖という、ドキュメント化されて
+おらず実際にデータで試すまで分からない類の問題だった。ユーザーが
+実際のSlack画面のスクリーンショットと検索結果を提供してくれたことが
+解決の決め手になった。
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.
