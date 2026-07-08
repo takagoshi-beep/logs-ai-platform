@@ -6,6 +6,14 @@
   2. 顧客担当者のメールアドレス（customer_contacts.メールアドレス、
      purchase_orders.顧客ID で突合） — Gmailのfrom:/to:で高精度に絞れる
 
+この2つはOR（どちらか一致すればヒット）では組み合わせない —
+「PO番号は一致していないが、その顧客担当者との別件のメールならヒットする」
+というノイズが実際に発生したため（2026-07-08、全く別のPO番号のメールが
+表示された実例）。代わりに、まずPO番号だけで検索し、0件だった場合に限り
+顧客担当者メール／仕入先名にフォールバックする段階的な方式にしている。
+フォールバックでヒットした結果は`match_type`で区別し、呼び出し側が
+「PO番号そのものの一致ではない」ことを利用者に伝えられるようにする。
+
 仕入先名・商品コード等は第2段階として今後追加を検討する候補
 （顧客担当者のようなメールアドレスの元データが仕入先側には存在しない
 ため、今回は含めていない）。
@@ -46,21 +54,76 @@ def get_customer_contact_emails(customer_id: str) -> list[str]:
     return [row[0] for row in rows if row[0]]
 
 
-def _build_gmail_query(po_number: str, contact_emails: list[str]) -> str:
-    parts = [f'"{po_number}"'] if po_number else []
+def _contact_emails_query(contact_emails: list[str]) -> str:
+    parts = []
     for email in contact_emails:
         parts.append(f"from:{email}")
         parts.append(f"to:{email}")
     return " OR ".join(parts)
 
 
-def _build_slack_query(po_number: str, supplier_name: str) -> str:
-    parts = []
+def _search_gmail_related(
+    user_email: str, po_number: str, contact_emails: list[str], max_results: int
+) -> dict[str, Any]:
+    from services import gmail_service
+
     if po_number:
-        parts.append(f'"{po_number}"')
+        po_result = gmail_service.search_messages(user_email, f'"{po_number}"', max_results)
+        if po_result.get("status") != "ok":
+            # Gmail未連携・APIエラー等 — フォールバックしても意味がないので
+            # そのまま呼び出し側に伝える（連携未完了なのに「担当者名で
+            # 検索したら見つかりました」という矛盾した表示を避ける）。
+            return po_result
+        if po_result.get("records"):
+            po_result["match_type"] = "po_number"
+            return po_result
+    else:
+        po_result = {"status": "ok", "summary": "PO番号がありません。", "records": []}
+
+    if contact_emails:
+        fallback_query = _contact_emails_query(contact_emails)
+        fallback_result = gmail_service.search_messages(user_email, fallback_query, max_results)
+        if fallback_result.get("status") == "ok" and fallback_result.get("records"):
+            fallback_result["match_type"] = "customer_contact"
+            fallback_result["summary"] = (
+                f"PO番号「{po_number}」に一致するメールは見つかりませんでしたが、"
+                f"この顧客の担当者とのメールが{len(fallback_result['records'])}件見つかりました"
+                "（同じPOとは限りません）。"
+            )
+            return fallback_result
+
+    po_result["match_type"] = "po_number"
+    return po_result
+
+
+def _search_slack_related(
+    user_email: str, po_number: str, supplier_name: str, max_results: int
+) -> dict[str, Any]:
+    from services import slack_service
+
+    if po_number:
+        po_result = slack_service.search_messages(user_email, f'"{po_number}"', max_results)
+        if po_result.get("status") != "ok":
+            return po_result
+        if po_result.get("records"):
+            po_result["match_type"] = "po_number"
+            return po_result
+    else:
+        po_result = {"status": "ok", "summary": "PO番号がありません。", "records": []}
+
     if supplier_name:
-        parts.append(f'"{supplier_name}"')
-    return " OR ".join(parts)
+        fallback_result = slack_service.search_messages(user_email, f'"{supplier_name}"', max_results)
+        if fallback_result.get("status") == "ok" and fallback_result.get("records"):
+            fallback_result["match_type"] = "supplier_name"
+            fallback_result["summary"] = (
+                f"PO番号「{po_number}」に一致するメッセージは見つかりませんでしたが、"
+                f"仕入先「{supplier_name}」に関するメッセージが{len(fallback_result['records'])}件見つかりました"
+                "（同じPOとは限りません）。"
+            )
+            return fallback_result
+
+    po_result["match_type"] = "po_number"
+    return po_result
 
 
 def get_related_communications(
@@ -71,7 +134,8 @@ def get_related_communications(
     max_results: int = 5,
 ) -> dict[str, Any]:
     """ログイン中の本人のGmail/Slackを、この案件に関連しそうなキーワード
-    （PO番号・顧客担当者メールアドレス・仕入先名）で検索する。
+    （PO番号を優先し、0件ならフォールバックとして顧客担当者メールアドレス・
+    仕入先名）で検索する。
 
     Gmail/Slackどちらも未連携の場合や、user_emailが無い場合は、それぞれ
     'unavailable'をそのまま返す（呼び出し側はこれを見て「連携してくだ
@@ -83,26 +147,13 @@ def get_related_communications(
 
     contact_emails = get_customer_contact_emails(customer_id)
 
-    gmail_query = _build_gmail_query(po_number, contact_emails)
-    slack_query = _build_slack_query(po_number, supplier_name)
-
     try:
-        from services import gmail_service
-        gmail_result = (
-            gmail_service.search_messages(user_email, gmail_query, max_results)
-            if gmail_query
-            else {"status": "unavailable", "summary": "検索に使えるキーがありませんでした。", "records": []}
-        )
+        gmail_result = _search_gmail_related(user_email, po_number, contact_emails, max_results)
     except Exception as e:
         gmail_result = {"status": "error", "summary": f"Gmail検索中にエラーが発生しました: {e}", "records": []}
 
     try:
-        from services import slack_service
-        slack_result = (
-            slack_service.search_messages(user_email, slack_query, max_results)
-            if slack_query
-            else {"status": "unavailable", "summary": "検索に使えるキーがありませんでした。", "records": []}
-        )
+        slack_result = _search_slack_related(user_email, po_number, supplier_name, max_results)
     except Exception as e:
         slack_result = {"status": "error", "summary": f"Slack検索中にエラーが発生しました: {e}", "records": []}
 
