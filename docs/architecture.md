@@ -2322,6 +2322,72 @@ deployment steps (env var transfer, and the cross-origin session-cookie
 backend are effectively the same origin for cookie purposes, which
 stops being true once they live on different domains).
 
+## 14.25 Web化準備 (3/4): Render-only deployment — CORS/session cookies
+made environment-driven (2026-07-08)
+
+Noritsugu chose to consolidate hosting to a single provider (Render for
+both the Next.js frontend and FastAPI backend, as two separate Web
+Services under one account) rather than Vercel+Render — one bill, one
+dashboard, at the cost of Vercel's Next.js-specific optimizations,
+judged not worth it for ~20 internal users. Clarified explicitly:
+"one provider" is not "one running process" — Next.js and FastAPI are
+still two separate services on Render, just both reachable from the
+same account.
+
+**Found while planning this, not yet a bug in practice but would have
+become one on first deploy:** `backend/main.py`'s CORS
+`allow_origins=["http://localhost:3000"]` was hardcoded, and the
+`SessionMiddleware`'s `same_site="lax"`/`https_only=False` (chosen in
+14.22 for local dev, where frontend/backend share an origin for cookie
+purposes) would silently break login the moment frontend and backend
+live on two different Render subdomains — a genuine cross-site
+configuration, which requires `same_site="none"` + `https_only=True`
+(the `Secure` cookie attribute, only honored over HTTPS) instead of the
+lenient local-dev settings.
+
+Fixed by deriving both from one new environment variable, `FRONTEND_URL`
+(defaults to `http://localhost:3000` for local dev, unchanged
+behavior): `_is_cross_site_https(url)` checks whether it starts with
+`https://`, and both `CORSMiddleware`'s `allow_origins` and
+`SessionMiddleware`'s `same_site`/`https_only` derive from that single
+check — Render's URLs are always HTTPS, so setting `FRONTEND_URL` to
+the real deployed frontend URL automatically flips both settings
+correctly without a second, separate flag to keep in sync. Confirmed
+`frontend/lib/api-client.ts`'s `API_BASE` was already
+`process.env.NEXT_PUBLIC_API_BASE`-driven (built this way from the
+start, not retrofitted) — no frontend code change needed, just setting
+that env var on Render.
+
+Tests avoid `importlib.reload(main)` deliberately: `main.app` is a
+singleton every other test file imports via `from main import app`
+(including `conftest.py`'s auth-override fixture) — reloading the
+module would replace that object out from under them, risking
+test-order-dependent flakiness. Instead, the branching decision was
+extracted into a small pure function, `_is_cross_site_https(url)`,
+tested directly against both a local and a deployed-style URL. 4 new
+tests, 261 total.
+
+New `docs/render_deployment.md`: full walkthrough for both Render Web
+Services (root directory / build+start commands / env vars for each),
+the backend-then-frontend-then-back-to-backend ordering this requires
+(frontend needs the backend's URL to set `NEXT_PUBLIC_API_BASE`;
+backend needs the frontend's URL to set `FRONTEND_URL` — a genuine
+circular dependency, resolved by deploying backend first with
+`FRONTEND_URL` left blank, then coming back to fill it in once the
+frontend's URL exists), and updating the Google OAuth client's
+authorized JavaScript origins to include the new production URL
+alongside `localhost:3000` (kept, not replaced, so local dev keeps
+working).
+
+**Remaining for this Web化 effort**: actually creating the two Render
+services and going through the deploy end-to-end for the first time —
+the real test of whether this preparation (14.23/14.24's Supabase
+migration + this entry's CORS/cookie fix + the 14.23 requirements.txt
+fix) was sufficient, or whether the first real deploy surfaces
+something none of this planning caught (matching the pattern of nearly
+every other feature this session — real bugs tend to surface on first
+real use, not in planning or tests).
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.
