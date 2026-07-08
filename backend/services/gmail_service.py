@@ -169,6 +169,10 @@ def search_messages(email: str, query: str, max_results: int = 10) -> dict[str, 
         )
         list_resp.raise_for_status()
         message_ids = [m["id"] for m in list_resp.json().get("messages", [])]
+    except requests.exceptions.HTTPError as e:
+        body = e.response.text if e.response is not None else ""
+        print(f"[gmail debug] Gmail messages.list HTTP error: {e} body={body}")
+        return {"status": "error", "summary": f"Gmail検索中にエラーが発生しました: {e} / {body}", "records": []}
     except Exception as e:
         return {"status": "error", "summary": f"Gmail検索中にエラーが発生しました: {e}", "records": []}
 
