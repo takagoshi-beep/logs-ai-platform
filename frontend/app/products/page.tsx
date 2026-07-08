@@ -14,22 +14,23 @@ interface ApiProduct {
 
 export default function ProductsListPage() {
   const [search, setSearch] = useState("");
+  const [scopeChoice, setScopeChoice] = useState<"mine" | "all">("mine");
   const [products, setProducts] = useState<ApiProduct[]>([]);
-  const [scope, setScope] = useState<string>("mine");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getProducts(50).then((data: any) => {
+    setLoading(true);
+    getProducts(50, scopeChoice).then((data: any) => {
       setLoading(false);
       if (data?.success === false) {
         setError(data.error ?? "データの取得に失敗しました");
         return;
       }
+      setError(null);
       setProducts(data?.products ?? []);
-      setScope(data?.scope ?? "mine");
     });
-  }, []);
+  }, [scopeChoice]);
 
   const filtered = products.filter((p) => {
     if (!search) return true;
@@ -46,7 +47,7 @@ export default function ProductsListPage() {
       <header className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <h1 className="page-title">商品</h1>
         <p className="page-subtitle">
-          自分が直接・間接的に関連する商品（LOGS_CODE単位）を表示しています。PO・売上・仕入・サンプル対応を横断できます。
+          商品（LOGS_CODE単位）を表示しています。PO・売上・仕入・サンプル対応を横断できます。
         </p>
       </header>
 
@@ -56,13 +57,32 @@ export default function ProductsListPage() {
         </div>
       )}
 
-      {!loading && !error && scope === "mine" && products.length === 0 && (
+      {!loading && !error && scopeChoice === "mine" && products.length === 0 && (
         <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-sub">
-          関連する商品が見つかりませんでした（社員マスタの氏名と、PO・売上・仕入・商品マスタ上の担当者名が一致しない可能性があります）。
+          関連する商品が見つかりませんでした（社員マスタの氏名と、PO・売上・仕入・商品マスタ上の担当者名が一致しない可能性があります）。「すべての商品」に切り替えてご覧いただけます。
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-3">
+        {/* 2026-07-08: トグルの選択肢・他の検索オプションは今後検討予定 */}
+        <div className="inline-flex rounded-lg border border-slate-300 bg-white p-0.5 text-sm">
+          <button
+            onClick={() => setScopeChoice("mine")}
+            className={`rounded-md px-3 py-1.5 font-medium transition ${
+              scopeChoice === "mine" ? "bg-accent text-white" : "text-ink hover:bg-slate-100"
+            }`}
+          >
+            自分の商品
+          </button>
+          <button
+            onClick={() => setScopeChoice("all")}
+            className={`rounded-md px-3 py-1.5 font-medium transition ${
+              scopeChoice === "all" ? "bg-accent text-white" : "text-ink hover:bg-slate-100"
+            }`}
+          >
+            すべての商品
+          </button>
+        </div>
         <input
           type="text"
           value={search}
@@ -104,3 +124,4 @@ export default function ProductsListPage() {
     </div>
   );
 }
+

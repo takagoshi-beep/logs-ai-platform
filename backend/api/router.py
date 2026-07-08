@@ -373,18 +373,30 @@ def list_products(limit: int = 20, scope: str = "mine", user: dict = Depends(req
     対応の回答者/依頼元）に関連する商品だけを返す。本人特定できない
     場合は空リストを返す（案件と異なり、商品では「担当者不明なら全件」
     にすると母数が大きすぎるため）。
-    scope="all"は今回未実装（商品マスタ全件は件数が大きく、別途ページング
-    等の設計が必要なため）。
+    scope="all": 商品マスタから直近登録分をlimit件返す（MVP実装。
+    総件数を考慮したページングは今後の検討課題）。
     """
-    from services.product_service import get_products_master_batch, get_related_logs_codes, sample_code_sort_key
+    from services.product_service import get_all_products, get_products_master_batch, get_related_logs_codes, sample_code_sort_key
 
-    owner_name = None
-    if scope == "mine":
-        from services.auth_service import get_staff_name_by_email
-        owner_name = get_staff_name_by_email(user.get("email"))
+    if scope == "all":
+        rows = get_all_products(limit=limit)
+        products = [
+            {
+                "logs_code": r.get("LOGS_CODE"),
+                "product_name": r.get("商品名"),
+                "model_no": r.get("型番"),
+                "supplier_name": r.get("仕入先名"),
+                "sample_code": r.get("Sample_CODE"),
+            }
+            for r in rows
+        ]
+        return {"success": True, "products": products, "count": len(products), "scope": "all"}
+
+    from services.auth_service import get_staff_name_by_email
+    owner_name = get_staff_name_by_email(user.get("email"))
 
     if not owner_name:
-        return {"success": True, "products": [], "count": 0, "scope": "mine" if scope == "mine" else "all"}
+        return {"success": True, "products": [], "count": 0, "scope": "mine"}
 
     logs_codes = get_related_logs_codes(owner_name, limit=limit)
     master_map = get_products_master_batch(logs_codes)
@@ -408,9 +420,11 @@ def list_products(limit: int = 20, scope: str = "mine", user: dict = Depends(req
 
 
 @router.get("/products/{logs_code}")
-def get_product(logs_code: str) -> dict:
-    """1商品について、マスタ情報 + PO/売上/仕入/サンプルの横断履歴を返す。"""
-    from services.product_service import get_product_detail
+def get_product(logs_code: str, user: dict = Depends(require_login)) -> dict:
+    """1商品について、マスタ情報 + PO/売上/仕入/サンプルの横断履歴、
+    および本人のGmail/Slackから見た関連メッセージを返す。
+    """
+    from services.product_service import get_product_detail, get_related_communications_for_product
 
     try:
         detail = get_product_detail(logs_code)
@@ -419,5 +433,17 @@ def get_product(logs_code: str) -> dict:
 
     if not detail:
         raise HTTPException(status_code=404, detail=f"Product {logs_code} not found")
+
+    try:
+        detail["related_communications"] = get_related_communications_for_product(
+            user_email=user.get("email"),
+            logs_code=logs_code,
+            sample_code=detail["master"].get("Sample_CODE"),
+        )
+    except Exception as e:
+        detail["related_communications"] = {
+            "gmail": {"status": "error", "summary": str(e), "records": []},
+            "slack": {"status": "error", "summary": str(e), "records": []},
+        }
 
     return {"success": True, "product": detail}

@@ -76,6 +76,68 @@ def test_sample_code_sort_key_places_non_numeric_and_none_last():
     assert set(ordered[2:]) == {None, "abc"}
 
 
+def test_get_all_products_returns_sorted_by_sample_code(monkeypatch):
+    columns = ["LOGS_CODE", "Sample_CODE", "商品名", "型番", "仕入先名"]
+    rows = [
+        ("a", "5", "P1", "M1", "S1"),
+        ("b", "100", "P2", "M2", "S2"),
+        ("c", "20", "P3", "M3", "S3"),
+    ]
+    monkeypatch.setattr(product_service, "get_connection", lambda: _FakeConnection(rows, columns))
+
+    result = product_service.get_all_products(limit=10)
+    assert [r["LOGS_CODE"] for r in result] == ["b", "c", "a"]
+
+
+def test_get_all_products_returns_empty_on_query_failure(monkeypatch):
+    def _raise():
+        raise RuntimeError("SUPABASE_DB_URL is not configured")
+
+    monkeypatch.setattr(product_service, "get_connection", _raise)
+    assert product_service.get_all_products() == []
+
+
+def test_get_related_communications_for_product_returns_unavailable_without_user_email():
+    result = product_service.get_related_communications_for_product(None, "5145", "S1")
+    assert result["gmail"]["status"] == "unavailable"
+    assert result["slack"]["status"] == "unavailable"
+
+
+def test_get_related_communications_for_product_searches_both_codes(monkeypatch):
+    from services import gmail_service, slack_service
+
+    captured = {}
+
+    def _fake_gmail(email, query, max_results):
+        captured["gmail_query"] = query
+        return {"status": "ok", "summary": "1件", "records": [{"subject": "見積書"}]}
+
+    def _fake_slack(email, query, max_results):
+        captured["slack_query"] = query
+        return {"status": "ok", "summary": "1件", "records": [{"text": "在庫確認"}]}
+
+    monkeypatch.setattr(gmail_service, "search_messages", _fake_gmail)
+    monkeypatch.setattr(slack_service, "search_messages", _fake_slack)
+
+    result = product_service.get_related_communications_for_product("user@logs.co.jp", "5145", "S1")
+
+    assert captured["gmail_query"] == '"5145" OR "S1"'
+    assert captured["slack_query"] == '"5145" OR "S1"'
+    assert result["gmail"]["records"] == [{"subject": "見積書"}]
+    assert result["slack"]["records"] == [{"text": "在庫確認"}]
+
+
+def test_get_related_communications_for_product_without_sample_code(monkeypatch):
+    from services import gmail_service, slack_service
+
+    captured = {}
+    monkeypatch.setattr(gmail_service, "search_messages", lambda email, query, max_results: captured.setdefault("q", query) or {"status": "ok", "summary": "0件", "records": []})
+    monkeypatch.setattr(slack_service, "search_messages", lambda email, query, max_results: {"status": "ok", "summary": "0件", "records": []})
+
+    product_service.get_related_communications_for_product("user@logs.co.jp", "5145", None)
+    assert captured["q"] == '"5145"'
+
+
 def test_get_related_logs_codes_returns_codes_from_union_query(monkeypatch):
     rows = [("5145",), ("6054",)]
     monkeypatch.setattr(product_service, "get_connection", lambda: _FakeConnection(rows, ["LOGS_CODE"]))

@@ -445,11 +445,28 @@ def test_list_products_sorted_by_sample_code_descending(monkeypatch):
     assert [p["logs_code"] for p in response.json()["products"]] == ["c", "b", "a"]
 
 
+def test_list_products_scope_all_returns_master_products(monkeypatch):
+    from services import product_service
+
+    monkeypatch.setattr(
+        product_service, "get_all_products",
+        lambda limit=20: [{"LOGS_CODE": "5145", "Sample_CODE": "100", "商品名": "Baseball Cap", "型番": "K01", "仕入先名": "1064STUDIO"}],
+    )
+
+    response = _client().get("/api/products?scope=all")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["scope"] == "all"
+    assert body["products"] == [
+        {"logs_code": "5145", "product_name": "Baseball Cap", "model_no": "K01", "supplier_name": "1064STUDIO", "sample_code": "100"}
+    ]
+
+
 def test_get_product_via_http(monkeypatch):
     from services import product_service
 
     fake_detail = {
-        "master": {"LOGS_CODE": "5145", "商品名": "Baseball Cap"},
+        "master": {"LOGS_CODE": "5145", "商品名": "Baseball Cap", "Sample_CODE": "S1"},
         "purchase_orders": [],
         "sales": [],
         "purchases": [],
@@ -457,10 +474,19 @@ def test_get_product_via_http(monkeypatch):
         "status": {"po_issued": False, "sales_recorded": False, "purchase_recorded": False, "sample_requested": False},
     }
     monkeypatch.setattr(product_service, "get_product_detail", lambda logs_code: fake_detail if logs_code == "5145" else None)
+    monkeypatch.setattr(
+        product_service, "get_related_communications_for_product",
+        lambda user_email, logs_code, sample_code: {
+            "gmail": {"status": "ok", "summary": "1件", "records": [{"subject": "test"}]},
+            "slack": {"status": "unavailable", "summary": "Slack未連携です。", "records": []},
+        },
+    )
 
     response = _client().get("/api/products/5145")
     assert response.status_code == 200
-    assert response.json()["product"]["master"]["商品名"] == "Baseball Cap"
+    body = response.json()
+    assert body["product"]["master"]["商品名"] == "Baseball Cap"
+    assert body["product"]["related_communications"]["gmail"]["records"] == [{"subject": "test"}]
 
     missing = _client().get("/api/products/does-not-exist")
     assert missing.status_code == 404

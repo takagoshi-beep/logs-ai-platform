@@ -267,8 +267,8 @@ export async function getProject(projectId: string) {
 /**
  * Get products related to the logged-in user (docs/architecture.md 14.30)
  */
-export async function getProducts(limit: number = 20) {
-  return apiCall(`/api/products?limit=${limit}`);
+export async function getProducts(limit: number = 20, scope: "mine" | "all" = "mine") {
+  return apiCall(`/api/products?limit=${limit}&scope=${scope}`);
 }
 
 /**

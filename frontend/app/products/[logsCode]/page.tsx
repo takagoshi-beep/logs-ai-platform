@@ -52,12 +52,24 @@ interface SampleLine {
   通知状況: string | null;
 }
 
+interface RelatedMessage {
+  status: string;
+  summary: string;
+  records: Array<Record<string, any>>;
+}
+
+interface RelatedCommunications {
+  gmail: RelatedMessage;
+  slack: RelatedMessage;
+}
+
 interface ProductDetail {
   master: Record<string, any>;
   purchase_orders: PurchaseOrderLine[];
   sales: SalesLine[];
   purchases: PurchaseLine[];
   samples: SampleLine[];
+  related_communications?: RelatedCommunications;
   status: {
     po_issued: boolean;
     sales_recorded: boolean;
@@ -208,6 +220,57 @@ export default function ProductDetailPage({ params }: Params) {
                 </p>
               </div>
             ))}
+          </div>
+        </Card>
+      )}
+      {product.related_communications && (
+        <Card>
+          <SectionHeader
+            title="関連するメール・Slack"
+            subtitle="LOGS_CODE・Sample_CODEで、あなた自身のGmail/Slackから検索した結果です。"
+          />
+          <div className="mt-3 grid gap-4 sm:grid-cols-2">
+            <div>
+              <h4 className="mb-2 text-xs font-semibold text-ink">Gmail</h4>
+              {product.related_communications.gmail.status === "ok" && product.related_communications.gmail.records.length > 0 ? (
+                <div className="space-y-2">
+                  {product.related_communications.gmail.records.map((r, idx) => (
+                    <div key={idx} className="rounded-lg border border-slate-200 p-3 text-xs">
+                      <p className="font-medium text-ink">{r.subject}</p>
+                      <p className="text-sub">{r.from} ・ {r.date}</p>
+                      {r.snippet && <p className="mt-1 text-sub">{r.snippet}</p>}
+                    </div>
+                  ))}
+                </div>
+              ) : product.related_communications.gmail.status === "unavailable" ? (
+                <p className="text-xs text-sub">
+                  {product.related_communications.gmail.summary}{" "}
+                  <a href="/settings" className="text-accent hover:underline">設定画面へ</a>
+                </p>
+              ) : (
+                <p className="text-xs text-sub">{product.related_communications.gmail.summary || "関連するメールは見つかりませんでした。"}</p>
+              )}
+            </div>
+            <div>
+              <h4 className="mb-2 text-xs font-semibold text-ink">Slack</h4>
+              {product.related_communications.slack.status === "ok" && product.related_communications.slack.records.length > 0 ? (
+                <div className="space-y-2">
+                  {product.related_communications.slack.records.map((r, idx) => (
+                    <div key={idx} className="rounded-lg border border-slate-200 p-3 text-xs">
+                      <p className="font-medium text-ink">#{r.channel} ・ {r.username}</p>
+                      <p className="mt-1 text-sub">{r.text}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : product.related_communications.slack.status === "unavailable" ? (
+                <p className="text-xs text-sub">
+                  {product.related_communications.slack.summary}{" "}
+                  <a href="/settings" className="text-accent hover:underline">設定画面へ</a>
+                </p>
+              ) : (
+                <p className="text-xs text-sub">{product.related_communications.slack.summary || "関連するメッセージは見つかりませんでした。"}</p>
+              )}
+            </div>
           </div>
         </Card>
       )}

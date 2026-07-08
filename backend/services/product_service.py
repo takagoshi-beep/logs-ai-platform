@@ -76,6 +76,37 @@ def sample_code_sort_key(sample_code: Any) -> tuple:
         return (0, s)
 
 
+def get_all_products(limit: int = 50) -> list[dict[str, Any]]:
+    """商品マスタ全件から、直近登録分をlimit件だけ取得する(scope=all)。
+
+    現時点ではMVP実装: "ID"降順（直近登録順）でlimit件だけ取得してから
+    Sample_CODEでソートし直している。商品マスタの総件数が大きい場合、
+    本当の意味での「Sample_CODE全体で見た上位N件」にはならない
+    （limit件に絞り込んだ後でのソートのため）。ページング等を含めた
+    設計は、Noritsuguの指摘の通り今後の検討課題（2026-07-08）。
+    """
+    try:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    'SELECT "LOGS_CODE", "Sample_CODE", "商品名", "型番", "仕入先名" '
+                    'FROM products ORDER BY "ID" DESC LIMIT %s',
+                    (limit,),
+                )
+                rows = cur.fetchall()
+                columns = [desc[0] for desc in cur.description]
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"Error fetching all products: {e}")
+        return []
+
+    products = _rows_to_dicts(rows, columns)
+    products.sort(key=lambda p: sample_code_sort_key(p.get("Sample_CODE")), reverse=True)
+    return products
+
+
 def get_related_logs_codes(owner_name: str, limit: int = 50) -> list[str]:
     """自分に直接・間接的に関連する商品のLOGS_CODE一覧を、1回のクエリで
     まとめて取得する。owner_nameが空、もしくはDB接続に失敗した場合は
@@ -141,6 +172,50 @@ def get_products_master_batch(logs_codes: list[str]) -> dict[str, dict[str, Any]
         code = str(d.get("LOGS_CODE"))
         result[code] = d
     return result
+
+
+def get_related_communications_for_product(
+    user_email: str | None,
+    logs_code: str,
+    sample_code: str | None,
+    max_results: int = 5,
+) -> dict[str, Any]:
+    """ログイン中の本人のGmail/Slackを、LOGS_CODE・Sample_CODE（SPL品番）
+    をキーに検索する。案件のPO番号のような「担当者メールへのフォール
+    バック」は行わない — LOGS_CODE/Sample_CODEはどちらもそれ自体が
+    十分に一意な識別子であり、案件のような「PO番号は一致しないが
+    担当者は一致する」という精度低下の心配がないため、単純にOR結合で
+    良いと判断した（2026-07-08）。
+
+    未連携の場合はgmail_service/slack_serviceが返す'unavailable'を
+    そのまま伝える（架空の関連メッセージを作らない）。
+    """
+    if not user_email:
+        unavailable = {"status": "unavailable", "summary": "ログインユーザーが特定できません。", "records": []}
+        return {"gmail": unavailable, "slack": unavailable}
+
+    parts = [f'"{logs_code}"'] if logs_code else []
+    if sample_code:
+        parts.append(f'"{sample_code}"')
+    query = " OR ".join(parts)
+
+    if not query:
+        unavailable = {"status": "unavailable", "summary": "検索に使えるキーがありませんでした。", "records": []}
+        return {"gmail": unavailable, "slack": unavailable}
+
+    try:
+        from services import gmail_service
+        gmail_result = gmail_service.search_messages(user_email, query, max_results)
+    except Exception as e:
+        gmail_result = {"status": "error", "summary": f"Gmail検索中にエラーが発生しました: {e}", "records": []}
+
+    try:
+        from services import slack_service
+        slack_result = slack_service.search_messages(user_email, query, max_results)
+    except Exception as e:
+        slack_result = {"status": "error", "summary": f"Slack検索中にエラーが発生しました: {e}", "records": []}
+
+    return {"gmail": gmail_result, "slack": slack_result}
 
 
 def get_product_detail(logs_code: str) -> dict[str, Any] | None:
