@@ -53,6 +53,40 @@ def is_valid_staff_email(email: str) -> bool:
     return False
 
 
+def get_staff_name_by_email(email: str) -> str | None:
+    """ログイン中のメールアドレスから、staffテーブルの社員氏名を特定する。
+
+    purchase_orders等の「営業担当者名」列は氏名の文字列でしか案件を
+    見分けられないため、この関数がその橋渡し役になる。一致する社員が
+    見つからない場合はNoneを返す — 呼び出し側は「本人の案件だけに絞る」
+    処理をスキップする（表記ゆれのある名前を推測で補って絞り込むと、
+    誤って他人の案件を混ぜる/本人の案件を漏らすことになるため、
+    一致しない場合は絞り込み自体を諦めるのが安全側の判断）。
+    """
+    if not email:
+        return None
+    email_lower = email.strip().lower()
+
+    try:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    'SELECT "社員氏名" FROM staff WHERE lower("メールアドレス") = %s LIMIT 1',
+                    (email_lower,),
+                )
+                row = cur.fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"Error looking up staff name by email: {e}")
+        return None
+
+    if not row or not row[0]:
+        return None
+    return str(row[0]).strip()
+
+
 def _admin_emails() -> set[str]:
     raw = os.environ.get("ADMIN_EMAILS", "")
     return {e.strip().lower() for e in raw.split(",") if e.strip()}

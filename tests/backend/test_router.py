@@ -50,7 +50,7 @@ def _mock_project_service(monkeypatch, aggregates: dict[str, ProjectAggregate]):
 
     monkeypatch.setattr(
         ProjectService, "_query_projects_from_db",
-        lambda self, limit=10: [{"id": pid} for pid in aggregates],
+        lambda self, limit=10, owner_name=None: [{"id": pid} for pid in aggregates],
     )
     monkeypatch.setattr(
         ProjectService, "build_project_aggregate",
@@ -244,6 +244,63 @@ def test_list_projects_via_http(monkeypatch):
     body = response.json()
     assert body["count"] == 1
     assert body["projects"][0]["customer"] == "US_LOGS Inc."
+
+
+def test_list_projects_defaults_to_mine_and_passes_owner_name(monkeypatch):
+    """14.28: scope未指定（既定=mine）だと、ログイン中の本人の氏名が
+    _query_projects_from_db へ渡されることを確認する。"""
+    from services import auth_service
+    from services.project_service import ProjectService
+
+    monkeypatch.setattr(auth_service, "get_staff_name_by_email", lambda email: "山田太郎")
+
+    captured = {}
+
+    def _fake_query(self, limit=10, owner_name=None):
+        captured["owner_name"] = owner_name
+        return [{"id": "7722"}]
+
+    monkeypatch.setattr(ProjectService, "_query_projects_from_db", _fake_query)
+    monkeypatch.setattr(ProjectService, "build_project_aggregate", lambda self, project_id: _fake_aggregate(project_id))
+
+    response = _client().get("/api/projects")
+    assert response.status_code == 200
+    assert captured["owner_name"] == "山田太郎"
+    assert response.json()["scope"] == "mine"
+
+
+def test_list_projects_scope_all_ignores_owner_name(monkeypatch):
+    from services import auth_service
+    from services.project_service import ProjectService
+
+    monkeypatch.setattr(auth_service, "get_staff_name_by_email", lambda email: "山田太郎")
+
+    captured = {}
+
+    def _fake_query(self, limit=10, owner_name=None):
+        captured["owner_name"] = owner_name
+        return [{"id": "7722"}]
+
+    monkeypatch.setattr(ProjectService, "_query_projects_from_db", _fake_query)
+    monkeypatch.setattr(ProjectService, "build_project_aggregate", lambda self, project_id: _fake_aggregate(project_id))
+
+    response = _client().get("/api/projects?scope=all")
+    assert response.status_code == 200
+    assert captured["owner_name"] is None
+    assert response.json()["scope"] == "all"
+
+
+def test_list_projects_falls_back_to_all_when_staff_name_unresolved(monkeypatch):
+    """ログイン中のメールが社員マスタと一致しない場合は、絞り込みをせず
+    全件を返す（表記ゆれで誤って絞り込むより安全側に倒す）。"""
+    from services import auth_service
+
+    monkeypatch.setattr(auth_service, "get_staff_name_by_email", lambda email: None)
+    _mock_project_service(monkeypatch, {"7722": _fake_aggregate("7722")})
+
+    response = _client().get("/api/projects")
+    assert response.status_code == 200
+    assert response.json()["scope"] == "all"
 
 
 def test_get_project_via_http(monkeypatch):

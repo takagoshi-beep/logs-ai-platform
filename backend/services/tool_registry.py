@@ -188,6 +188,22 @@ TOOLS: list[dict[str, Any]] = [
             "required": ["query"],
         },
     },
+    {
+        "name": "get_my_projects",
+        "description": (
+            "ログインユーザー自身が「営業担当者」または「営業事務担当者」になっている"
+            "案件（PO）を取得する。「自分の案件」「私が担当している案件」「自分の残タスク」"
+            "のような質問に使う。ログイン中のメールアドレスが社員マスタの氏名と一致しない"
+            "場合は取得できない（'unavailable'）ので、その場合は正直に担当者名を特定できな"
+            "かった旨を伝えること。架空の案件を作ってはいけない。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "取得件数（既定20）"},
+            },
+        },
+    },
 ]
 
 
@@ -293,6 +309,41 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
                 result = slack_service.search_messages(
                     user_email, tool_input.get("query", ""), tool_input.get("max_results", 10)
                 )
+        elif tool_name == "get_my_projects":
+            if not user_email:
+                result = {"status": "unavailable", "summary": "ユーザーが特定できないため取得できません。", "records": []}
+            else:
+                from services.auth_service import get_staff_name_by_email
+                from services.project_service import ProjectService
+
+                owner_name = get_staff_name_by_email(user_email)
+                if not owner_name:
+                    result = {
+                        "status": "unavailable",
+                        "summary": "ログイン中のメールアドレスが社員マスタの氏名と一致しないため、担当案件を特定できません。",
+                        "records": [],
+                    }
+                else:
+                    service = ProjectService()
+                    limit = tool_input.get("limit", 20)
+                    project_ids = service._query_projects_from_db(limit=limit, owner_name=owner_name)
+                    records = []
+                    for proj in project_ids:
+                        agg = service.build_project_aggregate(proj["id"])
+                        if agg:
+                            records.append({
+                                "project_id": agg.project_id,
+                                "po_number": agg.po_number,
+                                "customer": agg.data.customer_name,
+                                "state": agg.state.value,
+                                "priority": agg.priority,
+                                "actions_count": len(agg.actions),
+                            })
+                    result = {
+                        "status": "ok" if records else "unavailable",
+                        "summary": f"{owner_name}さんが担当する案件を{len(records)}件取得しました。" if records else f"{owner_name}さんが担当する案件は見つかりませんでした。",
+                        "records": records,
+                    }
         else:
             result = {"status": "unavailable", "summary": f"未知のツール: {tool_name}", "records": []}
     except Exception as e:

@@ -46,12 +46,26 @@ class ProjectService:
         project_hash = hashlib.md5(str(project_id).encode()).hexdigest()[:8]
         return f"project-{project_hash}"
 
-    def _query_projects_from_db(self, limit: int = 50) -> list[dict[str, Any]]:
-        """Query database to find all project candidates (Purchase Orders)."""
+    def _query_projects_from_db(self, limit: int = 50, owner_name: str | None = None) -> list[dict[str, Any]]:
+        """Query database to find all project candidates (Purchase Orders).
+
+        owner_name: 指定すると、その氏名が「営業担当者名」または
+        「営業事務担当者名」と完全一致する案件だけに絞り込む
+        （ログイン中の本人の案件をデフォルト表示するための絞り込み、
+        docs/architecture.md 14.28）。Noneなら従来通り全件対象。
+        """
         conn = get_connection()
         try:
             with conn.cursor() as cur:
-                cur.execute('SELECT DISTINCT "ID" FROM purchase_orders ORDER BY "ID" DESC LIMIT %s', (limit,))
+                if owner_name:
+                    cur.execute(
+                        'SELECT DISTINCT "ID" FROM purchase_orders '
+                        'WHERE "営業担当者名" = %s OR "営業事務担当者名" = %s '
+                        'ORDER BY "ID" DESC LIMIT %s',
+                        (owner_name, owner_name, limit),
+                    )
+                else:
+                    cur.execute('SELECT DISTINCT "ID" FROM purchase_orders ORDER BY "ID" DESC LIMIT %s', (limit,))
                 rows = cur.fetchall()
             return [{"id": row[0]} for row in rows]
         except Exception as e:

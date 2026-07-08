@@ -31,9 +31,13 @@ def health() -> dict:
 
 
 @router.get("/home")
-def home() -> dict:
+def home(scope: str = "mine", user: dict = Depends(require_login)) -> dict:
     """Get home page payload with today's actions and KPIs."""
-    return get_home_payload_business()
+    owner_name = None
+    if scope == "mine":
+        from services.auth_service import get_staff_name_by_email
+        owner_name = get_staff_name_by_email(user.get("email"))
+    return get_home_payload_business(owner_name=owner_name)
 
 
 @router.post("/chat")
@@ -121,11 +125,23 @@ def events(event: ProductEvent) -> dict:
 # ===== NEW: Project Aggregate Endpoints =====
 
 @router.get("/projects")
-def list_projects(limit: int = 10) -> dict:
-    """Get list of project candidates with summary info."""
+def list_projects(limit: int = 10, scope: str = "mine", user: dict = Depends(require_login)) -> dict:
+    """Get list of project candidates with summary info.
+
+    scope="mine"（既定）: ログイン中の本人が営業担当者・営業事務担当者に
+    なっている案件だけを返す（docs/architecture.md 14.28）。本人の氏名が
+    staffテーブルのメールアドレスと一致しない場合は、絞り込みをせず
+    全件を返す（表記ゆれで誤って絞り込むより、全件見せる方が安全）。
+    scope="all": 常に全件を返す。
+    """
     try:
+        owner_name = None
+        if scope == "mine":
+            from services.auth_service import get_staff_name_by_email
+            owner_name = get_staff_name_by_email(user.get("email"))
+
         service = ProjectService()
-        project_ids = service._query_projects_from_db(limit=limit)
+        project_ids = service._query_projects_from_db(limit=limit, owner_name=owner_name)
 
         projects = []
         for proj_record in project_ids[:limit]:
@@ -148,6 +164,7 @@ def list_projects(limit: int = 10) -> dict:
             "success": True,
             "projects": projects,
             "count": len(projects),
+            "scope": "mine" if owner_name else "all",
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -264,13 +281,22 @@ def get_project_trace(project_id: str) -> dict:
 
 
 @router.get("/today-actions")
-def get_today_actions(limit: int = 20) -> dict:
-    """Get today's actions from all projects, sorted by priority."""
+def get_today_actions(limit: int = 20, scope: str = "mine", user: dict = Depends(require_login)) -> dict:
+    """Get today's actions from all projects, sorted by priority.
+
+    scope="mine"（既定）: ログイン中の本人が担当する案件のタスクだけに
+    絞り込む（docs/architecture.md 14.28）。本人特定できない場合は全件。
+    """
     try:
+        owner_name = None
+        if scope == "mine":
+            from services.auth_service import get_staff_name_by_email
+            owner_name = get_staff_name_by_email(user.get("email"))
+
         service = ProjectService()
 
         # Get multiple projects
-        project_ids = service._query_projects_from_db(limit=50)
+        project_ids = service._query_projects_from_db(limit=50, owner_name=owner_name)
 
         all_actions = []
         for proj_record in project_ids:
@@ -310,6 +336,7 @@ def get_today_actions(limit: int = 20) -> dict:
             "actions": actions,
             "count": len(actions),
             "total": len(all_actions),
+            "scope": "mine" if owner_name else "all",
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -3,7 +3,7 @@
 from services.supabase_client import get_real_kpis
 
 
-def _get_recent_activity() -> dict:
+def _get_recent_activity(owner_name: str | None = None) -> dict:
     """Real substitutes for the home page's "最近開いた案件"/"最近作成した
     資料"/"最近相談した内容" cards, which used to render hardcoded
     mock-data.ts entries (Fanatics OEM / BEAMS Retail / GOLDWIN Campaign)
@@ -15,6 +15,10 @@ def _get_recent_activity() -> dict:
       This uses the same real, Supabase-backed project list `/workspace`
       and `/api/projects` already use (most urgent/recent purchase
       orders), which is the closest honest substitute available.
+      Since 14.28, when owner_name resolves, this list is at least
+      filtered to purchase_orders the user is 営業担当者/営業事務担当者
+      for — a real (not inferred) narrowing, even though "recently
+      opened" itself remains an approximation.
     - "最近作成した資料" only covers `proposal_draft_generation`
       (real `customer`/`purpose` values are captured in that
       Capability's execution `inputs`). It does NOT yet include
@@ -47,7 +51,7 @@ def _get_recent_activity() -> dict:
         from services.project_service import ProjectService
 
         service = ProjectService()
-        for proj_record in service._query_projects_from_db(limit=3):
+        for proj_record in service._query_projects_from_db(limit=3, owner_name=owner_name):
             proj_id = proj_record.get("id")
             if not proj_id:
                 continue
@@ -67,8 +71,13 @@ def _get_recent_activity() -> dict:
     }
 
 
-def get_home_payload() -> dict:
-    """Get home page payload with today's actions and KPIs."""
+def get_home_payload(owner_name: str | None = None) -> dict:
+    """Get home page payload with today's actions and KPIs.
+
+    owner_name: ログイン中の本人の氏名（staffテーブルのメールアドレスから
+    特定できた場合のみ）。指定すると"最近開いた案件"が本人担当分に絞られる
+    （docs/architecture.md 14.28）。特定できない場合は全社共通のまま。
+    """
     kpi_data = get_real_kpis()
 
     if kpi_data.get("success"):
@@ -117,5 +126,5 @@ def get_home_payload() -> dict:
         "today_actions": [],
         "alerts": alerts,
         "data_sources": data_sources,
-        "recent_activity": _get_recent_activity(),
+        "recent_activity": _get_recent_activity(owner_name),
     }

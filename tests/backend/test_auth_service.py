@@ -26,6 +26,9 @@ class _FakeCursor:
     def fetchall(self):
         return self._rows
 
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
 
 class _FakeConnection:
     def __init__(self, rows: list[tuple]):
@@ -152,3 +155,29 @@ def test_authenticate_rejects_non_staff_email_even_with_valid_google_token(monke
     monkeypatch.setattr(auth_service, "is_valid_staff_email", lambda email: False)
 
     assert auth_service.authenticate("fake-credential") is None
+
+
+def test_get_staff_name_by_email_returns_name_for_matching_email(monkeypatch):
+    rows = [("山田太郎",)]
+    monkeypatch.setattr(auth_service, "get_connection", lambda: _FakeConnection(rows))
+
+    assert auth_service.get_staff_name_by_email("yamada@logs.co.jp") == "山田太郎"
+
+
+def test_get_staff_name_by_email_returns_none_when_no_match(monkeypatch):
+    monkeypatch.setattr(auth_service, "get_connection", lambda: _FakeConnection([]))
+
+    assert auth_service.get_staff_name_by_email("unknown@logs.co.jp") is None
+
+
+def test_get_staff_name_by_email_returns_none_for_blank_email():
+    assert auth_service.get_staff_name_by_email("") is None
+
+
+def test_get_staff_name_by_email_returns_none_on_query_failure(monkeypatch):
+    def _raise():
+        raise RuntimeError("SUPABASE_DB_URL is not configured")
+
+    monkeypatch.setattr(auth_service, "get_connection", _raise)
+
+    assert auth_service.get_staff_name_by_email("someone@logs.co.jp") is None
