@@ -235,6 +235,7 @@ def get_related_communications_for_product(
     未連携の場合はgmail_service/slack_serviceが返す'unavailable'を
     そのまま伝える（架空の関連メッセージを作らない）。
     """
+    print(f"[related-comms debug] called with user_email={user_email!r} logs_code={logs_code!r} sample_code={sample_code!r}")
     if not user_email:
         unavailable = {"status": "unavailable", "summary": "ログインユーザーが特定できません。", "records": []}
         return {"gmail": unavailable, "slack": unavailable}
@@ -246,6 +247,7 @@ def get_related_communications_for_product(
     query = " OR ".join(parts)
 
     if not query:
+        print("[related-comms debug] query is empty, returning unavailable without calling gmail/slack")
         unavailable = {"status": "unavailable", "summary": "検索に使えるキー（LOGS_CODE・Sample_CODE）がありませんでした。", "records": []}
         return {"gmail": unavailable, "slack": unavailable}
 
