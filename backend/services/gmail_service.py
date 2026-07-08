@@ -128,9 +128,12 @@ def _refresh_access_token(refresh_token: str) -> str | None:
 
 def _get_access_token(email: str) -> str | None:
     refresh_token = get_refresh_token(email, PROVIDER)
+    print(f"[gmail debug] get_refresh_token for {email!r} -> {'found' if refresh_token else 'NOT FOUND'}")
     if not refresh_token:
         return None
-    return _refresh_access_token(refresh_token)
+    access_token = _refresh_access_token(refresh_token)
+    print(f"[gmail debug] refresh_access_token -> {'ok' if access_token else 'FAILED'}")
+    return access_token
 
 
 def connect_status(email: str) -> bool:

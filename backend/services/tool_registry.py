@@ -253,6 +253,7 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
                 "summary": f"{len(rows)}件取得",
             }
         elif tool_name == "search_gmail":
+            print(f"[gmail debug] search_gmail called with user_email={user_email!r}")
             if not user_email:
                 result = {"status": "unavailable", "summary": "ユーザーが特定できないため、Gmail検索はできません。", "records": []}
             else:
@@ -260,7 +261,9 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
                 result = gmail_service.search_messages(
                     user_email, tool_input.get("query", ""), tool_input.get("max_results", 10)
                 )
+            print(f"[gmail debug] search_gmail result status={result.get('status')!r} summary={result.get('summary')!r}")
         elif tool_name == "get_gmail_message":
+            print(f"[gmail debug] get_gmail_message called with user_email={user_email!r}")
             if not user_email:
                 result = {"status": "unavailable", "summary": "ユーザーが特定できないため、メール取得はできません。", "records": []}
             else:

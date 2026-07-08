@@ -52,6 +52,7 @@ def chat(req: ChatRequest, user: dict = Depends(require_login)) -> dict:
     等「本人自身のデータ」を扱うツールがどのユーザーのものを取得すべきか
     判断するため（14.27, Gmail/Slack連携）。
     """
+    print(f"[gmail debug] /api/chat resolved session user={user!r}")
     return chat_agent.answer(req.message, req.session_id, user_email=user.get("email"))
 
 
