@@ -227,6 +227,7 @@ def get_related_communications_for_product(
     if sample_code:
         parts.append(f'"{sample_code}"')
     query = " OR ".join(parts)
+    print(f"[product debug] logs_code={logs_code!r} sample_code={sample_code!r} query={query!r}")
 
     if not query:
         unavailable = {"status": "unavailable", "summary": "検索に使えるキー（LOGS_CODE・Sample_CODE）がありませんでした。", "records": []}
