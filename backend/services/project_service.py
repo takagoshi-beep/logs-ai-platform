@@ -74,48 +74,36 @@ class ProjectService:
         finally:
             conn.close()
 
-    def _build_project_data(self, project_id: str) -> ProjectData | None:
-        """Build ProjectData by querying purchase_orders (real Supabase public schema)."""
+    _PO_SELECT_COLUMNS = (
+        '"ID", "PO_No", "仕入先ID", "仕入先名", "顧客ID", "顧客名", '
+        '"PO発行日", "顧客納品日", "納品日", '
+        '"合計発注金額", "合計売上原価", "合計売上金額"'
+    )
 
-        def parse_date(date_val: Any) -> datetime | None:
-            if not date_val:
-                return None
-            if isinstance(date_val, datetime):
-                return date_val
-            try:
-                return datetime.fromisoformat(str(date_val).replace("Z", "+00:00"))
-            except Exception:
-                return None
-
-        conn = get_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    'SELECT "PO_No", "仕入先ID", "仕入先名", "顧客ID", "顧客名", '
-                    '"PO発行日", "顧客納品日", "納品日", '
-                    '"合計発注金額", "合計売上原価", "合計売上金額" '
-                    'FROM purchase_orders WHERE "ID" = %s',
-                    (project_id,),
-                )
-                row = cur.fetchone()
-                if not row:
-                    return None
-                columns = [desc[0] for desc in cur.description]
-                po_dict = dict(zip(columns, row))
-        except Exception as e:
-            print(f"Error building project data: {e}")
+    @staticmethod
+    def _parse_date(date_val: Any) -> datetime | None:
+        if not date_val:
             return None
-        finally:
-            conn.close()
+        if isinstance(date_val, datetime):
+            return date_val
+        try:
+            return datetime.fromisoformat(str(date_val).replace("Z", "+00:00"))
+        except Exception:
+            return None
 
+    def _po_dict_to_project_data(self, project_id: str, po_dict: dict[str, Any]) -> ProjectData | None:
+        """Convert an already-fetched purchase_orders row (as a dict) into
+        ProjectData. Shared by both the single-project and batch code paths
+        so the parsing logic only lives in one place.
+        """
         try:
             po_number = po_dict.get("PO_No", "") or ""
             supplier_id = str(po_dict.get("仕入先ID", "") or "unknown")
             supplier_name = po_dict.get("仕入先名", "") or ""
             customer_id = str(po_dict.get("顧客ID", "") or "unknown")
             customer_name = po_dict.get("顧客名", "") or ""
-            po_created = parse_date(po_dict.get("PO発行日")) or datetime.now()
-            po_required_delivery = parse_date(po_dict.get("顧客納品日")) or (datetime.now() + timedelta(days=30))
+            po_created = self._parse_date(po_dict.get("PO発行日")) or datetime.now()
+            po_required_delivery = self._parse_date(po_dict.get("顧客納品日")) or (datetime.now() + timedelta(days=30))
 
             project_data = ProjectData(
                 project_id=project_id,
@@ -133,7 +121,7 @@ class ProjectService:
                 customer_email=None,
                 customer_address=None,
                 po_required_delivery_date_alt=None,
-                actual_delivery_date=parse_date(po_dict.get("納品日")),
+                actual_delivery_date=self._parse_date(po_dict.get("納品日")),
                 invoice_date=None,
                 payment_due_date=None,
                 actual_payment_date=None,
@@ -154,6 +142,68 @@ class ProjectService:
         except Exception as e:
             print(f"Error building project data: {e}")
             return None
+
+    def _build_project_data(self, project_id: str) -> ProjectData | None:
+        """Build ProjectData for a single project by querying purchase_orders
+        (real Supabase public schema). For fetching many projects at once
+        (list views), use `_build_project_data_batch` instead — each call to
+        this method opens its own DB connection, which is fine for a single
+        lookup but far too slow in a loop (docs/architecture.md 14.28).
+        """
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f'SELECT {self._PO_SELECT_COLUMNS} FROM purchase_orders WHERE "ID" = %s',
+                    (project_id,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                columns = [desc[0] for desc in cur.description]
+                po_dict = dict(zip(columns, row))
+        except Exception as e:
+            print(f"Error building project data: {e}")
+            return None
+        finally:
+            conn.close()
+
+        return self._po_dict_to_project_data(project_id, po_dict)
+
+    def _build_project_data_batch(self, project_ids: list[str]) -> dict[str, ProjectData]:
+        """Fetch ProjectData for many projects in a single DB round-trip
+        (one connection, one query with `WHERE "ID" = ANY(%s)`), instead of
+        one connection per project. Added 2026-07-08 (docs/architecture.md
+        14.28) after 案件一覧/今日のタスク were measured taking 20〜80秒 —
+        almost entirely connection-open overhead multiplied by project
+        count, not query cost itself.
+        """
+        if not project_ids:
+            return {}
+
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f'SELECT {self._PO_SELECT_COLUMNS} FROM purchase_orders WHERE "ID" = ANY(%s)',
+                    (list(project_ids),),
+                )
+                rows = cur.fetchall()
+                columns = [desc[0] for desc in cur.description]
+        except Exception as e:
+            print(f"Error batch-building project data: {e}")
+            return {}
+        finally:
+            conn.close()
+
+        result: dict[str, ProjectData] = {}
+        for row in rows:
+            po_dict = dict(zip(columns, row))
+            project_id = str(po_dict.get("ID"))
+            data = self._po_dict_to_project_data(project_id, po_dict)
+            if data:
+                result[project_id] = data
+        return result
 
     def _generate_project_events(self, data: ProjectData, trace_id: str) -> ProjectEvents:
         """Generate business events from project data."""
@@ -765,7 +815,18 @@ class ProjectService:
         data = self._build_project_data(project_id)
         if not data:
             return None
+        return self._build_aggregate_from_data(project_id, data)
 
+    def _build_aggregate_from_data(
+        self, project_id: str, data: ProjectData, save_trace_flag: bool = True
+    ) -> ProjectAggregate:
+        """Run the (pure-Python, no DB access) event/goal/decision/action/
+        health/risk calculations for an already-fetched ProjectData and
+        assemble a ProjectAggregate. Split out from `_build_project_aggregate_impl`
+        so `build_project_aggregates_bulk` can reuse it against data that was
+        fetched in one batched query, instead of one query per project
+        (docs/architecture.md 14.28).
+        """
         trace_id = self._generate_trace_id(project_id)
 
         events = self._generate_project_events(data, trace_id)
@@ -798,13 +859,37 @@ class ProjectService:
             recommended_focus=recommended_focus,
         )
 
-        try:
-            save_trace(trace_id, aggregate.to_dict())
-        except Exception:
-            # Trace persistence must never block the actual response.
-            pass
+        if save_trace_flag:
+            try:
+                save_trace(trace_id, aggregate.to_dict())
+            except Exception:
+                # Trace persistence must never block the actual response.
+                pass
 
         return aggregate
+
+    def build_project_aggregates_bulk(self, project_ids: list[str]) -> list[ProjectAggregate]:
+        """Build ProjectAggregates for many projects at once, using exactly
+        one DB connection/query total (via `_build_project_data_batch`)
+        instead of one per project. This is the method list-style call
+        sites (/api/projects, /api/today-actions, home's recent projects,
+        get_my_projects) should use — `build_project_aggregate()` in a loop
+        was measured taking 20〜80秒 for 20〜50 projects, almost entirely
+        connection-open overhead (docs/architecture.md 14.28). Trace/
+        Capability bookkeeping is always skipped here, matching
+        record_capability=False's behavior, since this is inherently a
+        bulk/listing code path.
+
+        Returns aggregates in the same order as `project_ids`, skipping any
+        id that no longer exists in purchase_orders.
+        """
+        data_map = self._build_project_data_batch(project_ids)
+        aggregates = []
+        for project_id in project_ids:
+            data = data_map.get(str(project_id))
+            if data:
+                aggregates.append(self._build_aggregate_from_data(str(project_id), data, save_trace_flag=False))
+        return aggregates
         
 
     def build_project_aggregates(self, limit: int = 50) -> list[ProjectAggregate]:

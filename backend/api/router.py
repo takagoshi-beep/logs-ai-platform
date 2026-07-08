@@ -142,23 +142,20 @@ def list_projects(limit: int = 10, scope: str = "mine", user: dict = Depends(req
 
         service = ProjectService()
         project_ids = service._query_projects_from_db(limit=limit, owner_name=owner_name)
+        ids = [r["id"] for r in project_ids[:limit] if r.get("id")]
 
         projects = []
-        for proj_record in project_ids[:limit]:
-            proj_id = proj_record.get("id")
-            if proj_id:
-                agg = service.build_project_aggregate(proj_id, record_capability=False)
-                if agg:
-                    projects.append({
-                        "project_id": agg.project_id,
-                        "project_name": agg.po_number,
-                        "customer": agg.data.customer_name,
-                        "state": agg.state.value,
-                        "priority": agg.priority,
-                        "actions_count": len(agg.actions),
-                        "events_count": agg.events.event_count,
-                        "trace_id": agg.trace_id,
-                    })
+        for agg in service.build_project_aggregates_bulk(ids):
+            projects.append({
+                "project_id": agg.project_id,
+                "project_name": agg.po_number,
+                "customer": agg.data.customer_name,
+                "state": agg.state.value,
+                "priority": agg.priority,
+                "actions_count": len(agg.actions),
+                "events_count": agg.events.event_count,
+                "trace_id": agg.trace_id,
+            })
 
         return {
             "success": True,
@@ -297,30 +294,27 @@ def get_today_actions(limit: int = 20, scope: str = "mine", user: dict = Depends
 
         # Get multiple projects
         project_ids = service._query_projects_from_db(limit=50, owner_name=owner_name)
+        ids = [r["id"] for r in project_ids if r.get("id")]
 
         all_actions = []
-        for proj_record in project_ids:
-            proj_id = proj_record.get("id")
-            if proj_id:
-                agg = service.build_project_aggregate(proj_id, record_capability=False)
-                if agg:
-                    for action in agg.actions:
-                        all_actions.append({
-                            "action_id": action.action_id,
-                            "project_id": agg.project_id,
-                            "project_name": agg.po_number,
-                            "customer": agg.data.customer_name,
-                            "title": action.title,
-                            "description": action.description,
-                            "priority": action.priority,
-                            "reason": action.condition,
-                            "related_event": [e.event_type.value for e in agg.events.events if e.after_state == action.related_state][-1:] if agg.events.events else None,
-                            "related_state": action.related_state.value,
-                            "related_goal": action.related_goal.value if action.related_goal else None,
-                            "trace_id": agg.trace_id,
-                            "due_date": action.due_date.isoformat() if action.due_date else None,
-                            "confidence": action.confidence,
-                        })
+        for agg in service.build_project_aggregates_bulk(ids):
+            for action in agg.actions:
+                all_actions.append({
+                    "action_id": action.action_id,
+                    "project_id": agg.project_id,
+                    "project_name": agg.po_number,
+                    "customer": agg.data.customer_name,
+                    "title": action.title,
+                    "description": action.description,
+                    "priority": action.priority,
+                    "reason": action.condition,
+                    "related_event": [e.event_type.value for e in agg.events.events if e.after_state == action.related_state][-1:] if agg.events.events else None,
+                    "related_state": action.related_state.value,
+                    "related_goal": action.related_goal.value if action.related_goal else None,
+                    "trace_id": agg.trace_id,
+                    "due_date": action.due_date.isoformat() if action.due_date else None,
+                    "confidence": action.confidence,
+                })
 
         # Sort by priority (high first) then confidence
         priority_order = {"high": 0, "medium": 1, "low": 2}

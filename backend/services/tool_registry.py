@@ -327,18 +327,17 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
                     service = ProjectService()
                     limit = tool_input.get("limit", 20)
                     project_ids = service._query_projects_from_db(limit=limit, owner_name=owner_name)
+                    ids = [p["id"] for p in project_ids if p.get("id")]
                     records = []
-                    for proj in project_ids:
-                        agg = service.build_project_aggregate(proj["id"], record_capability=False)
-                        if agg:
-                            records.append({
-                                "project_id": agg.project_id,
-                                "po_number": agg.po_number,
-                                "customer": agg.data.customer_name,
-                                "state": agg.state.value,
-                                "priority": agg.priority,
-                                "actions_count": len(agg.actions),
-                            })
+                    for agg in service.build_project_aggregates_bulk(ids):
+                        records.append({
+                            "project_id": agg.project_id,
+                            "po_number": agg.po_number,
+                            "customer": agg.data.customer_name,
+                            "state": agg.state.value,
+                            "priority": agg.priority,
+                            "actions_count": len(agg.actions),
+                        })
                     result = {
                         "status": "ok" if records else "unavailable",
                         "summary": f"{owner_name}さんが担当する案件を{len(records)}件取得しました。" if records else f"{owner_name}さんが担当する案件は見つかりませんでした。",

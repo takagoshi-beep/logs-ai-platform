@@ -56,6 +56,10 @@ def _mock_project_service(monkeypatch, aggregates: dict[str, ProjectAggregate]):
         ProjectService, "build_project_aggregate",
         lambda self, project_id, record_capability=True: aggregates.get(project_id),
     )
+    monkeypatch.setattr(
+        ProjectService, "build_project_aggregates_bulk",
+        lambda self, project_ids: [aggregates[pid] for pid in project_ids if pid in aggregates],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +265,7 @@ def test_list_projects_defaults_to_mine_and_passes_owner_name(monkeypatch):
         return [{"id": "7722"}]
 
     monkeypatch.setattr(ProjectService, "_query_projects_from_db", _fake_query)
-    monkeypatch.setattr(ProjectService, "build_project_aggregate", lambda self, project_id, record_capability=True: _fake_aggregate(project_id))
+    monkeypatch.setattr(ProjectService, "build_project_aggregates_bulk", lambda self, project_ids: [_fake_aggregate(pid) for pid in project_ids])
 
     response = _client().get("/api/projects")
     assert response.status_code == 200
@@ -282,7 +286,7 @@ def test_list_projects_scope_all_ignores_owner_name(monkeypatch):
         return [{"id": "7722"}]
 
     monkeypatch.setattr(ProjectService, "_query_projects_from_db", _fake_query)
-    monkeypatch.setattr(ProjectService, "build_project_aggregate", lambda self, project_id, record_capability=True: _fake_aggregate(project_id))
+    monkeypatch.setattr(ProjectService, "build_project_aggregates_bulk", lambda self, project_ids: [_fake_aggregate(pid) for pid in project_ids])
 
     response = _client().get("/api/projects?scope=all")
     assert response.status_code == 200
@@ -320,7 +324,10 @@ def test_list_projects_skips_capability_bookkeeping_for_speed(monkeypatch):
         ProjectService, "_query_projects_from_db",
         lambda self, limit=10, owner_name=None: [{"id": "7722"}],
     )
-    monkeypatch.setattr(ProjectService, "_build_project_aggregate_impl", lambda self, project_id: _fake_aggregate(project_id))
+    monkeypatch.setattr(
+        ProjectService, "_build_project_data_batch",
+        lambda self, project_ids: {pid: _fake_aggregate(pid).data for pid in project_ids},
+    )
 
     response = _client().get("/api/projects")
     assert response.status_code == 200

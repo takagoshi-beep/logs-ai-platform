@@ -51,16 +51,12 @@ def _get_recent_activity(owner_name: str | None = None) -> dict:
         from services.project_service import ProjectService
 
         service = ProjectService()
-        for proj_record in service._query_projects_from_db(limit=3, owner_name=owner_name):
-            proj_id = proj_record.get("id")
-            if not proj_id:
-                continue
-            agg = service.build_project_aggregate(proj_id, record_capability=False)
-            if agg:
-                recent_projects.append({
-                    "project_id": agg.project_id,
-                    "name": f"{agg.data.customer_name} / {agg.po_number}",
-                })
+        ids = [r["id"] for r in service._query_projects_from_db(limit=3, owner_name=owner_name) if r.get("id")]
+        for agg in service.build_project_aggregates_bulk(ids):
+            recent_projects.append({
+                "project_id": agg.project_id,
+                "name": f"{agg.data.customer_name} / {agg.po_number}",
+            })
     except Exception:
         pass
 
