@@ -168,7 +168,7 @@ def list_projects(limit: int = 10, scope: str = "mine", user: dict = Depends(req
 
 
 @router.get("/projects/{project_id}")
-def get_project(project_id: str) -> dict:
+def get_project(project_id: str, user: dict = Depends(require_login)) -> dict:
     """Get complete ProjectAggregate for a single project."""
     try:
         service = ProjectService()
@@ -191,6 +191,24 @@ def get_project(project_id: str) -> dict:
             result["production"] = get_production_mass_status(agg.po_number)
         except Exception:
             result["production"] = []
+
+        # ログイン中の本人のGmail/Slackから、この案件に関連しそうな
+        # メッセージを検索する（PO番号・顧客担当者メールアドレス・
+        # 仕入先名で突合、docs/architecture.md 14.29）。未連携時は
+        # gmail_service/slack_serviceが返す'unavailable'をそのまま返す。
+        try:
+            from services.project_relations import get_related_communications
+            result["related_communications"] = get_related_communications(
+                user_email=user.get("email"),
+                po_number=agg.po_number,
+                customer_id=agg.data.customer_id,
+                supplier_name=agg.data.supplier_name,
+            )
+        except Exception as e:
+            result["related_communications"] = {
+                "gmail": {"status": "error", "summary": str(e), "records": []},
+                "slack": {"status": "error", "summary": str(e), "records": []},
+            }
 
         return result
     except HTTPException:

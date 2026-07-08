@@ -42,6 +42,17 @@ interface ProductionStatus {
   project_name: string | null;
 }
 
+interface RelatedMessage {
+  status: string;
+  summary: string;
+  records: Array<Record<string, any>>;
+}
+
+interface RelatedCommunications {
+  gmail: RelatedMessage;
+  slack: RelatedMessage;
+}
+
 interface ProjectDetail {
   project_id: string;
   po_number: string;
@@ -89,6 +100,7 @@ function fmtYen(v: number | null | undefined): string {
 export default function WorkspacePage({ params }: Params) {
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [production, setProduction] = useState<ProductionStatus[]>([]);
+  const [related, setRelated] = useState<RelatedCommunications | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -101,6 +113,7 @@ export default function WorkspacePage({ params }: Params) {
       }
       setProject(data?.project ?? null);
       setProduction(data?.production ?? []);
+      setRelated(data?.related_communications ?? null);
     });
   }, [params.projectId]);
 
@@ -231,6 +244,57 @@ export default function WorkspacePage({ params }: Params) {
                 </div>
               </div>
             ))}
+          </div>
+        </Card>
+      )}
+      {related && (
+        <Card>
+          <SectionHeader
+            title="関連するメール・Slack"
+            subtitle="PO番号・顧客担当者のメールアドレスで、あなた自身のGmail/Slackから検索した結果です。"
+          />
+          <div className="mt-3 grid gap-4 sm:grid-cols-2">
+            <div>
+              <h4 className="mb-2 text-xs font-semibold text-ink">Gmail</h4>
+              {related.gmail.status === "ok" && related.gmail.records.length > 0 ? (
+                <div className="space-y-2">
+                  {related.gmail.records.map((r, idx) => (
+                    <div key={idx} className="rounded-lg border border-slate-200 p-3 text-xs">
+                      <p className="font-medium text-ink">{r.subject}</p>
+                      <p className="text-sub">{r.from} ・ {r.date}</p>
+                      {r.snippet && <p className="mt-1 text-sub">{r.snippet}</p>}
+                    </div>
+                  ))}
+                </div>
+              ) : related.gmail.status === "unavailable" ? (
+                <p className="text-xs text-sub">
+                  {related.gmail.summary}{" "}
+                  <a href="/settings" className="text-accent hover:underline">設定画面へ</a>
+                </p>
+              ) : (
+                <p className="text-xs text-sub">{related.gmail.summary || "関連するメールは見つかりませんでした。"}</p>
+              )}
+            </div>
+            <div>
+              <h4 className="mb-2 text-xs font-semibold text-ink">Slack</h4>
+              {related.slack.status === "ok" && related.slack.records.length > 0 ? (
+                <div className="space-y-2">
+                  {related.slack.records.map((r, idx) => (
+                    <div key={idx} className="rounded-lg border border-slate-200 p-3 text-xs">
+                      <p className="font-medium text-ink">#{r.channel} ・ {r.username}</p>
+                      <p className="mt-1 text-sub">{r.text}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : related.slack.status === "unavailable" ? (
+                <p className="text-xs text-sub">
+                  {related.slack.summary}{" "}
+                  <a href="/settings" className="text-accent hover:underline">設定画面へ</a>
+                </p>
+              ) : (
+                <p className="text-xs text-sub">{related.slack.summary || "関連するメッセージは見つかりませんでした。"}</p>
+              )}
+            </div>
           </div>
         </Card>
       )}

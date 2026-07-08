@@ -32,16 +32,20 @@ def save_token(email: str, provider: str, refresh_token: str, scope: str) -> Non
 
 
 def get_refresh_token(email: str, provider: str) -> str | None:
-    conn = get_connection()
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT refresh_token_encrypted FROM user_oauth_tokens WHERE email = %s AND provider = %s",
-                (email.strip().lower(), provider),
-            )
-            row = cur.fetchone()
-    finally:
-        conn.close()
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT refresh_token_encrypted FROM user_oauth_tokens WHERE email = %s AND provider = %s",
+                    (email.strip().lower(), provider),
+                )
+                row = cur.fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"Error looking up OAuth token ({provider}): {e}")
+        return None
     if not row:
         return None
     return decrypt(row[0])

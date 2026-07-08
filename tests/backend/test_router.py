@@ -346,6 +346,10 @@ def test_get_project_via_http(monkeypatch):
     assert response.status_code == 200
     assert response.json()["project"]["data"]["customer_name"] == "US_LOGS Inc."
     assert response.json()["production"] == []  # DB未接続時は空リストに落ちる（クラッシュしない）
+    # 14.29: Gmail/Slack未連携・DB未接続でもクラッシュせず'unavailable'に落ちる
+    related = response.json()["related_communications"]
+    assert related["gmail"]["status"] == "unavailable"
+    assert related["slack"]["status"] == "unavailable"
 
     missing = _client().get("/api/projects/does-not-exist")
     assert missing.status_code == 404
