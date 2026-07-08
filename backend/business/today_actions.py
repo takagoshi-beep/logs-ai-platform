@@ -55,7 +55,7 @@ def _get_recent_activity(owner_name: str | None = None) -> dict:
             proj_id = proj_record.get("id")
             if not proj_id:
                 continue
-            agg = service.build_project_aggregate(proj_id)
+            agg = service.build_project_aggregate(proj_id, record_capability=False)
             if agg:
                 recent_projects.append({
                     "project_id": agg.project_id,

@@ -703,14 +703,26 @@ class ProjectService:
 
         return FocusRecommendationRule.recommend(health_score, risk_score, opportunity_score)
 
-    def build_project_aggregate(self, project_id: str) -> ProjectAggregate | None:
+    def build_project_aggregate(self, project_id: str, record_capability: bool = True) -> ProjectAggregate | None:
         """Build complete ProjectAggregate for a single project.
 
         This is recorded as a Blueprint Capability execution (Principle 2:
         Capability Driven) via the shared registry in
         `services.capability_instance`, so it is visible/measurable through
         the `/capabilities` API — not just an ad-hoc function call.
+
+        record_capability: 案件を1件だけ詳しく見る場面（/api/projects/{id}
+        等）ではTrue（既定）のまま、Capability実行履歴・トレースへの書き込み
+        を行う。一方、案件一覧・今日のタスクのように多数の案件をまとめて
+        処理する場面では、案件1件ごとにSupabaseへの同期書き込みが複数回
+        発生し体感速度を大きく損なうため、呼び出し側からFalseを渡して
+        この記録処理自体をスキップできるようにしている
+        （docs/architecture.md 14.28、実測で"今日のタスク"が数分かかる
+        原因の大半がここだった）。
         """
+        if not record_capability:
+            return self._build_project_aggregate_impl(project_id)
+
         ensure_registered(PROJECT_AGGREGATE_CAPABILITY)
         trace_id = self._generate_trace_id(project_id)
         execution = capability_registry.execute_capability(
@@ -745,7 +757,11 @@ class ProjectService:
         return aggregate
 
     def _build_project_aggregate_impl(self, project_id: str) -> ProjectAggregate | None:
-        """Build complete ProjectAggregate for a single project (unwrapped)."""
+        """Build complete ProjectAggregate for a single project (unwrapped).
+
+        record_capability=Falseで呼ばれた場合はtrace保存もスキップする
+        （save_trace自体もSupabase書き込みのため）。
+        """
         data = self._build_project_data(project_id)
         if not data:
             return None

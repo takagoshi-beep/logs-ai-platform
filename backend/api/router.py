@@ -147,7 +147,7 @@ def list_projects(limit: int = 10, scope: str = "mine", user: dict = Depends(req
         for proj_record in project_ids[:limit]:
             proj_id = proj_record.get("id")
             if proj_id:
-                agg = service.build_project_aggregate(proj_id)
+                agg = service.build_project_aggregate(proj_id, record_capability=False)
                 if agg:
                     projects.append({
                         "project_id": agg.project_id,
@@ -302,7 +302,7 @@ def get_today_actions(limit: int = 20, scope: str = "mine", user: dict = Depends
         for proj_record in project_ids:
             proj_id = proj_record.get("id")
             if proj_id:
-                agg = service.build_project_aggregate(proj_id)
+                agg = service.build_project_aggregate(proj_id, record_capability=False)
                 if agg:
                     for action in agg.actions:
                         all_actions.append({

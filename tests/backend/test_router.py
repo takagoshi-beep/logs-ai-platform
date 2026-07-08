@@ -54,7 +54,7 @@ def _mock_project_service(monkeypatch, aggregates: dict[str, ProjectAggregate]):
     )
     monkeypatch.setattr(
         ProjectService, "build_project_aggregate",
-        lambda self, project_id: aggregates.get(project_id),
+        lambda self, project_id, record_capability=True: aggregates.get(project_id),
     )
 
 
@@ -261,7 +261,7 @@ def test_list_projects_defaults_to_mine_and_passes_owner_name(monkeypatch):
         return [{"id": "7722"}]
 
     monkeypatch.setattr(ProjectService, "_query_projects_from_db", _fake_query)
-    monkeypatch.setattr(ProjectService, "build_project_aggregate", lambda self, project_id: _fake_aggregate(project_id))
+    monkeypatch.setattr(ProjectService, "build_project_aggregate", lambda self, project_id, record_capability=True: _fake_aggregate(project_id))
 
     response = _client().get("/api/projects")
     assert response.status_code == 200
@@ -282,7 +282,7 @@ def test_list_projects_scope_all_ignores_owner_name(monkeypatch):
         return [{"id": "7722"}]
 
     monkeypatch.setattr(ProjectService, "_query_projects_from_db", _fake_query)
-    monkeypatch.setattr(ProjectService, "build_project_aggregate", lambda self, project_id: _fake_aggregate(project_id))
+    monkeypatch.setattr(ProjectService, "build_project_aggregate", lambda self, project_id, record_capability=True: _fake_aggregate(project_id))
 
     response = _client().get("/api/projects?scope=all")
     assert response.status_code == 200
@@ -301,6 +301,30 @@ def test_list_projects_falls_back_to_all_when_staff_name_unresolved(monkeypatch)
     response = _client().get("/api/projects")
     assert response.status_code == 200
     assert response.json()["scope"] == "all"
+
+
+def test_list_projects_skips_capability_bookkeeping_for_speed(monkeypatch):
+    """14.28: 一覧系の呼び出し（/api/projects）はrecord_capability=Falseで
+    build_project_aggregateを呼ぶため、Capability実行履歴への書き込み
+    （Supabaseへの同期書き込み、案件が多いと体感速度に直結）が一切発生
+    しないことを確認する。呼ばれてしまっていたら例外で即座に分かるように、
+    execute_capability自体を「呼ばれたら失敗する」スタブに差し替える。"""
+    from services import capability_instance
+    from services.project_service import ProjectService
+
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError("execute_capability should not be called for bulk listing")
+
+    monkeypatch.setattr(capability_instance.registry, "execute_capability", _fail_if_called)
+    monkeypatch.setattr(
+        ProjectService, "_query_projects_from_db",
+        lambda self, limit=10, owner_name=None: [{"id": "7722"}],
+    )
+    monkeypatch.setattr(ProjectService, "_build_project_aggregate_impl", lambda self, project_id: _fake_aggregate(project_id))
+
+    response = _client().get("/api/projects")
+    assert response.status_code == 200
+    assert response.json()["count"] == 1
 
 
 def test_get_project_via_http(monkeypatch):

@@ -329,7 +329,7 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
                     project_ids = service._query_projects_from_db(limit=limit, owner_name=owner_name)
                     records = []
                     for proj in project_ids:
-                        agg = service.build_project_aggregate(proj["id"])
+                        agg = service.build_project_aggregate(proj["id"], record_capability=False)
                         if agg:
                             records.append({
                                 "project_id": agg.project_id,
