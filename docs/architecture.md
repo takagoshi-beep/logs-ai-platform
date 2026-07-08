@@ -2388,6 +2388,37 @@ something none of this planning caught (matching the pattern of nearly
 every other feature this session — real bugs tend to surface on first
 real use, not in planning or tests).
 
+## 14.26 Real bug found on first Render deploy attempt: `requirements.txt`'s
+pinned `pydantic` version conflicted with `supabase`'s own dependency
+(2026-07-08)
+
+First real Render deployment attempt (backend service) failed at the
+build step — `pip`'s dependency resolver reported a genuine conflict:
+`requirements.txt` pinned `pydantic==2.8.2` (unchanged since before
+`supabase` was ever added), but `supabase`'s own `realtime==2.31.0`
+dependency requires `pydantic>=2.11.7`. This exact tension was already
+visible — and silently self-resolved — back in 14.23: when
+`pip install supabase` was first run locally, pip auto-upgraded
+`pydantic` from 2.8.2 to 2.13.4 to satisfy that same constraint, and
+this was noted in passing at the time ("念のため`requirements.txt`の
+バージョン指定と実際の環境がズレてしまっている") but not corrected in
+`requirements.txt` itself. Locally this was invisible (the already-
+installed, newer `pydantic` kept working fine); Render's fresh `pip
+install -r requirements.txt` has no such leftover state, so it hit the
+declared, stale constraint head-on and failed outright rather than
+silently drifting like the local environment did.
+
+Fixed by updating `requirements.txt`'s pin to `pydantic==2.13.4` —
+the exact version pip had already resolved to locally, so this isn't a
+new, unverified version, just making the file honestly reflect what's
+actually been running and tested since 14.23. 261 tests still pass
+locally with `pydantic==2.13.4` installed.
+
+Matches the pattern flagged explicitly at the end of 14.25: "the real
+test of whether this preparation was sufficient... surfaces something
+none of this planning caught" — confirmed exactly that on the very
+first deploy attempt.
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.
