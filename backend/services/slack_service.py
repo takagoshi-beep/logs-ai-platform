@@ -161,8 +161,6 @@ def search_messages(email: str, query: str, max_results: int = 10) -> dict[str, 
     except Exception as e:
         return {"status": "error", "summary": f"Slack検索中にエラーが発生しました: {e}", "records": []}
 
-    print(f"[slack debug] query={query!r} ok={payload.get('ok')} total={payload.get('messages', {}).get('total')} raw={payload}")
-
     if not payload.get("ok"):
         error = payload.get("error", "unknown_error")
         return {"status": "error", "summary": f"Slack検索でエラーが返されました: {error}", "records": []}
