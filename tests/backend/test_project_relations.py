@@ -126,18 +126,36 @@ def test_gmail_search_does_not_fall_back_when_gmail_is_unavailable(monkeypatch):
     assert calls == ['"2091-20250602_2"']  # フォールバックは呼ばれていない
 
 
-def test_slack_search_prefers_po_number_and_falls_back_to_supplier_name(monkeypatch):
+def test_slack_search_uses_po_number_only_no_supplier_name_fallback(monkeypatch):
+    """14.29: Slackは仕入先名へのフォールバックを行わない
+    （PO発行時に必ずPO番号入りの自動通知が飛ぶ運用のため、
+    フォールバックはノイズの温床になるだけで実益が薄いという判断）。"""
     from services import slack_service
 
+    calls = []
+
     def _fake_search(email, query, max_results):
-        if query == '"2091-20250602_2"':
-            return {"status": "ok", "summary": "0件", "records": []}
-        assert query == '"1064STUDIO"'
-        return {"status": "ok", "summary": "1件", "records": [{"text": "1064STUDIOとのやり取り"}]}
+        calls.append(query)
+        return {"status": "ok", "summary": "0件", "records": []}
 
     monkeypatch.setattr(slack_service, "search_messages", _fake_search)
 
     result = project_relations.get_related_communications("user@logs.co.jp", "2091-20250602_2", "unknown", "1064STUDIO")
 
-    assert result["slack"]["match_type"] == "supplier_name"
-    assert result["slack"]["records"] == [{"text": "1064STUDIOとのやり取り"}]
+    assert calls == ['"2091-20250602_2"']  # 仕入先名での検索は一切呼ばれない
+    assert result["slack"]["match_type"] == "po_number"
+    assert result["slack"]["records"] == []
+
+
+def test_slack_search_returns_po_number_match(monkeypatch):
+    from services import slack_service
+
+    monkeypatch.setattr(
+        slack_service, "search_messages",
+        lambda email, query, max_results: {"status": "ok", "summary": "1件", "records": [{"text": "PO#161-20241227_1発行"}]},
+    )
+
+    result = project_relations.get_related_communications("user@logs.co.jp", "161-20241227_1", "unknown", "STP inc")
+
+    assert result["slack"]["match_type"] == "po_number"
+    assert result["slack"]["records"] == [{"text": "PO#161-20241227_1発行"}]

@@ -6,17 +6,21 @@
   2. 顧客担当者のメールアドレス（customer_contacts.メールアドレス、
      purchase_orders.顧客ID で突合） — Gmailのfrom:/to:で高精度に絞れる
 
-この2つはOR（どちらか一致すればヒット）では組み合わせない —
+Gmail: 上記2つをOR（どちらか一致すればヒット）では組み合わせない —
 「PO番号は一致していないが、その顧客担当者との別件のメールならヒットする」
 というノイズが実際に発生したため（2026-07-08、全く別のPO番号のメールが
 表示された実例）。代わりに、まずPO番号だけで検索し、0件だった場合に限り
-顧客担当者メール／仕入先名にフォールバックする段階的な方式にしている。
-フォールバックでヒットした結果は`match_type`で区別し、呼び出し側が
-「PO番号そのものの一致ではない」ことを利用者に伝えられるようにする。
+顧客担当者メールにフォールバックする段階的な方式にしている。フォール
+バックでヒットした結果は`match_type="customer_contact"`で区別し、
+呼び出し側が「PO番号そのものの一致ではない」ことを利用者に伝えられる
+ようにする。
 
-仕入先名・商品コード等は第2段階として今後追加を検討する候補
-（顧客担当者のようなメールアドレスの元データが仕入先側には存在しない
-ため、今回は含めていない）。
+Slack: PO番号一致のみを使う（仕入先名でのフォールバックは採用しない）。
+PO発行時に必ずPO番号入りの自動通知がSlackへ流れる運用のため、フォール
+バックを設ける実益が薄く、Gmailと同種のノイズを持ち込むリスクの方が
+大きいと判断した（2026-07-08、Noritsuguの明示的な選択）。
+
+商品コード等は第3段階として今後追加を検討する候補。
 
 検索はあくまで「ログイン中の本人が既にGmail/Slack連携済みの場合」に
 限られる。未連携の場合はgmail_service/slack_service自身が返す
@@ -99,31 +103,22 @@ def _search_gmail_related(
 def _search_slack_related(
     user_email: str, po_number: str, supplier_name: str, max_results: int
 ) -> dict[str, Any]:
+    """SlackはPO番号一致のみで検索する（仕入先名でのフォールバックは
+    採用しない）。PO発行時に必ずPO番号入りの自動通知がSlackへ流れる
+    運用のため、Gmailの顧客担当者メールのような「仕入先名で見つかった
+    が別件だった」というノイズの温床になり得るフォールバックを設ける
+    実益が薄いと判断した（2026-07-08、Noritsuguの明示的な選択）。
+    supplier_nameは将来また使う可能性を考えて引数には残している。
+    """
     from services import slack_service
 
-    if po_number:
-        po_result = slack_service.search_messages(user_email, f'"{po_number}"', max_results)
-        if po_result.get("status") != "ok":
-            return po_result
-        if po_result.get("records"):
-            po_result["match_type"] = "po_number"
-            return po_result
-    else:
-        po_result = {"status": "ok", "summary": "PO番号がありません。", "records": []}
+    if not po_number:
+        return {"status": "ok", "summary": "PO番号がありません。", "records": []}
 
-    if supplier_name:
-        fallback_result = slack_service.search_messages(user_email, f'"{supplier_name}"', max_results)
-        if fallback_result.get("status") == "ok" and fallback_result.get("records"):
-            fallback_result["match_type"] = "supplier_name"
-            fallback_result["summary"] = (
-                f"PO番号「{po_number}」に一致するメッセージは見つかりませんでしたが、"
-                f"仕入先「{supplier_name}」に関するメッセージが{len(fallback_result['records'])}件見つかりました"
-                "（同じPOとは限りません）。"
-            )
-            return fallback_result
-
-    po_result["match_type"] = "po_number"
-    return po_result
+    result = slack_service.search_messages(user_email, f'"{po_number}"', max_results)
+    if result.get("status") == "ok":
+        result["match_type"] = "po_number"
+    return result
 
 
 def get_related_communications(

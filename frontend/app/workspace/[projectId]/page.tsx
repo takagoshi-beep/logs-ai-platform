@@ -283,9 +283,6 @@ export default function WorkspacePage({ params }: Params) {
               <h4 className="mb-2 text-xs font-semibold text-ink">Slack</h4>
               {related.slack.status === "ok" && related.slack.records.length > 0 ? (
                 <div className="space-y-2">
-                  {related.slack.match_type === "supplier_name" && (
-                    <p className="text-xs text-amber-700">※PO番号の一致ではなく、仕入先名でのマッチです（同じ案件とは限りません）。</p>
-                  )}
                   {related.slack.records.map((r, idx) => (
                     <div key={idx} className="rounded-lg border border-slate-200 p-3 text-xs">
                       <p className="font-medium text-ink">#{r.channel} ・ {r.username}</p>
