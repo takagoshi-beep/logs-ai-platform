@@ -140,6 +140,35 @@ TOOLS: list[dict[str, Any]] = [
             "required": ["po_number"],
         },
     },
+    {
+        "name": "search_gmail",
+        "description": (
+            "ログインユーザー自身のGmailを検索する。Gmail検索構文"
+            "（from:, to:, subject:, after:YYYY/MM/DD, is:unread 等）が使える。"
+            "件名・差出人・日時・スニペットのみを返す（本文全体はget_gmail_messageで取得すること）。"
+            "'unavailable' が返ってきた場合はGmail未連携ということなので、"
+            "設定画面からのGmail連携を案内すること。架空のメール内容を作ってはいけない。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Gmail検索クエリ"},
+                "max_results": {"type": "integer", "description": "取得件数（既定10、最大25）"},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "get_gmail_message",
+        "description": "search_gmailで見つけたmessage_idを指定して、そのメールの本文全体を取得する。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message_id": {"type": "string", "description": "search_gmailの結果に含まれるmessage_id"},
+            },
+            "required": ["message_id"],
+        },
+    },
 ]
 
 
@@ -180,13 +209,17 @@ def _cap_records(result: dict[str, Any]) -> dict[str, Any]:
     return capped
 
 
-def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
+def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | None = None) -> str:
     """ツール呼び出しを実行し、Claudeへ返すJSON文字列を返す。
 
     どんな失敗（未知のツール名、DB接続エラー等）でも例外を投げず、
     Claudeが読める形のエラー情報を返す — そうすることでClaude自身が
     「このデータは取得できなかった」と認識して、次の判断（別のツールを
     試す、正直に分からないと答える等）ができるようにするため。
+
+    user_email: 今チャットしている本人のメールアドレス（ログインセッション
+    由来）。Gmail/Slackのような「本人自身のデータ」を扱うツールにのみ
+    必要で、それ以外の全社共通データ系ツールでは使わない。
     """
     from services.data_providers import _PROVIDERS
 
@@ -219,6 +252,20 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
                 "records": rows,
                 "summary": f"{len(rows)}件取得",
             }
+        elif tool_name == "search_gmail":
+            if not user_email:
+                result = {"status": "unavailable", "summary": "ユーザーが特定できないため、Gmail検索はできません。", "records": []}
+            else:
+                from services import gmail_service
+                result = gmail_service.search_messages(
+                    user_email, tool_input.get("query", ""), tool_input.get("max_results", 10)
+                )
+        elif tool_name == "get_gmail_message":
+            if not user_email:
+                result = {"status": "unavailable", "summary": "ユーザーが特定できないため、メール取得はできません。", "records": []}
+            else:
+                from services import gmail_service
+                result = gmail_service.get_message(user_email, tool_input.get("message_id", ""))
         else:
             result = {"status": "unavailable", "summary": f"未知のツール: {tool_name}", "records": []}
     except Exception as e:

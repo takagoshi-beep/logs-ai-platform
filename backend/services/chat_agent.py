@@ -41,21 +41,28 @@ def _build_system_prompt() -> str:
     return SYSTEM_PROMPT_TEMPLATE.format(today=datetime.now().strftime("%Y-%m-%d"))
 
 
-def answer(question: str, session_id: str | None = None) -> dict[str, Any]:
+def answer(question: str, session_id: str | None = None, user_email: str | None = None) -> dict[str, Any]:
     """1回のchatターンを処理する。session_idを指定すれば、その会話の
     続きとして扱われる（過去のやり取りがClaudeに渡される）。
     session_id未指定の場合は新規に発行する — 呼び出し元はこれを次回の
     リクエストに含めることで、会話を継続できる。
+
+    user_email: ログイン中の本人のメールアドレス。search_gmail等、
+    「本人自身のデータ」を扱うツールがどのユーザーのものを取得すべきか
+    判断するために execute_tool へ渡す（全社共通データ系ツールは無視する）。
     """
     session_id = session_id or uuid.uuid4().hex
 
     history = conversation_store.get_history(session_id)
     messages = history + [{"role": "user", "content": question}]
 
+    def _tool_executor(tool_name: str, tool_input: dict[str, Any]) -> str:
+        return execute_tool(tool_name, tool_input, user_email=user_email)
+
     final_text, tool_calls = generate_with_tools(
         messages=messages,
         tools=TOOLS,
-        tool_executor=execute_tool,
+        tool_executor=_tool_executor,
         system=_build_system_prompt(),
     )
 

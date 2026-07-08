@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
+from api.auth_router import require_login
 from api.schemas import ChatRequest, ProductEvent, ProposalDraftRequest
 from business.today_actions import get_home_payload as get_home_payload_business
 from services.proposal_generation import draft_proposal
@@ -36,7 +37,7 @@ def home() -> dict:
 
 
 @router.post("/chat")
-def chat(req: ChatRequest) -> dict:
+def chat(req: ChatRequest, user: dict = Depends(require_login)) -> dict:
     """`/api/chat` (docs/architecture.md 14.21): Function-Calling powered
     conversation via `chat_agent.answer()` — Claude decides which real
     tools to call (backed entirely by data already built and tested
@@ -46,8 +47,12 @@ def chat(req: ChatRequest) -> dict:
     below is intentionally left untouched, since its whole value is the
     fully deterministic, fully transparent Q1-Q6 breakdown (14.13's
     "keep both" decision).
+
+    user_email(ログイン中の本人)をchat_agentへ渡すのは、search_gmail
+    等「本人自身のデータ」を扱うツールがどのユーザーのものを取得すべきか
+    判断するため（14.27, Gmail/Slack連携）。
     """
-    return chat_agent.answer(req.message, req.session_id)
+    return chat_agent.answer(req.message, req.session_id, user_email=user.get("email"))
 
 
 @router.post("/reasoning")

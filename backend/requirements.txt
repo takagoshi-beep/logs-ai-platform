@@ -8,6 +8,7 @@ anthropic==0.116.0
 openai==2.44.0
 google-auth==2.55.1
 requests==2.34.2
+cryptography==49.0.0
 supabase==2.31.0
 itsdangerous==2.2.0
 python-multipart==0.0.32

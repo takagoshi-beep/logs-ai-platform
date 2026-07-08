@@ -46,6 +46,9 @@ export function Navigation() {
           <p className="truncate text-xs font-medium text-ink">{user.name}</p>
           <p className="truncate text-xs text-sub">{user.email}</p>
           <p className="mt-1 text-xs text-sub">{isAdmin ? "管理者" : "一般"}</p>
+          <Link href="/settings" className="mt-2 block text-xs text-accent hover:underline">
+            設定
+          </Link>
           <button
             onClick={logout}
             className="mt-2 text-xs text-accent hover:underline"
