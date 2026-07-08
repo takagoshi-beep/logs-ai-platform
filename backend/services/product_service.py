@@ -73,6 +73,22 @@ WHERE ps."回答者" = %(name)s OR ps."依頼元" = %(name)s
 """
 
 
+_PRODUCT_CATEGORY_LABELS = {
+    1: "帽子", 2: "バッグ", 3: "財布/小物", 4: "サングラス/メガネ",
+    5: "巻物", 6: "アパレル", 7: "ベルト", 8: "履物", 9: "アクセサリー",
+}
+
+
+def _product_category_label(code: Any) -> str:
+    """商品分類の数値コードを実際の名称に変換する。対応表は既存の
+    reference/02_database/sync/sync.py の v_product_master ビュー定義と
+    完全に一致させている（2026-07-08、表記のズレを防ぐため二重管理は
+    避けたいが、DBビューのCASE式をPython側から再利用する手段が無いため
+    やむを得ず複製— 変更する際は両方を合わせて直すこと）。
+    """
+    return _PRODUCT_CATEGORY_LABELS.get(code, "その他")
+
+
 def sample_code_sort_key(sample_code: Any) -> tuple:
     """Sample_CODEの降順ソート用キー。数値として解釈できる場合は数値として
     比較し（"9"が"10"より前に来る、のような文字列比較の誤りを避ける）、
@@ -251,6 +267,7 @@ def get_product_detail(product_id: str) -> dict[str, Any] | None:
         if not master_rows:
             return None
         master = _rows_to_dicts(master_rows, master_cols)[0]
+        master["商品分類名"] = _product_category_label(master.get("商品分類"))
         logs_code = master.get("LOGS_CODE")
         sample_code = master.get("Sample_CODE")
 

@@ -205,9 +205,19 @@ def test_get_product_detail_returns_none_when_master_row_missing(monkeypatch):
     assert product_service.get_product_detail("does-not-exist") is None
 
 
+def test_product_category_label_maps_known_codes():
+    assert product_service._product_category_label(1) == "帽子"
+    assert product_service._product_category_label(6) == "アパレル"
+
+
+def test_product_category_label_falls_back_to_other_for_unknown_or_none():
+    assert product_service._product_category_label(99) == "その他"
+    assert product_service._product_category_label(None) == "その他"
+
+
 def test_get_product_detail_aggregates_all_sources(monkeypatch):
-    master_cols = ["ID", "LOGS_CODE", "Sample_CODE", "商品名", "supplier_production_staff"]
-    master_rows = [(101, "5145", "S1", "Baseball Cap", "木村美菜")]
+    master_cols = ["ID", "LOGS_CODE", "Sample_CODE", "商品名", "商品分類", "supplier_production_staff"]
+    master_rows = [(101, "5145", "S1", "Baseball Cap", 1, "木村美菜")]
 
     po_cols = ["ID", "PO_No", "顧客名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "企画担当者名", "発注数量", "発注金額", "PO発行日"]
     po_rows = [(1, "914-1", "US_LOGS Inc.", "山田太郎", None, None, None, 10, 1000, "2026-01-01")]
@@ -235,6 +245,7 @@ def test_get_product_detail_aggregates_all_sources(monkeypatch):
     detail = product_service.get_product_detail("101")
 
     assert detail["master"]["商品名"] == "Baseball Cap"
+    assert detail["master"]["商品分類名"] == "帽子"
     assert detail["purchase_orders"][0]["PO_No"] == "914-1"
     assert detail["sales"][0]["得意先名"] == "US_LOGS Inc."
     assert detail["purchases"][0]["仕入先名"] == "1064STUDIO"

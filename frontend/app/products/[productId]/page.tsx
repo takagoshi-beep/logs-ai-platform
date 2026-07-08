@@ -131,7 +131,7 @@ export default function ProductDetailPage({ params }: Params) {
         </div>
         <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-sub sm:grid-cols-3">
           <div>型番: {m.型番 ?? "—"}</div>
-          <div>商品分類: {m.商品分類 ?? "—"}</div>
+          <div>商品分類: {m.商品分類名 ?? "—"}</div>
           <div>仕入先: {m.仕入先名 ?? "—"}</div>
           <div>作成者: {m.作成者名 ?? "—"}</div>
           <div>仕入先の生産管理担当: {m.supplier_production_staff ?? "—"}</div>
