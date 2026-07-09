@@ -146,6 +146,12 @@ def list_projects(limit: int = 10, scope: str = "mine", user: dict = Depends(req
 
         projects = []
         for agg in service.build_project_aggregates_bulk(ids):
+            # 注意（2026-07-09、14.40）: このAPIレスポンスの"project_name"は
+            # 実はPO番号（agg.po_number）を指しており、purchase_orders."案件名"
+            # の実際のテキスト（agg.data.project_name）とは別物。Gmail/Slackの
+            # 検索キー（PO番号）として使われている既存の呼び出し元
+            # （today-actions等）を壊さないよう、このキー名はそのままにして
+            # いる。実際の案件名テキストは案件詳細のdata.project_nameで見る。
             projects.append({
                 "project_id": agg.project_id,
                 "project_name": agg.po_number,

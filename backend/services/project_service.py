@@ -75,7 +75,7 @@ class ProjectService:
 
     _PO_SELECT_COLUMNS = (
         '"ID", "PO_No", "仕入先ID", "仕入先名", "顧客ID", "顧客名", '
-        '"PO発行日", "顧客納品日", "納品日", "LOGS_CODE", '
+        '"PO発行日", "顧客納品日", "納品日", "LOGS_CODE", "案件名", "輸入経費率", '
         '"合計発注金額", "合計売上原価", "合計売上金額"'
     )
 
@@ -149,6 +149,9 @@ class ProjectService:
                 production_closed=bool(po_dict.get("production_closed", False)),
                 sales_date=self._parse_date(po_dict.get("sales_date")),
                 purchase_date=self._parse_date(po_dict.get("purchase_date")),
+                project_name=po_dict.get("案件名") or None,
+                planned_import_cost_ratio=float(po_dict["輸入経費率"]) if po_dict.get("輸入経費率") is not None else None,
+                actual_import_cost_ratio=float(po_dict["actual_import_cost_ratio"]) if po_dict.get("actual_import_cost_ratio") is not None else None,
             )
 
             if project_data.cost_amount and project_data.sale_amount:
@@ -192,6 +195,7 @@ class ProjectService:
 
         sales_dates: dict[str, Any] = {}
         purchase_dates: dict[str, Any] = {}
+        actual_import_cost_ratios: dict[str, Any] = {}
         closed_po_numbers: set[str] = set()
 
         try:
@@ -205,14 +209,22 @@ class ProjectService:
                     for logs_code, max_date in cur.fetchall():
                         sales_dates[self._format_logs_code_for_project(logs_code)] = max_date
 
+                # purchase_date（活動履歴用）と実績輸入経費率（予実管理用、
+                # purchases."経費率"）は、同じ明細行から一緒に取る必要が
+                # ある（別々にMAXを取ると、日付と経費率が違う行から混ざって
+                # 不整合になる、2026-07-09・14.40）。DISTINCT ONで
+                # LOGS_CODEごとに最新の伝票日を持つ1行だけを選ぶ。
                 with conn.cursor() as cur:
                     cur.execute(
-                        'SELECT "LOGS_CODE", MAX("伝票日") FROM purchases '
-                        'WHERE "LOGS_CODE" = ANY(%s) GROUP BY "LOGS_CODE"',
+                        'SELECT DISTINCT ON ("LOGS_CODE") "LOGS_CODE", "伝票日", "経費率" '
+                        'FROM purchases WHERE "LOGS_CODE" = ANY(%s) '
+                        'ORDER BY "LOGS_CODE", "伝票日" DESC',
                         (raw_logs_codes,),
                     )
-                    for logs_code, max_date in cur.fetchall():
-                        purchase_dates[self._format_logs_code_for_project(logs_code)] = max_date
+                    for logs_code, max_date, cost_ratio in cur.fetchall():
+                        key = self._format_logs_code_for_project(logs_code)
+                        purchase_dates[key] = max_date
+                        actual_import_cost_ratios[key] = cost_ratio
 
             if po_numbers:
                 with conn.cursor() as cur:
@@ -230,6 +242,7 @@ class ProjectService:
             logs_code = self._format_logs_code_for_project(d.get("LOGS_CODE"))
             d["sales_date"] = sales_dates.get(logs_code)
             d["purchase_date"] = purchase_dates.get(logs_code)
+            d["actual_import_cost_ratio"] = actual_import_cost_ratios.get(logs_code)
             d["production_closed"] = d.get("PO_No") in closed_po_numbers
 
     def _build_project_data(self, project_id: str) -> ProjectData | None:

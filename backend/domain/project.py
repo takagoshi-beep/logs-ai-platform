@@ -181,6 +181,16 @@ class ProjectData:
     # sales/purchasesの実際の入力日（複数行あれば直近のMAX、2026-07-09 14.38で修正）。
     sales_date: Optional[datetime] = None
     purchase_date: Optional[datetime] = None
+    # 2026-07-09（14.40、Noritsuguの指定）: 案件名はPO番号だけでは分かり
+    # づらいため、purchase_orders."案件名"を合わせて表示する。
+    project_name: Optional[str] = None
+    # 輸入経費率（1.xxという値になる比率）: 商品原価（商品単価×数量×為替）
+    # に対して、諸掛込原価（商品原価＋輸入経費）がどの程度かを示す指標。
+    # 予定（PO入力時点、purchase_orders."輸入経費率"）と実績（仕入登録時に
+    # 確定、purchases."経費率"）を比較することで予実管理に使う。
+    # 検索・チャットからも意味が分かるよう、このコメントで明記している。
+    planned_import_cost_ratio: Optional[float] = None
+    actual_import_cost_ratio: Optional[float] = None
 
     @property
     def days_until_delivery(self) -> int:
@@ -332,6 +342,9 @@ class ProjectAggregate:
                 "sale_amount": self.data.sale_amount,
                 "gross_profit": self.data.gross_profit,
                 "gross_profit_margin": self.data.gross_profit_margin,
+                "project_name": self.data.project_name,
+                "planned_import_cost_ratio": self.data.planned_import_cost_ratio,
+                "actual_import_cost_ratio": self.data.actual_import_cost_ratio,
             },
             "goals": {
                 goal.value: {

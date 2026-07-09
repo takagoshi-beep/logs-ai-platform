@@ -85,6 +85,56 @@ def test_events_uses_real_purchase_and_sales_dates_not_now():
     assert by_type[ProjectEventType.SALES_REGISTERED].event_time == real_sales_date
 
 
+def test_po_dict_to_project_data_parses_project_name_and_planned_cost_ratio():
+    """2026-07-09（14.40、Noritsuguの指定）: 案件名（purchase_orders."案件名"）
+    と予定輸入経費率（purchase_orders."輸入経費率"）を取り込む。"""
+    service = ProjectService()
+    po_dict = {
+        "PO_No": "901-20260708_2", "仕入先ID": "s1", "仕入先名": "Supplier",
+        "顧客ID": "c1", "顧客名": "Customer",
+        "PO発行日": "2026-07-08", "顧客納品日": "2026-08-30",
+        "案件名": "SLOBE IENA_ハーフオーバルベルト",
+        "輸入経費率": 1.18,
+        "合計発注金額": 100, "合計売上原価": 60, "合計売上金額": 90,
+    }
+    data = service._po_dict_to_project_data("1", po_dict)
+
+    assert data.project_name == "SLOBE IENA_ハーフオーバルベルト"
+    assert data.planned_import_cost_ratio == 1.18
+
+
+def test_po_dict_to_project_data_uses_actual_import_cost_ratio_from_attach_existence_data():
+    """実績輸入経費率はpurchases."経費率"から。_attach_existence_dataが
+    po_dictに"actual_import_cost_ratio"として書き込んだ値を、そのまま
+    ProjectDataに渡すこと。"""
+    service = ProjectService()
+    po_dict = {
+        "PO_No": "901-20260708_2", "仕入先ID": "s1", "仕入先名": "Supplier",
+        "顧客ID": "c1", "顧客名": "Customer",
+        "PO発行日": "2026-07-08", "顧客納品日": "2026-08-30",
+        "actual_import_cost_ratio": 1.22,
+        "合計発注金額": 100, "合計売上原価": 60, "合計売上金額": 90,
+    }
+    data = service._po_dict_to_project_data("1", po_dict)
+
+    assert data.actual_import_cost_ratio == 1.22
+
+
+def test_po_dict_to_project_data_leaves_cost_ratios_none_when_absent():
+    service = ProjectService()
+    po_dict = {
+        "PO_No": "901-1", "仕入先ID": "s1", "仕入先名": "Supplier",
+        "顧客ID": "c1", "顧客名": "Customer",
+        "PO発行日": "2026-07-08", "顧客納品日": "2026-08-30",
+        "合計発注金額": 100, "合計売上原価": 60, "合計売上金額": 90,
+    }
+    data = service._po_dict_to_project_data("1", po_dict)
+
+    assert data.project_name is None
+    assert data.planned_import_cost_ratio is None
+    assert data.actual_import_cost_ratio is None
+
+
 def test_attach_existence_data_uses_max_date_not_min(monkeypatch):
     """2026-07-09（14.38、Noritsuguの指摘）: 同じLOGS_CODEを再発注・
     再納品しているOEM案件で、活動履歴に一番古い日付（MIN）が表示されて
@@ -112,7 +162,7 @@ def test_attach_existence_data_uses_max_date_not_min(monkeypatch):
                     if "FROM sales" in sql_holder.get("sql", ""):
                         return [(5145.0, datetime(2026, 6, 1))]
                     if "FROM purchases" in sql_holder.get("sql", ""):
-                        return [(5145.0, datetime(2026, 5, 1))]
+                        return [(5145.0, datetime(2026, 5, 1), 1.15)]
                     return []
 
             return _Cur()
@@ -126,6 +176,7 @@ def test_attach_existence_data_uses_max_date_not_min(monkeypatch):
 
     assert any("MAX" in sql for sql in calls)
     assert not any("MIN(" in sql for sql in calls)
+    assert po_dicts[0]["actual_import_cost_ratio"] == 1.15
     assert po_dicts[0]["sales_date"] == datetime(2026, 6, 1)
     assert po_dicts[0]["purchase_date"] == datetime(2026, 5, 1)
 

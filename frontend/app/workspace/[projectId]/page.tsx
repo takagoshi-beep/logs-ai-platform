@@ -70,6 +70,9 @@ interface ProjectDetail {
     sale_amount: number | null;
     gross_profit: number | null;
     gross_profit_margin: number | null;
+    project_name: string | null;
+    planned_import_cost_ratio: number | null;
+    actual_import_cost_ratio: number | null;
   };
   actions: ProjectAction[];
   events: { count: number; items: ProjectEvent[] };
@@ -135,7 +138,10 @@ export default function WorkspacePage({ params }: Params) {
   return (
     <div className="space-y-5">
       <header className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h1 className="page-title">案件: {project.po_number}</h1>
+        <h1 className="page-title">
+          案件: {project.po_number}
+          {project.data.project_name && `（${project.data.project_name}）`}
+        </h1>
         <p className="page-subtitle">Supabase（purchase_orders）の実データに基づく分析です。</p>
       </header>
 
@@ -157,6 +163,19 @@ export default function WorkspacePage({ params }: Params) {
             <div>粗利: {fmtYen(project.data.gross_profit)}</div>
             <div>粗利率: {project.data.gross_profit_margin != null ? `${project.data.gross_profit_margin.toFixed(1)}%` : "—"}</div>
           </div>
+          <div className="mt-3 grid grid-cols-2 gap-2 text-xs border-t border-slate-100 pt-3">
+            <div>
+              予定輸入経費率: {project.data.planned_import_cost_ratio != null ? project.data.planned_import_cost_ratio.toFixed(2) : "—"}
+              <span className="ml-1 text-sub">（PO入力時点）</span>
+            </div>
+            <div>
+              実績輸入経費率: {project.data.actual_import_cost_ratio != null ? project.data.actual_import_cost_ratio.toFixed(2) : "—"}
+              <span className="ml-1 text-sub">（仕入確定後）</span>
+            </div>
+          </div>
+          <p className="mt-1 text-xs text-sub">
+            輸入経費率＝諸掛込原価÷商品原価（商品単価×数量×為替）。1.xxの値で、予定と実績を比較して予実管理に使います。
+          </p>
           {project.delivery_month_bucket && (
             <div className="mt-3">
               <Badge label={DELIVERY_BUCKET_LABEL[project.delivery_month_bucket] ?? project.delivery_month_bucket} />
