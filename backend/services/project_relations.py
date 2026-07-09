@@ -148,14 +148,29 @@ def get_task_signals(user_email: str | None, po_numbers: list[str], max_results:
     PO番号は引用符なしで検索する。
 
     未連携・PO番号が無い場合はゼロ件として返す（架空の件数を作らない）。
+
+    2026-07-09（14.36修正）: タスクが0件の場合、検索する対象が無いため
+    早期returnしていたが、その際にgmail_status/slack_statusを無条件で
+    "unavailable"（未連携の意味）にしていたため、実際には連携済みなのに
+    「未連携」と誤表示していた（Noritsuguが「自分のタスク」で0件に
+    なった時に発見）。タスクが0件でも、実際の連携状況（connect_status）
+    を見て正しいステータスを返すよう修正した。
     """
-    empty = {
-        "gmail_unread_total": 0, "slack_recent_total": 0,
-        "gmail_status": "unavailable", "slack_status": "unavailable",
-        "by_task": {},
-    }
-    if not user_email or not po_numbers:
-        return empty
+    if not user_email:
+        return {
+            "gmail_unread_total": 0, "slack_recent_total": 0,
+            "gmail_status": "unavailable", "slack_status": "unavailable",
+            "by_task": {},
+        }
+
+    if not po_numbers:
+        from services import gmail_service, slack_service
+        return {
+            "gmail_unread_total": 0, "slack_recent_total": 0,
+            "gmail_status": "ok" if gmail_service.connect_status(user_email) else "unavailable",
+            "slack_status": "ok" if slack_service.connect_status(user_email) else "unavailable",
+            "by_task": {},
+        }
 
     by_task = {po: {"gmail_unread": 0, "slack_recent": 0} for po in po_numbers}
 

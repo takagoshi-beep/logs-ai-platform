@@ -178,6 +178,36 @@ def test_get_task_signals_returns_empty_without_po_numbers():
     assert result["by_task"] == {}
 
 
+def test_get_task_signals_reports_real_connection_status_when_no_tasks(monkeypatch):
+    """2026-07-09（14.36）の回帰テスト: タスクが0件（『自分のタスク』で
+    担当案件が無い場合など）でも、実際には連携済みなら'unavailable'
+    ではなく'ok'を返す（以前は無条件で'unavailable'にしていたため、
+    連携済みなのに『未連携』と誤表示していた）。"""
+    from services import gmail_service, slack_service
+
+    monkeypatch.setattr(gmail_service, "connect_status", lambda email: True)
+    monkeypatch.setattr(slack_service, "connect_status", lambda email: True)
+
+    result = project_relations.get_task_signals("user@logs.co.jp", [])
+
+    assert result["gmail_status"] == "ok"
+    assert result["slack_status"] == "ok"
+    assert result["gmail_unread_total"] == 0
+    assert result["slack_recent_total"] == 0
+
+
+def test_get_task_signals_reports_unavailable_when_genuinely_not_connected_and_no_tasks(monkeypatch):
+    from services import gmail_service, slack_service
+
+    monkeypatch.setattr(gmail_service, "connect_status", lambda email: False)
+    monkeypatch.setattr(slack_service, "connect_status", lambda email: False)
+
+    result = project_relations.get_task_signals("user@logs.co.jp", [])
+
+    assert result["gmail_status"] == "unavailable"
+    assert result["slack_status"] == "unavailable"
+
+
 def test_get_task_signals_calls_gmail_and_slack_exactly_once_each_regardless_of_task_count(monkeypatch):
     """14.28と同じ理由: タスク数が増えても外部API呼び出しはGmail・Slack
     それぞれ1回のまま（N回にならない）。"""
