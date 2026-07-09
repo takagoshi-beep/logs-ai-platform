@@ -43,15 +43,18 @@ def _add_months(base: datetime, months: int) -> datetime:
 
 def test_delivery_bucket_this_month_for_current_month_delivery():
     now = datetime.now()
-    data = _make_data(po_required_delivery_date=now.replace(day=min(now.day, 27)))
+    # 納期を「今日の少し後」に設定し、確実にまだ納期を過ぎていない状態にする。
+    data = _make_data(po_required_delivery_date=now + timedelta(hours=1))
     assert ProjectService()._determine_delivery_month_bucket(data) == "this_month"
 
 
-def test_delivery_bucket_this_month_when_already_overdue():
-    """既に納期を過ぎている場合も、状態バッジ側で「納期超過」を別途
-    表示するため、月バケットとしては『今月』に含めてよい。"""
+def test_delivery_bucket_returns_none_when_already_overdue():
+    """2026-07-09（14.38、Noritsuguの指摘）: 既に納期を過ぎている場合は
+    バッジ自体を表示しない（Noneを返す）。状態バッジ側で「納期超過」を
+    別途表示するため、こちらで『今月中』に含めると分かりにくいという
+    フィードバックを反映（当初は"this_month"に含めていた）。"""
     data = _make_data(po_required_delivery_date=datetime.now() - timedelta(days=60))
-    assert ProjectService()._determine_delivery_month_bucket(data) == "this_month"
+    assert ProjectService()._determine_delivery_month_bucket(data) is None
 
 
 def test_delivery_bucket_next_month():
@@ -80,6 +83,51 @@ def test_events_uses_real_purchase_and_sales_dates_not_now():
 
     assert by_type[ProjectEventType.PURCHASE_REGISTERED].event_time == real_purchase_date
     assert by_type[ProjectEventType.SALES_REGISTERED].event_time == real_sales_date
+
+
+def test_attach_existence_data_uses_max_date_not_min(monkeypatch):
+    """2026-07-09（14.38、Noritsuguの指摘）: 同じLOGS_CODEを再発注・
+    再納品しているOEM案件で、活動履歴に一番古い日付（MIN）が表示されて
+    いた不具合の修正。直近の日付（MAX）を使うこと。"""
+    from services.project_service import ProjectService
+
+    calls = []
+
+    class _RoutingConn:
+        def cursor(self):
+            sql_holder = {}
+
+            class _Cur:
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, *a):
+                    return False
+
+                def execute(self_inner, sql, params=None):
+                    sql_holder["sql"] = sql
+                    calls.append(sql)
+
+                def fetchall(self_inner):
+                    if "FROM sales" in sql_holder.get("sql", ""):
+                        return [(5145.0, datetime(2026, 6, 1))]
+                    if "FROM purchases" in sql_holder.get("sql", ""):
+                        return [(5145.0, datetime(2026, 5, 1))]
+                    return []
+
+            return _Cur()
+
+        def close(self):
+            pass
+
+    service = ProjectService()
+    po_dicts = [{"LOGS_CODE": 5145.0, "PO_No": "PO-1"}]
+    service._attach_existence_data(_RoutingConn(), po_dicts)
+
+    assert any("MAX" in sql for sql in calls)
+    assert not any("MIN(" in sql for sql in calls)
+    assert po_dicts[0]["sales_date"] == datetime(2026, 6, 1)
+    assert po_dicts[0]["purchase_date"] == datetime(2026, 5, 1)
 
 
 def test_events_omits_purchase_and_sales_registration_when_not_recorded():

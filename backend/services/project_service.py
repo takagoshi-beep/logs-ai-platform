@@ -178,6 +178,11 @@ class ProjectService:
         （float）をそのまま使い、Python側の突合キーとしてのみ
         `_format_logs_code_for_project`で正規化する（型不一致を避ける
         ため、14.30・本日複数回遭遇した問題と同じ理由）。
+
+        2026-07-09（14.38修正）: 同じLOGS_CODEを再発注・再納品している
+        OEM案件で、活動履歴に一番古い売上/仕入日が表示されてしまう
+        不具合を修正（MIN→MAX）。同一商品が複数回発注される場合、
+        直近の履歴の方が案件の実態に近いと判断した。
         """
         if not po_dicts:
             return
@@ -193,21 +198,21 @@ class ProjectService:
             if raw_logs_codes:
                 with conn.cursor() as cur:
                     cur.execute(
-                        'SELECT "LOGS_CODE", MIN("売上入力日") FROM sales '
+                        'SELECT "LOGS_CODE", MAX("売上入力日") FROM sales '
                         'WHERE "LOGS_CODE" = ANY(%s) GROUP BY "LOGS_CODE"',
                         (raw_logs_codes,),
                     )
-                    for logs_code, min_date in cur.fetchall():
-                        sales_dates[self._format_logs_code_for_project(logs_code)] = min_date
+                    for logs_code, max_date in cur.fetchall():
+                        sales_dates[self._format_logs_code_for_project(logs_code)] = max_date
 
                 with conn.cursor() as cur:
                     cur.execute(
-                        'SELECT "LOGS_CODE", MIN("伝票日") FROM purchases '
+                        'SELECT "LOGS_CODE", MAX("伝票日") FROM purchases '
                         'WHERE "LOGS_CODE" = ANY(%s) GROUP BY "LOGS_CODE"',
                         (raw_logs_codes,),
                     )
-                    for logs_code, min_date in cur.fetchall():
-                        purchase_dates[self._format_logs_code_for_project(logs_code)] = min_date
+                    for logs_code, max_date in cur.fetchall():
+                        purchase_dates[self._format_logs_code_for_project(logs_code)] = max_date
 
             if po_numbers:
                 with conn.cursor() as cur:
@@ -300,7 +305,7 @@ class ProjectService:
         2026-07-09（14.35、Noritsuguの指摘の修正）: 「売上登録」「仕入
         登録」の日付が、実際の入力日ではなくこの処理を実行した瞬間の
         現在時刻（now）になっていた不具合を修正。sales/purchasesの実際
-        の日付（sales_date/purchase_date、複数行あればMIN）を使う。
+        の日付（sales_date/purchase_date、複数行あれば直近のMAX、2026-07-09 14.38で修正）を使う。
 
         また、実質常に空のactual_delivery_date/actual_payment_dateに
         依存していた「納品完了」「支払完了」「納期リスク検知」イベント
@@ -532,19 +537,23 @@ class ProjectService:
 
         return actions
 
-    def _determine_delivery_month_bucket(self, data: ProjectData) -> str:
+    def _determine_delivery_month_bucket(self, data: ProjectData) -> str | None:
         """納品予定月を「今月」「来月」「再来月以降」の3段階で分類する
-        バッジ（docs/architecture.md 14.35）。
+        バッジ（docs/architecture.md 14.35、2026-07-09 14.38で修正）。
 
         以前あった健全性・リスク・機会スコアは、POの納品日/支払日が
         実質常に空という実データの制約下では意味を成していなかった
         （14.33で判明、Noritsuguの判断で廃止）。代わりに、今から納品日
         までの月数だけで判定する単純なロジックに置き換えた。
 
-        月差が0以下（今月中、または既に納期を過ぎている）は"this_month"
-        にまとめる — 過ぎている場合は状態バッジの方で「納期超過」として
-        別途表示されるため、ここでは「今月中」として扱って問題ない。
+        既に納期を過ぎている場合はNoneを返す（バッジ自体を表示しない）
+        — 状態バッジの方で「納期超過」として別途表示されるため、こちら
+        で「今月中」に含めると混乱を招くというNoritsuguの指摘を反映
+        （14.38、当初は"this_month"に含めていた）。
         """
+        if data.is_overdue:
+            return None
+
         now = datetime.now()
         target = data.po_required_delivery_date
         month_diff = (target.year - now.year) * 12 + (target.month - now.month)

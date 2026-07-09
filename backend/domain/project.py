@@ -172,7 +172,7 @@ class ProjectData:
     has_purchase: bool = False
     production_closed: bool = False
     # 2026-07-09（14.35）: 活動履歴の日付をnow()で埋めていた不具合の修正。
-    # sales/purchasesの実際の入力日（複数行あればMIN）。
+    # sales/purchasesの実際の入力日（複数行あれば直近のMAX、2026-07-09 14.38で修正）。
     sales_date: Optional[datetime] = None
     purchase_date: Optional[datetime] = None
 
@@ -290,7 +290,7 @@ class ProjectAggregate:
     # POの納品日/支払日が常に空という実データの制約下では意味を成して
     # いなかった（Noritsuguの判断）ため廃止。代わりに現在日から納品日
     # までの月数だけで判定するdelivery_month_bucketに置き換えた。
-    delivery_month_bucket: str = "this_month"
+    delivery_month_bucket: Optional[str] = None
 
     def get_at_risk_goals(self) -> list[ProjectGoal]:
         return [goal for goal, eval in self.goal_evaluations.evaluations.items()

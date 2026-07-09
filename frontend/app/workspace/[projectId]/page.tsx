@@ -59,7 +59,7 @@ interface ProjectDetail {
   po_number: string;
   state: string;
   priority: string;
-  delivery_month_bucket: string;
+  delivery_month_bucket: string | null;
   data: {
     customer_name: string;
     supplier_name: string;
@@ -90,10 +90,13 @@ const STATE_LABEL: Record<string, string> = {
 
 // 2026-07-09（14.35）: 健全性・リスク・推奨対応を廃止し、現在から納品日
 // までの月数だけで判定する単純なバッジに置き換えた（Noritsuguの指定）。
+// 14.38: a/b/cは指示を分かりやすくするための記号だったため表示からは
+// 削除。既に納期を過ぎている場合はバッジ自体を表示しない
+// （delivery_month_bucketがnullになる）。
 const DELIVERY_BUCKET_LABEL: Record<string, string> = {
-  this_month: "c: 今月納品予定",
-  next_month: "b: 来月納品予定",
-  month_after_next_or_later: "a: 再来月以降納品予定",
+  this_month: "今月納品予定",
+  next_month: "来月納品予定",
+  month_after_next_or_later: "再来月以降納品予定",
 };
 
 function fmtYen(v: number | null | undefined): string {
@@ -156,9 +159,11 @@ export default function WorkspacePage({ params }: Params) {
             <div>粗利: {fmtYen(project.data.gross_profit)}</div>
             <div>粗利率: {project.data.gross_profit_margin != null ? `${project.data.gross_profit_margin.toFixed(1)}%` : "—"}</div>
           </div>
-          <div className="mt-3">
-            <Badge label={DELIVERY_BUCKET_LABEL[project.delivery_month_bucket] ?? project.delivery_month_bucket} />
-          </div>
+          {project.delivery_month_bucket && (
+            <div className="mt-3">
+              <Badge label={DELIVERY_BUCKET_LABEL[project.delivery_month_bucket] ?? project.delivery_month_bucket} />
+            </div>
+          )}
         </Card>
       </div>
 
@@ -210,23 +215,23 @@ export default function WorkspacePage({ params }: Params) {
         <Card>
           <SectionHeader
             title="生産進捗"
-            subtitle="生産管理チームのスプレッドシートから同期された、量産の工程状況です（PO番号で突合）。"
+            subtitle="生産管理チームのスプレッドシートから同期された、量産の工程状況です（PO番号で突合）。表示項目は全て量産シート自体の列で、PO側の情報で補ってはいません。"
           />
           <div className="mt-3 space-y-3">
             {production.map((p, idx) => (
               <div key={idx} className="rounded-lg border border-slate-200 p-4">
                 <div className="mb-2 flex items-center justify-between gap-2">
-                  <p className="text-sm font-semibold text-ink">{p.project_name || project.po_number}</p>
-                  {p.status && <Badge label={p.status} />}
+                  <p className="text-sm font-semibold text-ink">{p.project_name || "案件名: データなし"}</p>
+                  <Badge label={p.status || "ステータス: データなし"} />
                 </div>
                 <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-sub sm:grid-cols-3">
-                  {p.factory && <div>工場: {p.factory}</div>}
-                  {p.production_staff && <div>生産担当: {p.production_staff}</div>}
-                  {p.pp_expected_date && <div>PP予定: {p.pp_expected_date}</div>}
-                  {p.top_expected_date && <div>TOP予定: {p.top_expected_date}</div>}
-                  {p.etd && <div>ETD: {p.etd}</div>}
-                  {p.eta && <div>ETA: {p.eta}</div>}
-                  {p.delivery_date && <div>納品日: {p.delivery_date}</div>}
+                  <div>工場: {p.factory || "データなし"}</div>
+                  <div>生産担当: {p.production_staff || "データなし"}</div>
+                  <div>PP予定: {p.pp_expected_date || "データなし"}</div>
+                  <div>TOP予定: {p.top_expected_date || "データなし"}</div>
+                  <div>ETD: {p.etd || "データなし"}</div>
+                  <div>ETA: {p.eta || "データなし"}</div>
+                  <div>納品日: {p.delivery_date || "データなし"}</div>
                 </div>
               </div>
             ))}
