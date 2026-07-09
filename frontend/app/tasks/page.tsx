@@ -205,7 +205,6 @@ export default function TaskCenterPage() {
                       {task.project}
                       {task.project_title && `（${task.project_title}）`}
                     </span>
-                    <span>期限: {task.due}</span>
                     <span>担当: {task.owner || "-"}</span>
                     {!!task.gmail_unread && (
                       <span className="text-amber-700">📧未読{task.gmail_unread}件</span>

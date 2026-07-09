@@ -142,6 +142,30 @@ def test_decisions_and_actions_produce_only_record_sales_when_purchase_without_s
     assert actions[0].priority == "high"
 
 
+def test_action_title_includes_project_name_when_present():
+    """2026-07-09（14.45、Noritsuguの指定）: 今日のタスク一覧のタイトル
+    （太字1行目）にもPO#＋案件名を表示する。"""
+    service = ProjectService()
+    data = _make_data(has_purchase=True, has_sales=False, project_name="SLOBE IENA_ハーフオーバルベルト")
+    state = service._determine_state(data)
+    goals = service._evaluate_goals(data, state)
+    decisions = service._generate_decisions(data, state, goals)
+    actions = service._generate_actions(data, state, decisions, "trace-1")
+
+    assert actions[0].title == "売上入力の必要性: PO-1（SLOBE IENA_ハーフオーバルベルト）"
+
+
+def test_action_title_omits_parens_when_no_project_name():
+    service = ProjectService()
+    data = _make_data(has_purchase=True, has_sales=False, project_name=None)
+    state = service._determine_state(data)
+    goals = service._evaluate_goals(data, state)
+    decisions = service._generate_decisions(data, state, goals)
+    actions = service._generate_actions(data, state, decisions, "trace-1")
+
+    assert actions[0].title == "売上入力の必要性: PO-1"
+
+
 def test_decisions_and_actions_produce_only_record_purchase_when_overdue_sales_without_purchase():
     service = ProjectService()
     data = _make_data(

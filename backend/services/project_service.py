@@ -571,13 +571,17 @@ class ProjectService:
         """
         actions = []
         action_id = 1
+        # 2026-07-09（14.45、Noritsuguの指定）: タスク一覧のタイトル
+        # （太字1行目）にもPO#＋案件名を表示する（案件詳細のタイトルや
+        # タスクのサブタイトル行では14.40/14.41で既に対応済みだった）。
+        po_label = f"{data.po_number}（{data.project_name}）" if data.project_name else data.po_number
 
         for decision in decisions:
             if decision.decision == ProjectDecision.RECORD_SALES:
                 actions.append(ProjectAction(
                     action_id=f"act-{action_id}",
                     project_id=data.project_id,
-                    title=f"売上入力の必要性: {data.po_number}",
+                    title=f"売上入力の必要性: {po_label}",
                     description=f"仕入は入力済みですが、{data.customer_name}への売上がまだ入力されていません。売上の入力をお願いします。",
                     priority="high",
                     related_state=state,
@@ -595,7 +599,7 @@ class ProjectService:
                 actions.append(ProjectAction(
                     action_id=f"act-{action_id}",
                     project_id=data.project_id,
-                    title=f"仕入入力の必要性: {data.po_number}",
+                    title=f"仕入入力の必要性: {po_label}",
                     description=f"納期（{data.po_required_delivery_date.strftime('%Y-%m-%d')}）を過ぎ、{data.customer_name}への売上は入力済みですが、{data.supplier_name}への仕入がまだ入力されていません。仕入の入力をお願いします。",
                     priority="high",
                     related_state=state,
@@ -613,7 +617,7 @@ class ProjectService:
                 actions.append(ProjectAction(
                     action_id=f"act-{action_id}",
                     project_id=data.project_id,
-                    title=f"PO発行が必要: {data.po_number}",
+                    title=f"PO発行が必要: {po_label}",
                     description=f"{data.customer_name}・{data.supplier_name}のPOがまだ発行されていません（ステータスが発注済以外）。POの発行をお願いします。",
                     priority="high",
                     related_state=state,
