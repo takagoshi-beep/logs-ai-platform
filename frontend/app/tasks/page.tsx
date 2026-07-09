@@ -1,15 +1,17 @@
 "use client";
 
-import { Button, Card, SectionHeader } from "@/components/design-system";
+import { Card, SectionHeader } from "@/components/design-system";
 import { taskRecommendations } from "@/lib/mock-data";
 import { getTodayActions } from "@/lib/api-client";
-import { useProductEvent } from "@/hooks/use-product-event";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 interface Task {
   id: string;
   title: string;
   project: string;
+  project_id?: string;
+  project_title?: string;
   customer?: string;
   owner?: string;
   due: string;
@@ -58,7 +60,6 @@ function priorityRank(p: string) {
 }
 
 export default function TaskCenterPage() {
-  const track = useProductEvent();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [usedRealData, setUsedRealData] = useState(false);
@@ -75,6 +76,8 @@ export default function TaskCenterPage() {
             id: action.action_id || `task-${idx}`,
             title: action.title,
             project: action.project_name || "System",
+            project_id: action.project_id,
+            project_title: action.project_title,
             customer: action.customer,
             owner: action.customer || "-",
             due: "本日",
@@ -188,13 +191,20 @@ export default function TaskCenterPage() {
             {[...tasks]
               .sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority))
               .map((task) => (
-                <div key={task.id} className="surface-soft p-4 rounded-lg border border-slate-200">
+                <Link
+                  key={task.id}
+                  href={task.project_id ? `/workspace/${task.project_id}` : "#"}
+                  className="surface-soft block p-4 rounded-lg border border-slate-200 hover:bg-slate-50"
+                >
                   <div className="flex items-start justify-between gap-3">
                     <p className="text-base font-semibold text-ink">{task.title}</p>
                     <span className="text-xs font-semibold text-accent whitespace-nowrap">{priorityLabel(task.priority)}</span>
                   </div>
                   <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-sub">
-                    <span>{task.project}</span>
+                    <span>
+                      {task.project}
+                      {task.project_title && `（${task.project_title}）`}
+                    </span>
                     <span>期限: {task.due}</span>
                     <span>担当: {task.owner || "-"}</span>
                     {!!task.gmail_unread && (
@@ -207,30 +217,7 @@ export default function TaskCenterPage() {
                   {task.reason && (
                     <p className="mt-2 text-xs text-sub">理由: {task.reason}</p>
                   )}
-                  <div className="flex gap-2 mt-3">
-                    <Button
-                      size="sm"
-                      onClick={() =>
-                        track({
-                          event_id: crypto.randomUUID(),
-                          user_id: "u-demo",
-                          role: "sales",
-                          screen: "task_center",
-                          action: "click",
-                          target_type: "task_ai_consult",
-                          target_id: task.id,
-                          timestamp: new Date().toISOString(),
-                          metadata: { task_title: task.title },
-                        })
-                      }
-                    >
-                      AIに相談
-                    </Button>
-                    <Button tone="ghost" size="sm">
-                      タスクを開く
-                    </Button>
-                  </div>
-                </div>
+                </Link>
               ))}
           </div>
           {tasks.length === 0 && (

@@ -119,7 +119,7 @@ export default function WorkspaceListPage() {
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="grid grid-cols-3 gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs font-medium text-sub">
-          <span>PO番号</span>
+          <span>案件名</span>
           <span>顧客</span>
           <span>状態</span>
         </div>

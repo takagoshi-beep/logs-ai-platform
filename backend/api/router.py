@@ -330,6 +330,7 @@ def get_today_actions(limit: int = 20, scope: str = "mine", user: dict = Depends
                     "action_id": action.action_id,
                     "project_id": agg.project_id,
                     "project_name": agg.po_number,
+                    "project_title": agg.data.project_name,
                     "customer": agg.data.customer_name,
                     "title": action.title,
                     "description": action.description,
