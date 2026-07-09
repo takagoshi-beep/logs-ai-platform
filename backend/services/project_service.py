@@ -166,7 +166,7 @@ class ProjectService:
     def _attach_existence_data(self, conn, po_dicts: list[dict[str, Any]]) -> None:
         """po_dictsの各行に sales_date/purchase_date/production_closed を
         書き込む。1行ごとの相関サブクエリ（以前の実装）ではなく、
-        LOGS_CODE/PO_Noのリストをまとめて`= ANY(%s)`で引く**3回だけの
+        LOGS_CODE/PO_Noのリストをまとめて`= ANY(%s)`で引く**固定回数の
         クエリ**にすることで、行数に関わらずクエリ回数を固定する
         （2026-07-09、14.37）。
 
@@ -186,6 +186,15 @@ class ProjectService:
         OEM案件で、活動履歴に一番古い売上/仕入日が表示されてしまう
         不具合を修正（MIN→MAX）。同一商品が複数回発注される場合、
         直近の履歴の方が案件の実態に近いと判断した。
+
+        2026-07-09（14.41修正、Noritsuguの指定）: 仕入（has_purchase/
+        purchase_date、活動履歴の「仕入登録」イベントと状態バッジの
+        「原価未確定」判定の両方で使われる）は、商品単位（LOGS_CODE）
+        ではなくPO単位（purchases."POnum" = purchase_orders."PO_No"）
+        で判定するよう変更。1つのPOに複数商品が含まれる場合、そのPOに
+        対応する仕入伝票が1件でもあれば「仕入登録済み」とみなす。
+        一方、実績輸入経費率（actual_import_cost_ratio）は商品固有の
+        指標のため、そちらは引き続きLOGS_CODE単位のまま。
         """
         if not po_dicts:
             return
@@ -194,7 +203,7 @@ class ProjectService:
         po_numbers = list({d["PO_No"] for d in po_dicts if d.get("PO_No")})
 
         sales_dates: dict[str, Any] = {}
-        purchase_dates: dict[str, Any] = {}
+        purchase_dates_by_po: dict[str, Any] = {}
         actual_import_cost_ratios: dict[str, Any] = {}
         closed_po_numbers: set[str] = set()
 
@@ -209,24 +218,31 @@ class ProjectService:
                     for logs_code, max_date in cur.fetchall():
                         sales_dates[self._format_logs_code_for_project(logs_code)] = max_date
 
-                # purchase_date（活動履歴用）と実績輸入経費率（予実管理用、
-                # purchases."経費率"）は、同じ明細行から一緒に取る必要が
-                # ある（別々にMAXを取ると、日付と経費率が違う行から混ざって
-                # 不整合になる、2026-07-09・14.40）。DISTINCT ONで
-                # LOGS_CODEごとに最新の伝票日を持つ1行だけを選ぶ。
+                # 実績輸入経費率（purchases."経費率"）は商品固有の指標
+                # なので、LOGS_CODE単位のまま。DISTINCT ONでLOGS_CODEごと
+                # に最新の伝票日を持つ1行から日付と経費率を一緒に取る
+                # （別々にMAXを取ると違う行の値が混ざるため、14.40）。
                 with conn.cursor() as cur:
                     cur.execute(
-                        'SELECT DISTINCT ON ("LOGS_CODE") "LOGS_CODE", "伝票日", "経費率" '
+                        'SELECT DISTINCT ON ("LOGS_CODE") "LOGS_CODE", "経費率" '
                         'FROM purchases WHERE "LOGS_CODE" = ANY(%s) '
                         'ORDER BY "LOGS_CODE", "伝票日" DESC',
                         (raw_logs_codes,),
                     )
-                    for logs_code, max_date, cost_ratio in cur.fetchall():
-                        key = self._format_logs_code_for_project(logs_code)
-                        purchase_dates[key] = max_date
-                        actual_import_cost_ratios[key] = cost_ratio
+                    for logs_code, cost_ratio in cur.fetchall():
+                        actual_import_cost_ratios[self._format_logs_code_for_project(logs_code)] = cost_ratio
 
             if po_numbers:
+                # 仕入登録（活動履歴・状態バッジ用）はPO単位（14.41）。
+                with conn.cursor() as cur:
+                    cur.execute(
+                        'SELECT "POnum", MAX("伝票日") FROM purchases '
+                        'WHERE "POnum" = ANY(%s) GROUP BY "POnum"',
+                        (po_numbers,),
+                    )
+                    for po_no, max_date in cur.fetchall():
+                        purchase_dates_by_po[po_no] = max_date
+
                 with conn.cursor() as cur:
                     cur.execute(
                         'SELECT DISTINCT "POnum" FROM production_mass '
@@ -241,7 +257,7 @@ class ProjectService:
         for d in po_dicts:
             logs_code = self._format_logs_code_for_project(d.get("LOGS_CODE"))
             d["sales_date"] = sales_dates.get(logs_code)
-            d["purchase_date"] = purchase_dates.get(logs_code)
+            d["purchase_date"] = purchase_dates_by_po.get(d.get("PO_No"))
             d["actual_import_cost_ratio"] = actual_import_cost_ratios.get(logs_code)
             d["production_closed"] = d.get("PO_No") in closed_po_numbers
 

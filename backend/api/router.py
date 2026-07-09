@@ -151,10 +151,12 @@ def list_projects(limit: int = 10, scope: str = "mine", user: dict = Depends(req
             # の実際のテキスト（agg.data.project_name）とは別物。Gmail/Slackの
             # 検索キー（PO番号）として使われている既存の呼び出し元
             # （today-actions等）を壊さないよう、このキー名はそのままにして
-            # いる。実際の案件名テキストは案件詳細のdata.project_nameで見る。
+            # いる。実際の案件名テキストは"project_title"として別途追加した
+            # （14.41、一覧でもPO#+案件名を組み合わせて表示するため）。
             projects.append({
                 "project_id": agg.project_id,
                 "project_name": agg.po_number,
+                "project_title": agg.data.project_name,
                 "customer": agg.data.customer_name,
                 "state": agg.state.value,
                 "status_badges": agg.status_badges,

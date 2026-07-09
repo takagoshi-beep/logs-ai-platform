@@ -8,6 +8,7 @@ import { getProjects } from "@/lib/api-client";
 interface ApiProject {
   project_id: string;
   project_name: string;
+  project_title: string | null;
   customer: string;
   state: string;
   status_badges: string[];
@@ -51,6 +52,7 @@ export default function WorkspaceListPage() {
 
   const filtered = projects.filter((p) => {
     if (search && !p.project_name.toLowerCase().includes(search.toLowerCase()) &&
+        !(p.project_title ?? "").toLowerCase().includes(search.toLowerCase()) &&
         !p.customer.toLowerCase().includes(search.toLowerCase())) return false;
     if (stateFilter !== "all" && !(p.status_badges ?? []).includes(stateFilter)) return false;
     return true;
@@ -130,7 +132,10 @@ export default function WorkspaceListPage() {
             href={`/workspace/${project.project_id}`}
             className="grid grid-cols-3 items-center gap-2 border-b border-slate-100 px-4 py-3 text-sm text-ink last:border-b-0 hover:bg-slate-50"
           >
-            <span className="font-medium">{project.project_name}</span>
+            <span className="font-medium">
+              {project.project_title || project.project_name}
+              {project.project_title && <span className="ml-2 text-xs text-sub">{project.project_name}</span>}
+            </span>
             <span className="text-sub">{project.customer}</span>
             <span className="flex flex-wrap gap-1">
               {(project.status_badges ?? []).map((badge) => (

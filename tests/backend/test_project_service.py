@@ -163,7 +163,8 @@ def test_build_project_data_batch_uses_fixed_query_count_regardless_of_project_c
     response_map = {
         "FROM purchase_orders": ([_po_row(pid) for pid in project_ids], po_columns),
         "FROM sales": ([], ["LOGS_CODE", "min"]),
-        "FROM purchases": ([], ["LOGS_CODE", "min"]),
+        'FROM purchases WHERE "LOGS_CODE"': ([], ["LOGS_CODE", "cost_ratio"]),
+        'FROM purchases WHERE "POnum"': ([], ["POnum", "max"]),
         "FROM production_mass": ([], ["POnum"]),
     }
     fake_conn = _RoutingConnection(response_map)
@@ -173,9 +174,10 @@ def test_build_project_data_batch_uses_fixed_query_count_regardless_of_project_c
     result = service._build_project_data_batch(project_ids)
 
     assert len(result) == 50
-    # 1(PO取得) + 3(sales/purchases/production_massのまとめクエリ) = 4回。
+    # 1(PO取得) + sales + purchases(経費率、LOGS_CODE単位) +
+    # purchases(仕入登録、PO単位、14.41) + production_mass = 5回。
     # 案件数（50件）に比例していないことがポイント。
-    assert len(fake_conn.call_log) == 4
+    assert len(fake_conn.call_log) == 5
 
 
 def test_build_project_aggregates_bulk_preserves_order_and_skips_missing(monkeypatch):

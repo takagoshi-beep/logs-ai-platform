@@ -159,10 +159,13 @@ def test_attach_existence_data_uses_max_date_not_min(monkeypatch):
                     calls.append(sql)
 
                 def fetchall(self_inner):
-                    if "FROM sales" in sql_holder.get("sql", ""):
+                    sql = sql_holder.get("sql", "")
+                    if "FROM sales" in sql:
                         return [(5145.0, datetime(2026, 6, 1))]
-                    if "FROM purchases" in sql_holder.get("sql", ""):
-                        return [(5145.0, datetime(2026, 5, 1), 1.15)]
+                    if 'FROM purchases' in sql and '"LOGS_CODE"' in sql:
+                        return [(5145.0, 1.15)]
+                    if 'FROM purchases' in sql and '"POnum"' in sql:
+                        return [("PO-1", datetime(2026, 5, 1))]
                     return []
 
             return _Cur()
@@ -178,6 +181,51 @@ def test_attach_existence_data_uses_max_date_not_min(monkeypatch):
     assert not any("MIN(" in sql for sql in calls)
     assert po_dicts[0]["actual_import_cost_ratio"] == 1.15
     assert po_dicts[0]["sales_date"] == datetime(2026, 6, 1)
+    assert po_dicts[0]["purchase_date"] == datetime(2026, 5, 1)
+
+
+def test_attach_existence_data_matches_purchase_by_po_number_not_logs_code(monkeypatch):
+    """2026-07-09（14.41、Noritsuguの指定）: 仕入登録（活動履歴・状態
+    バッジ用のhas_purchase/purchase_date）は、商品単位（LOGS_CODE）では
+    なくPO単位（purchases."POnum"）で判定する。1つのPOに複数商品が
+    含まれる場合、そのPOの仕入伝票が1件でもあれば「仕入登録済み」と
+    みなす（他の商品の仕入だけでも、同じPOなら仕入登録済みと判断する）。
+    """
+    from services.project_service import ProjectService
+
+    class _RoutingConn:
+        def cursor(self):
+            sql_holder = {}
+
+            class _Cur:
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, *a):
+                    return False
+
+                def execute(self_inner, sql, params=None):
+                    sql_holder["sql"] = sql
+
+                def fetchall(self_inner):
+                    sql = sql_holder.get("sql", "")
+                    if "FROM sales" in sql:
+                        return []
+                    if "FROM purchases" in sql and '"LOGS_CODE"' in sql:
+                        return []  # この商品固有の仕入行は無い
+                    if "FROM purchases" in sql and '"POnum"' in sql:
+                        return [("PO-1", datetime(2026, 5, 1))]  # 同じPOの別商品の仕入
+                    return []
+
+            return _Cur()
+
+        def close(self):
+            pass
+
+    service = ProjectService()
+    po_dicts = [{"LOGS_CODE": 9999.0, "PO_No": "PO-1"}]
+    service._attach_existence_data(_RoutingConn(), po_dicts)
+
     assert po_dicts[0]["purchase_date"] == datetime(2026, 5, 1)
 
 
