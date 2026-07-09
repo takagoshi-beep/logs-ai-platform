@@ -262,6 +262,70 @@ def test_get_product_detail_normalizes_float_logs_code_for_display(monkeypatch):
     assert detail["master"]["LOGS_CODE"] == "13564"
 
 
+def test_get_product_detail_derives_sales_admin_from_po_first(monkeypatch):
+    """2026-07-09: 商品マスタ自体には営業事務担当者の列が無いため、
+    PO履歴・仕入履歴から導出する。PO履歴を優先する。"""
+    master_cols = ["ID", "LOGS_CODE", "Sample_CODE", "商品名"]
+    master_rows = [(101, "5145", None, "Baseball Cap")]
+
+    po_cols = ["ID", "PO_No", "顧客名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "企画担当者名", "発注数量", "発注金額", "PO発行日"]
+    po_rows = [(1, "914-1", "US_LOGS Inc.", "山田太郎", "高越規嗣", None, None, 10, 1000, "2026-01-01")]
+
+    purchase_cols = ["仕入先名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "仕入数量pcs", "仕入金額円", "伝票日"]
+    purchase_rows = [("1064STUDIO", "山田太郎", "別の事務担当", "木村美菜", 10, 500, "2026-01-15")]
+
+    monkeypatch.setattr(
+        product_service, "get_connection",
+        lambda: _SequentialFakeConnection([
+            (master_rows, master_cols),
+            (po_rows, po_cols),
+            ([], ["得意先名"]),
+            (purchase_rows, purchase_cols),
+        ]),
+    )
+
+    detail = product_service.get_product_detail("101")
+    assert detail["master"]["営業事務担当者名"] == "高越規嗣"  # PO側を優先
+
+
+def test_get_product_detail_falls_back_to_purchase_for_sales_admin(monkeypatch):
+    """PO履歴に営業事務担当者名が無い場合は、仕入履歴から拾う。"""
+    master_cols = ["ID", "LOGS_CODE", "Sample_CODE", "商品名"]
+    master_rows = [(101, "5145", None, "Baseball Cap")]
+
+    po_cols = ["ID", "PO_No", "顧客名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "企画担当者名", "発注数量", "発注金額", "PO発行日"]
+    po_rows = [(1, "914-1", "US_LOGS Inc.", "山田太郎", None, None, None, 10, 1000, "2026-01-01")]
+
+    purchase_cols = ["仕入先名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "仕入数量pcs", "仕入金額円", "伝票日"]
+    purchase_rows = [("1064STUDIO", "山田太郎", "木村美菜", "木村美菜", 10, 500, "2026-01-15")]
+
+    monkeypatch.setattr(
+        product_service, "get_connection",
+        lambda: _SequentialFakeConnection([
+            (master_rows, master_cols),
+            (po_rows, po_cols),
+            ([], ["得意先名"]),
+            (purchase_rows, purchase_cols),
+        ]),
+    )
+
+    detail = product_service.get_product_detail("101")
+    assert detail["master"]["営業事務担当者名"] == "木村美菜"
+
+
+def test_get_product_detail_sales_admin_none_when_not_found_anywhere(monkeypatch):
+    master_cols = ["ID", "LOGS_CODE", "Sample_CODE", "商品名"]
+    master_rows = [(101, None, None, "Baseball Cap")]
+
+    monkeypatch.setattr(
+        product_service, "get_connection",
+        lambda: _SequentialFakeConnection([(master_rows, master_cols)]),
+    )
+
+    detail = product_service.get_product_detail("101")
+    assert detail["master"]["営業事務担当者名"] is None
+
+
 def test_get_product_detail_returns_none_when_master_row_missing(monkeypatch):
     monkeypatch.setattr(
         product_service, "get_connection",

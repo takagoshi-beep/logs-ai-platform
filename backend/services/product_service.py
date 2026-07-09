@@ -352,11 +352,23 @@ def get_product_detail(product_id: str) -> dict[str, Any] | None:
     finally:
         conn.close()
 
+    # 商品マスタ自体には営業事務担当者の列が存在しない（PO・仕入の
+    # 伝票にしか記録されない）ため、この商品のPO履歴・仕入履歴から
+    # 導出して商品情報として表示する（PO発行日の新しい順で最初に
+    # 見つかった値を採用。無ければ仕入履歴を見る。2026-07-09、
+    # 営業事務担当者を商品にも紐づけたいという要望への対応）。
+    po_dicts = _rows_to_dicts(po_rows, po_cols)
+    purchase_dicts = _rows_to_dicts(purchase_rows, purchase_cols)
+    sales_admin = next((r["営業事務担当者名"] for r in po_dicts if r.get("営業事務担当者名")), None)
+    if not sales_admin:
+        sales_admin = next((r["営業事務担当者名"] for r in purchase_dicts if r.get("営業事務担当者名")), None)
+    master["営業事務担当者名"] = sales_admin
+
     return {
         "master": master,
-        "purchase_orders": _rows_to_dicts(po_rows, po_cols),
+        "purchase_orders": po_dicts,
         "sales": _rows_to_dicts(sales_rows, sales_cols),
-        "purchases": _rows_to_dicts(purchase_rows, purchase_cols),
+        "purchases": purchase_dicts,
         "samples": sample_rows,
         "status": {
             "po_issued": len(po_rows) > 0,

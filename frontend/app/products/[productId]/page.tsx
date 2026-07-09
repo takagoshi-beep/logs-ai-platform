@@ -135,6 +135,7 @@ export default function ProductDetailPage({ params }: Params) {
           <div>仕入先: {m.仕入先名 ?? "—"}</div>
           <div>作成者: {m.作成者名 ?? "—"}</div>
           <div>仕入先の生産管理担当: {m.supplier_production_staff ?? "—"}</div>
+          <div>営業事務担当: {m.営業事務担当者名 ?? "—"}</div>
           <div>通常売価: {fmtYen(m.通常売価)}</div>
         </div>
       </Card>
