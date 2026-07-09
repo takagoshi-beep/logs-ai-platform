@@ -14,6 +14,12 @@ class ProjectState(str, Enum):
     DELIVERY_RECEIVED = "delivery_received"
     AWAITING_PAYMENT = "awaiting_payment"
     COST_UNCONFIRMED = "cost_unconfirmed"
+    # 2026-07-09（14.39、Noritsuguの指定）: 案件は「完了」（売上・仕入とも
+    # 入力済み）でなければ、売上未確定・原価未確定のどちらか、または
+    # 両方が同時に成立する。同時表示に対応するため、_determine_state
+    # （単一値、内部の events/actions 用）とは別に、_determine_status_
+    # badges（複数可、画面表示用）を project_service.py に設けている。
+    SALES_UNCONFIRMED = "sales_unconfirmed"
     GROSS_PROFIT_UNCONFIRMED = "gross_profit_unconfirmed"
     GROSS_PROFIT_DEGRADED = "gross_profit_degraded"
     COMPLETED = "completed"
@@ -291,6 +297,12 @@ class ProjectAggregate:
     # いなかった（Noritsuguの判断）ため廃止。代わりに現在日から納品日
     # までの月数だけで判定するdelivery_month_bucketに置き換えた。
     delivery_month_bucket: Optional[str] = None
+    # 2026-07-09（14.39）: 完了以外の場合、売上未確定・原価未確定が
+    # 同時に成立しうるため、単一のstateではなく複数可のリストで持つ。
+    # 画面表示（案件一覧・案件詳細）にはこちらを使う。納期超過バッジは
+    # Noritsuguの判断で廃止（実データでは常に完了/売上未確定/原価未確定
+    # の3つだけで十分と判断）。
+    status_badges: list[str] = field(default_factory=list)
 
     def get_at_risk_goals(self) -> list[ProjectGoal]:
         return [goal for goal, eval in self.goal_evaluations.evaluations.items()
@@ -304,6 +316,7 @@ class ProjectAggregate:
             "state": self.state.value,
             "priority": self.priority,
             "delivery_month_bucket": self.delivery_month_bucket,
+            "status_badges": self.status_badges,
             "events": {
                 "count": self.events.event_count,
                 "items": [e.to_dict() for e in self.events.events],

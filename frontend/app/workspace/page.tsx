@@ -10,24 +10,20 @@ interface ApiProject {
   project_name: string;
   customer: string;
   state: string;
+  status_badges: string[];
   priority: string;
   actions_count: number;
   events_count: number;
   trace_id: string;
 }
 
+// 2026-07-09（14.39、Noritsuguの指定）: 状態は「完了」（売上・仕入とも
+// 入力済み）以外は「売上未確定」「原価未確定」が同時に表示されうる。
+// 納期超過は廃止した。
 const STATE_LABEL: Record<string, string> = {
-  initiated: "開始済み",
-  delivery_received: "納品済み・請求待ち",
-  awaiting_payment: "入金待ち",
-  cost_unconfirmed: "原価未確定",
-  gp_unconfirmed: "粗利未確定",
-  gp_degraded: "粗利低下",
   completed: "完了",
-  delivery_overdue: "納期超過",
-  payment_overdue: "支払遅延",
-  cost_discrepancy: "原価相違",
-  customer_confirmation_needed: "顧客確認待ち",
+  sales_unconfirmed: "売上未確定",
+  cost_unconfirmed: "原価未確定",
 };
 
 export default function WorkspaceListPage() {
@@ -51,12 +47,12 @@ export default function WorkspaceListPage() {
     });
   }, [scopeChoice]);
 
-  const states = Array.from(new Set(projects.map((p) => p.state)));
+  const states = Array.from(new Set(projects.flatMap((p) => p.status_badges ?? [])));
 
   const filtered = projects.filter((p) => {
     if (search && !p.project_name.toLowerCase().includes(search.toLowerCase()) &&
         !p.customer.toLowerCase().includes(search.toLowerCase())) return false;
-    if (stateFilter !== "all" && p.state !== stateFilter) return false;
+    if (stateFilter !== "all" && !(p.status_badges ?? []).includes(stateFilter)) return false;
     return true;
   });
 
@@ -120,12 +116,10 @@ export default function WorkspaceListPage() {
       </div>
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="grid grid-cols-5 gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs font-medium text-sub">
+        <div className="grid grid-cols-3 gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs font-medium text-sub">
           <span>PO番号</span>
           <span>顧客</span>
           <span>状態</span>
-          <span>優先度</span>
-          <span>アクション数</span>
         </div>
         {loading && (
           <p className="px-4 py-8 text-center text-sm text-sub">読み込み中...</p>
@@ -134,15 +128,15 @@ export default function WorkspaceListPage() {
           <Link
             key={project.project_id}
             href={`/workspace/${project.project_id}`}
-            className="grid grid-cols-5 items-center gap-2 border-b border-slate-100 px-4 py-3 text-sm text-ink last:border-b-0 hover:bg-slate-50"
+            className="grid grid-cols-3 items-center gap-2 border-b border-slate-100 px-4 py-3 text-sm text-ink last:border-b-0 hover:bg-slate-50"
           >
             <span className="font-medium">{project.project_name}</span>
             <span className="text-sub">{project.customer}</span>
-            <span>
-              <StatusBadge status={STATE_LABEL[project.state] ?? project.state} />
+            <span className="flex flex-wrap gap-1">
+              {(project.status_badges ?? []).map((badge) => (
+                <StatusBadge key={badge} status={STATE_LABEL[badge] ?? badge} />
+              ))}
             </span>
-            <span className="text-sub">{project.priority}</span>
-            <span className="text-sub">{project.actions_count}</span>
           </Link>
         ))}
         {!loading && filtered.length === 0 && (

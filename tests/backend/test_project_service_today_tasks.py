@@ -39,55 +39,50 @@ def _make_data(**overrides) -> ProjectData:
     return ProjectData(**defaults)
 
 
-def test_state_is_completed_when_sales_exist():
+def test_state_is_completed_only_when_both_sales_and_purchase_recorded():
+    """2026-07-09（14.39、Noritsuguの指定）: 完了は売上・仕入とも
+    入力済みの場合のみ。納期超過・production_closedは状態判定から
+    廃止した。"""
+    data = _make_data(has_sales=True, has_purchase=True)
+    assert ProjectService()._determine_state(data) == ProjectState.COMPLETED
+
+
+def test_state_is_not_completed_when_only_sales_recorded():
     data = _make_data(has_sales=True, has_purchase=False)
-    state = ProjectService()._determine_state(data)
-    assert state == ProjectState.COMPLETED
+    assert ProjectService()._determine_state(data) != ProjectState.COMPLETED
 
 
-def test_state_is_completed_when_production_closed_even_without_sales():
-    """生産管理『量産』シートの表示フラグ=0（担当者が終了扱いにした）
-    だけでも完了とみなす。"""
-    data = _make_data(has_sales=False, production_closed=True)
-    state = ProjectService()._determine_state(data)
-    assert state == ProjectState.COMPLETED
+def test_state_is_cost_unconfirmed_when_purchase_missing():
+    data = _make_data(has_sales=True, has_purchase=False)
+    assert ProjectService()._determine_state(data) == ProjectState.COST_UNCONFIRMED
 
 
-def test_state_is_delivery_overdue_when_not_delivered_and_past_due():
-    data = _make_data(
-        has_sales=False, production_closed=False,
-        po_required_delivery_date=datetime.now() - timedelta(days=1),
-    )
-    state = ProjectService()._determine_state(data)
-    assert state == ProjectState.DELIVERY_OVERDUE
+def test_state_is_sales_unconfirmed_when_only_purchase_missing_is_false():
+    data = _make_data(has_sales=False, has_purchase=True)
+    assert ProjectService()._determine_state(data) == ProjectState.SALES_UNCONFIRMED
 
 
-def test_state_is_delivery_overdue_takes_priority_over_cost_unconfirmed():
-    """納期超過は、原価未確定より優先して表示する（両方成立しうる場合）。"""
-    data = _make_data(
-        has_sales=False, has_purchase=False,
-        po_required_delivery_date=datetime.now() - timedelta(days=1),
-    )
-    state = ProjectService()._determine_state(data)
-    assert state == ProjectState.DELIVERY_OVERDUE
+def test_status_badges_completed_when_both_recorded():
+    data = _make_data(has_sales=True, has_purchase=True)
+    assert ProjectService()._determine_status_badges(data) == ["completed"]
 
 
-def test_state_is_cost_unconfirmed_when_not_delivered_not_overdue_no_purchase():
-    data = _make_data(
-        has_sales=False, has_purchase=False,
-        po_required_delivery_date=datetime.now() + timedelta(days=10),
-    )
-    state = ProjectService()._determine_state(data)
-    assert state == ProjectState.COST_UNCONFIRMED
+def test_status_badges_shows_both_when_neither_recorded():
+    """2026-07-09（14.39、Noritsuguの指定）: 売上未確定・原価未確定は
+    同時に表示されうる（画面表示用のstatus_badgesは複数可）。"""
+    data = _make_data(has_sales=False, has_purchase=False)
+    badges = ProjectService()._determine_status_badges(data)
+    assert set(badges) == {"sales_unconfirmed", "cost_unconfirmed"}
 
 
-def test_state_is_initiated_when_not_delivered_not_overdue_purchase_recorded():
-    data = _make_data(
-        has_sales=False, has_purchase=True,
-        po_required_delivery_date=datetime.now() + timedelta(days=10),
-    )
-    state = ProjectService()._determine_state(data)
-    assert state == ProjectState.INITIATED
+def test_status_badges_shows_only_sales_unconfirmed():
+    data = _make_data(has_sales=False, has_purchase=True)
+    assert ProjectService()._determine_status_badges(data) == ["sales_unconfirmed"]
+
+
+def test_status_badges_shows_only_cost_unconfirmed():
+    data = _make_data(has_sales=True, has_purchase=False)
+    assert ProjectService()._determine_status_badges(data) == ["cost_unconfirmed"]
 
 
 def test_goal_confirm_delivery_at_risk_when_purchase_without_sales():

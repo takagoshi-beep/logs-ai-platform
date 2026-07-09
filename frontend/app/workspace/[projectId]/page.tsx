@@ -58,6 +58,7 @@ interface ProjectDetail {
   project_id: string;
   po_number: string;
   state: string;
+  status_badges: string[];
   priority: string;
   delivery_month_bucket: string | null;
   data: {
@@ -74,18 +75,13 @@ interface ProjectDetail {
   events: { count: number; items: ProjectEvent[] };
 }
 
+// 2026-07-09（14.39、Noritsuguの指定）: 状態は「完了」（売上・仕入とも
+// 入力済み）以外は「売上未確定」「原価未確定」が同時に表示されうる。
+// 納期超過は廃止した。
 const STATE_LABEL: Record<string, string> = {
-  initiated: "開始済み",
-  delivery_received: "納品済み・請求待ち",
-  awaiting_payment: "入金待ち",
-  cost_unconfirmed: "原価未確定",
-  gross_profit_unconfirmed: "粗利未確定",
-  gross_profit_degraded: "粗利低下",
   completed: "完了",
-  delivery_overdue: "納期超過",
-  payment_overdue: "支払遅延",
-  cost_discrepancy: "原価相違",
-  customer_confirmation_needed: "顧客確認待ち",
+  sales_unconfirmed: "売上未確定",
+  cost_unconfirmed: "原価未確定",
 };
 
 // 2026-07-09（14.35）: 健全性・リスク・推奨対応を廃止し、現在から納品日
@@ -136,8 +132,6 @@ export default function WorkspacePage({ params }: Params) {
     );
   }
 
-  const stateLabel = STATE_LABEL[project.state] ?? project.state;
-
   return (
     <div className="space-y-5">
       <header className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -149,7 +143,11 @@ export default function WorkspacePage({ params }: Params) {
         <Card>
           <div className="mb-2 flex items-center justify-between gap-2">
             <h3 className="text-sm font-semibold text-ink">{project.data.customer_name}</h3>
-            <StatusBadge status={stateLabel} />
+            <div className="flex flex-wrap gap-1">
+              {(project.status_badges ?? []).map((badge) => (
+                <StatusBadge key={badge} status={STATE_LABEL[badge] ?? badge} />
+              ))}
+            </div>
           </div>
           <p className="text-sm text-sub">仕入先: {project.data.supplier_name}</p>
           <p className="mt-2 text-xs text-sub">納期まで: {project.data.days_until_delivery}日</p>

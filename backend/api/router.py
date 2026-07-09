@@ -151,6 +151,7 @@ def list_projects(limit: int = 10, scope: str = "mine", user: dict = Depends(req
                 "project_name": agg.po_number,
                 "customer": agg.data.customer_name,
                 "state": agg.state.value,
+                "status_badges": agg.status_badges,
                 "priority": agg.priority,
                 "actions_count": len(agg.actions),
                 "events_count": agg.events.event_count,

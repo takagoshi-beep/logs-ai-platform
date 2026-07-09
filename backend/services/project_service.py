@@ -367,28 +367,41 @@ class ProjectService:
         return events
 
     def _determine_state(self, data: ProjectData) -> ProjectState:
-        """Determine project state based on data.
+        """Determine a single primary project state, used internally for
+        events/actions（related_state）— not the same as the画面表示用の
+        `_determine_status_badges`（複数可）。
 
-        2026-07-09（14.33、Noritsuguの指摘を反映した修正）: POデータの
-        納品日/支払日は実質常に空のため、以前はこれに依存した判定
-        （AWAITING_PAYMENT・GROSS_PROFIT_DEGRADED等）が実データでは
-        機能していなかった。代わりに、同じLOGS_CODEにsales/purchasesの
-        実データがあるか（has_sales/has_purchase）、または生産管理
-        『量産』シートで表示OFFにされているか（production_closed）で
-        判定する。優先順位: 完了 > 納期超過 > 原価未確定 > 開始済み。
-        粗利のズレ（PO予定粗利 vs 仕入確定粗利）は状態バッジではなく
-        案件詳細の評価項目として別途扱う（今日のタスクの対象外）。
+        2026-07-09（14.39、Noritsuguの指定）: 完了は「売上・仕入とも
+        入力済み」の場合のみ。それ以外は原価未確定を優先して1つ返す
+        （画面表示では売上未確定と原価未確定が同時に出ることもあるが、
+        こちらは内部処理用の単一値なので優先順位をつけている）。
+        納期超過は廃止（Noritsuguの判断、実データでは完了/売上未確定/
+        原価未確定の3つだけで十分と判断したため）。
         """
-        if data.is_delivered:
+        if data.has_sales and data.has_purchase:
             return ProjectState.COMPLETED
-
-        if data.is_overdue:
-            return ProjectState.DELIVERY_OVERDUE
-
         if not data.has_purchase:
             return ProjectState.COST_UNCONFIRMED
+        return ProjectState.SALES_UNCONFIRMED
 
-        return ProjectState.INITIATED
+    def _determine_status_badges(self, data: ProjectData) -> list[str]:
+        """画面表示用の状態バッジ（複数可）。2026-07-09（14.39、
+        Noritsuguの指定）:
+          - 完了: 売上・仕入とも入力済み
+          - 売上未確定: 売上未入力
+          - 原価未確定: 仕入未入力
+        売上未確定・原価未確定は同時に成立しうる（どちらも未入力の場合、
+        両方のバッジが返る）。完了はこの2つとは排他的。
+        """
+        if data.has_sales and data.has_purchase:
+            return [ProjectState.COMPLETED.value]
+
+        badges = []
+        if not data.has_sales:
+            badges.append(ProjectState.SALES_UNCONFIRMED.value)
+        if not data.has_purchase:
+            badges.append(ProjectState.COST_UNCONFIRMED.value)
+        return badges
 
     def _evaluate_goals(self, data: ProjectData, state: ProjectState) -> GoalEvaluations:
         """Evaluate business goals for a project.
@@ -648,6 +661,7 @@ class ProjectService:
         decisions = self._generate_decisions(data, state, goals)
         actions = self._generate_actions(data, state, decisions, trace_id)
         delivery_month_bucket = self._determine_delivery_month_bucket(data)
+        status_badges = self._determine_status_badges(data)
 
         aggregate = ProjectAggregate(
             project_id=project_id,
@@ -661,6 +675,7 @@ class ProjectService:
             trace_id=trace_id,
             priority="high" if decisions else "medium",
             delivery_month_bucket=delivery_month_bucket,
+            status_badges=status_badges,
         )
 
         if save_trace_flag:
