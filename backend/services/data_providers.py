@@ -86,6 +86,8 @@ class LogsysProvider:
         # ステータス・決済方法の集計フィルタは、本番運用中のシステムプロンプト
         # （別アプリ app.py の system_sql）で確認済みの正式ルール。
         # 赤伝（ステータス=3）は返品として含める。仮出庫（決済方法=4）は除外する。
+        # v_sales_enriched（14.32）を経由することで、商品分類・顧客分類・
+        # 仕入先の生産管理担当者・各担当者のメール/Slack IDも一緒に返す。
         where = "\"ステータス\" IN (2, 3, 4, 5) AND \"決済方法\" != '4'"
         args: list[Any] = []
         if params.get("period_start"):
@@ -103,8 +105,11 @@ class LogsysProvider:
 
         sql = (
             'SELECT "売上入力日", "得意先ID", "得意先名", "登録商品名", '
-            '"事業分類", "数量pcs", "売上金額", "明細粗利", "営業担当者名" '
-            f'FROM sales WHERE {where} ORDER BY "売上入力日"'
+            '"LOGS_CODE", "SAMPLE_CODE", "product_category", '
+            '"事業分類", "数量pcs", "売上金額", "明細粗利", "営業担当者名", '
+            '"customer_category", "customer_business_scale", "customer_trade_tendency", '
+            '"supplier_production_staff", "sales_rep_email", "sales_admin_email", "accounting_email" '
+            f'FROM v_sales_enriched WHERE {where} ORDER BY "売上入力日"'
         )
         rows = self._query(sql, tuple(args))
 
@@ -116,7 +121,7 @@ class LogsysProvider:
         agg_sql = (
             'SELECT COUNT(*) AS "件数", COALESCE(SUM("売上金額"), 0) AS "売上金額合計", '
             'COALESCE(SUM("明細粗利"), 0) AS "粗利合計" '
-            f'FROM sales WHERE {where}'
+            f'FROM v_sales_enriched WHERE {where}'
         )
         agg_rows = self._query(agg_sql, tuple(args))
         aggregate = agg_rows[0] if agg_rows else {"件数": len(rows), "売上金額合計": 0, "粗利合計": 0}
@@ -134,6 +139,51 @@ class LogsysProvider:
         )
         evidence["aggregate"] = aggregate
         return evidence
+
+    _SALES_GROUP_BY_COLUMNS = {
+        "product_category": "product_category",
+        "customer_category": "customer_category",
+    }
+
+    def _sales_by_category(self, params: dict[str, Any]) -> dict[str, Any]:
+        """商品分類・顧客分類ごとの売上をSQL側でGROUP BY集計する
+        (docs/architecture.md 14.32)。sales_lines/aggregateと違い、分類は
+        9種類程度しかないため200件の壁に一切引っかからず、正確な内訳が
+        返せる（「商品分類がバッグの売上は？」のような質問で、salesと
+        productsを手動で照合しようとして破綻していた実例の修正）。
+        """
+        group_by = self._SALES_GROUP_BY_COLUMNS.get(params.get("group_by", "product_category"))
+        if not group_by:
+            return _evidence(
+                self.name, "sales_by_category", "unavailable",
+                f"group_byには{list(self._SALES_GROUP_BY_COLUMNS)}のいずれかを指定してください。",
+            )
+
+        where = "\"ステータス\" IN (2, 3, 4, 5) AND \"決済方法\" != '4'"
+        args: list[Any] = []
+        if params.get("period_start"):
+            where += ' AND "売上入力日" >= %s'
+            args.append(params["period_start"])
+        if params.get("period_end"):
+            where += ' AND "売上入力日" <= %s'
+            args.append(params["period_end"])
+        if params.get("sales_rep_keyword"):
+            where += ' AND "営業担当者名" LIKE %s'
+            args.append(f"%{params['sales_rep_keyword']}%")
+
+        sql = (
+            f'SELECT "{group_by}", COUNT(*) AS "件数", '
+            'COALESCE(SUM("売上金額"), 0) AS "売上金額合計", '
+            'COALESCE(SUM("明細粗利"), 0) AS "粗利合計" '
+            f'FROM v_sales_enriched WHERE {where} '
+            f'GROUP BY "{group_by}" ORDER BY "売上金額合計" DESC'
+        )
+        rows = self._query(sql, tuple(args))
+        return _evidence(
+            self.name, "sales_by_category", "ok",
+            f"{group_by}別の売上を{len(rows)}分類分集計しました（分類数が少ないため全件、切り捨てなし）。",
+            rows,
+        )
 
     def _purchase_lines(self, params: dict[str, Any]) -> dict[str, Any]:
         # ステータスIN(2,3)は本番運用中のシステムプロンプトで確認済みの

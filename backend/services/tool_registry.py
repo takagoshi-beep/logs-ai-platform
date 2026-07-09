@@ -21,6 +21,11 @@ TOOLS: list[dict[str, Any]] = [
         "description": (
             "実際の売上明細を取得する。有効な受注のみを対象とする標準フィルタ"
             "（ステータス・決済方法）が既に適用済み。"
+            "商品分類（product_category）・顧客分類（customer_category）は既に"
+            "名称に変換済みで、そのまま使ってよい（get_code_masterで確認する"
+            "必要はない）。商品分類・顧客分類ごとの合計が知りたい場合は、"
+            "records/aggregateではなくget_sales_by_categoryを使うこと"
+            "（分類は数種類しかないため200件の壁に引っかからず、正確に集計できる）。"
             "【合計金額・件数は必ず結果の`aggregate`フィールド（件数・売上金額合計・"
             "粗利合計）を使うこと。`records`を自分で合計・カウントしてはいけない —"
             "`records`は件数が多い場合に先頭200件だけに切り捨てられる（`truncated: "
@@ -40,6 +45,31 @@ TOOLS: list[dict[str, Any]] = [
                 "period_start": {"type": "string", "description": "期間開始日（YYYY-MM-DD形式）"},
                 "period_end": {"type": "string", "description": "期間終了日（YYYY-MM-DD形式）"},
                 "customer_keyword": {"type": "string", "description": "顧客名の部分一致キーワード"},
+                "sales_rep_keyword": {"type": "string", "description": "営業担当者名の部分一致キーワード"},
+            },
+        },
+    },
+    {
+        "name": "get_sales_by_category",
+        "description": (
+            "商品分類、または顧客分類ごとの売上（件数・合計金額・粗利）を、"
+            "SQL側でGROUP BY集計して返す。「商品分類がバッグの売上は？」"
+            "「顧客分類（D2C/量販店等）ごとの売上を教えて」のような質問に使う。"
+            "分類は数種類しかないため200件の壁に一切引っかからず、常に正確な"
+            "全件集計が返る（get_sales_linesでrecordsを自分で商品マスタと"
+            "手動照合しようとすると、件数が多い場合に必ず不正確になるため、"
+            "この専用ツールを使うこと）。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "group_by": {
+                    "type": "string",
+                    "enum": ["product_category", "customer_category"],
+                    "description": "集計軸。product_category=商品分類別、customer_category=顧客分類別（既定はproduct_category）",
+                },
+                "period_start": {"type": "string", "description": "期間開始日（YYYY-MM-DD形式）"},
+                "period_end": {"type": "string", "description": "期間終了日（YYYY-MM-DD形式）"},
                 "sales_rep_keyword": {"type": "string", "description": "営業担当者名の部分一致キーワード"},
             },
         },
@@ -300,6 +330,8 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
     try:
         if tool_name == "get_sales_lines":
             result = _PROVIDERS["logsys"].fetch("sales_lines", tool_input)
+        elif tool_name == "get_sales_by_category":
+            result = _PROVIDERS["logsys"].fetch("sales_by_category", tool_input)
         elif tool_name == "get_purchase_lines":
             result = _PROVIDERS["logsys"].fetch("purchase_lines", tool_input)
         elif tool_name == "get_projects":

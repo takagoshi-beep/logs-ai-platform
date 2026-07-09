@@ -96,3 +96,53 @@ def test_product_master_translates_category_and_includes_new_fields(monkeypatch)
     assert '"Sample_CODE"' in captured["sql"]
     assert '"仕入先名"' in captured["sql"]
     assert result["records"][0]["商品分類名"] == "帽子"
+
+
+def test_sales_lines_reads_from_enriched_view(monkeypatch):
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured.setdefault("sqls", []).append(sql)
+        return []
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    LogsysProvider()._sales_lines({})
+
+    assert all("v_sales_enriched" in sql for sql in captured["sqls"])
+    assert '"product_category"' in captured["sqls"][0]
+
+
+def test_sales_by_category_groups_by_product_category(monkeypatch):
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured["sql"] = sql
+        return [{"product_category": "バッグ", "件数": 50, "売上金額合計": 1000000, "粗利合計": 200000}]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._sales_by_category({})
+
+    assert '"product_category"' in captured["sql"]
+    assert "GROUP BY" in captured["sql"]
+    assert result["records"][0]["product_category"] == "バッグ"
+
+
+def test_sales_by_category_supports_customer_category_group_by(monkeypatch):
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured["sql"] = sql
+        return []
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    LogsysProvider()._sales_by_category({"group_by": "customer_category"})
+
+    assert '"customer_category"' in captured["sql"]
+
+
+def test_sales_by_category_rejects_unknown_group_by():
+    result = LogsysProvider()._sales_by_category({"group_by": "not_a_real_column"})
+    assert result["status"] == "unavailable"
