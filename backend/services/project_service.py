@@ -79,23 +79,6 @@ class ProjectService:
         '"合計発注金額", "合計売上原価", "合計売上金額"'
     )
 
-    # 2026-07-09（14.33）: 納品日/支払日はPOデータに実質入らないため、
-    # 「納品済みか」「原価確定済みか」を判定するのに使えない
-    # （Noritsuguの指摘、実データで確認済み）。代わりに、同じLOGS_CODEで
-    # sales/purchasesに実際にデータが入っているかをEXISTSで判定する。
-    # production_mass（生産管理『量産』シート）の"表示"列が0の行が
-    # 1件でもあれば、担当者が案件を終了済みとして表示OFFにした印として
-    # 「納品済み」扱いにする（14.28で学んだ通り、N回接続ではなく
-    # サブクエリで1回のクエリにまとめている）。
-    _EXISTENCE_SELECT_COLUMNS = (
-        '(SELECT MIN(s."売上入力日") FROM sales s WHERE s."LOGS_CODE" = po."LOGS_CODE") AS "sales_date", '
-        '(SELECT MIN(pu."伝票日") FROM purchases pu WHERE pu."LOGS_CODE" = po."LOGS_CODE") AS "purchase_date", '
-        'EXISTS('
-        '    SELECT 1 FROM production_mass pm '
-        '    WHERE pm."POnum" = po."PO_No" AND pm."表示"::text = \'0\''
-        ') AS "production_closed"'
-    )
-
     @staticmethod
     def _parse_date(date_val: Any) -> datetime | None:
         if not date_val:
@@ -177,6 +160,73 @@ class ProjectService:
             print(f"Error building project data: {e}")
             return None
 
+    def _attach_existence_data(self, conn, po_dicts: list[dict[str, Any]]) -> None:
+        """po_dictsの各行に sales_date/purchase_date/production_closed を
+        書き込む。1行ごとの相関サブクエリ（以前の実装）ではなく、
+        LOGS_CODE/PO_Noのリストをまとめて`= ANY(%s)`で引く**3回だけの
+        クエリ**にすることで、行数に関わらずクエリ回数を固定する
+        （2026-07-09、14.37）。
+
+        14.33/14.35で導入した1行ごとの相関サブクエリ（EXISTS/MIN）が、
+        sales/purchasesのようなインデックスの無い大きいテーブルに対して
+        行数分実行され、案件一覧の表示が著しく遅くなっていた実例の修正。
+        14.28で学んだ「N回接続ではなく1回にまとめる」の教訓を、今回は
+        「1回の接続の中でも、行ごとの重いサブクエリではなくまとめて
+        引く」という形で再徹底している。
+
+        LOGS_CODEはdouble precision型のため、SQL側の比較には生の値
+        （float）をそのまま使い、Python側の突合キーとしてのみ
+        `_format_logs_code_for_project`で正規化する（型不一致を避ける
+        ため、14.30・本日複数回遭遇した問題と同じ理由）。
+        """
+        if not po_dicts:
+            return
+
+        raw_logs_codes = [d["LOGS_CODE"] for d in po_dicts if d.get("LOGS_CODE") is not None]
+        po_numbers = list({d["PO_No"] for d in po_dicts if d.get("PO_No")})
+
+        sales_dates: dict[str, Any] = {}
+        purchase_dates: dict[str, Any] = {}
+        closed_po_numbers: set[str] = set()
+
+        try:
+            if raw_logs_codes:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        'SELECT "LOGS_CODE", MIN("売上入力日") FROM sales '
+                        'WHERE "LOGS_CODE" = ANY(%s) GROUP BY "LOGS_CODE"',
+                        (raw_logs_codes,),
+                    )
+                    for logs_code, min_date in cur.fetchall():
+                        sales_dates[self._format_logs_code_for_project(logs_code)] = min_date
+
+                with conn.cursor() as cur:
+                    cur.execute(
+                        'SELECT "LOGS_CODE", MIN("伝票日") FROM purchases '
+                        'WHERE "LOGS_CODE" = ANY(%s) GROUP BY "LOGS_CODE"',
+                        (raw_logs_codes,),
+                    )
+                    for logs_code, min_date in cur.fetchall():
+                        purchase_dates[self._format_logs_code_for_project(logs_code)] = min_date
+
+            if po_numbers:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        'SELECT DISTINCT "POnum" FROM production_mass '
+                        'WHERE "POnum" = ANY(%s) AND "表示"::text = \'0\'',
+                        (po_numbers,),
+                    )
+                    closed_po_numbers = {row[0] for row in cur.fetchall()}
+        except Exception as e:
+            print(f"Error attaching existence data: {e}")
+            # 取得に失敗しても、案件一覧本体の表示は止めない（空のまま進める）。
+
+        for d in po_dicts:
+            logs_code = self._format_logs_code_for_project(d.get("LOGS_CODE"))
+            d["sales_date"] = sales_dates.get(logs_code)
+            d["purchase_date"] = purchase_dates.get(logs_code)
+            d["production_closed"] = d.get("PO_No") in closed_po_numbers
+
     def _build_project_data(self, project_id: str) -> ProjectData | None:
         """Build ProjectData for a single project by querying purchase_orders
         (real Supabase public schema). For fetching many projects at once
@@ -188,8 +238,7 @@ class ProjectService:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    f'SELECT {self._PO_SELECT_COLUMNS}, {self._EXISTENCE_SELECT_COLUMNS} '
-                    'FROM purchase_orders po WHERE po."ID" = %s',
+                    f'SELECT {self._PO_SELECT_COLUMNS} FROM purchase_orders WHERE "ID" = %s',
                     (project_id,),
                 )
                 row = cur.fetchone()
@@ -197,6 +246,7 @@ class ProjectService:
                     return None
                 columns = [desc[0] for desc in cur.description]
                 po_dict = dict(zip(columns, row))
+            self._attach_existence_data(conn, [po_dict])
         except Exception as e:
             print(f"Error building project data: {e}")
             return None
@@ -207,11 +257,14 @@ class ProjectService:
 
     def _build_project_data_batch(self, project_ids: list[str]) -> dict[str, ProjectData]:
         """Fetch ProjectData for many projects in a single DB round-trip
-        (one connection, one query with `WHERE "ID" = ANY(%s)`), instead of
-        one connection per project. Added 2026-07-08 (docs/architecture.md
-        14.28) after 案件一覧/今日のタスク were measured taking 20〜80秒 —
-        almost entirely connection-open overhead multiplied by project
-        count, not query cost itself.
+        (one connection, a fixed small number of queries regardless of
+        project count), instead of one connection per project. Added
+        2026-07-08 (docs/architecture.md 14.28) after 案件一覧/今日のタスク
+        were measured taking 20〜80秒 — almost entirely connection-open
+        overhead multiplied by project count. Extended 2026-07-09 (14.37)
+        to also batch the sales/purchases/production_mass lookups that
+        14.33/14.35 had originally added as one-correlated-subquery-per-row
+        (see `_attach_existence_data`).
         """
         if not project_ids:
             return {}
@@ -220,12 +273,13 @@ class ProjectService:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    f'SELECT {self._PO_SELECT_COLUMNS}, {self._EXISTENCE_SELECT_COLUMNS} '
-                    'FROM purchase_orders po WHERE po."ID" = ANY(%s)',
+                    f'SELECT {self._PO_SELECT_COLUMNS} FROM purchase_orders WHERE "ID" = ANY(%s)',
                     (list(project_ids),),
                 )
                 rows = cur.fetchall()
                 columns = [desc[0] for desc in cur.description]
+            po_dicts = [dict(zip(columns, row)) for row in rows]
+            self._attach_existence_data(conn, po_dicts)
         except Exception as e:
             print(f"Error batch-building project data: {e}")
             return {}
@@ -233,8 +287,7 @@ class ProjectService:
             conn.close()
 
         result: dict[str, ProjectData] = {}
-        for row in rows:
-            po_dict = dict(zip(columns, row))
+        for po_dict in po_dicts:
             project_id = str(po_dict.get("ID"))
             data = self._po_dict_to_project_data(project_id, po_dict)
             if data:

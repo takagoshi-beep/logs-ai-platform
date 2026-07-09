@@ -97,6 +97,87 @@ def test_build_project_data_batch_returns_empty_dict_for_empty_input(monkeypatch
     assert call_count["n"] == 0
 
 
+def test_build_project_data_batch_uses_fixed_query_count_regardless_of_project_count(monkeypatch):
+    """2026-07-09（14.37）の回帰テスト: sales/purchases/production_massへの
+    問い合わせが、案件数に比例した「1行ごとの相関サブクエリ」に戻って
+    いないことを確認する。1回のPO取得クエリ + 既存性データ用に最大3回の
+    まとめクエリ（sales・purchases・production_mass）で、合計4回に固定
+    されているはず（案件数が50件でも500件でも変わらない）。
+
+    14.33/14.35で導入した1行ごとの相関サブクエリ（EXISTS/MIN）が、
+    sales/purchasesのようなインデックス無しの大きいテーブルに対して
+    行数分実行され、案件一覧が著しく遅くなっていた実例の修正。
+    """
+    po_columns = ["ID", "PO_No", "仕入先ID", "仕入先名", "顧客ID", "顧客名",
+                  "PO発行日", "顧客納品日", "納品日", "LOGS_CODE",
+                  "合計発注金額", "合計売上原価", "合計売上金額"]
+
+    def _po_row(pid: str) -> tuple:
+        return (pid, f"PO-{pid}", "s1", "Supplier", "c1", "Customer",
+                None, None, None, float(pid), 100.0, 60.0, 90.0)
+
+    class _RoutingCursor:
+        def __init__(self, response_map, call_log):
+            self._response_map = response_map
+            self._call_log = call_log
+            self._rows = []
+            self._columns = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, sql, params=None):
+            self._call_log.append(sql)
+            for key, (rows, columns) in self._response_map.items():
+                if key in sql:
+                    self._rows, self._columns = rows, columns
+                    return
+            self._rows, self._columns = [], []
+
+        @property
+        def description(self):
+            return [(c,) for c in self._columns]
+
+        def fetchall(self):
+            return self._rows
+
+        def fetchone(self):
+            return self._rows[0] if self._rows else None
+
+    class _RoutingConnection:
+        def __init__(self, response_map):
+            self._response_map = response_map
+            self.call_log: list[str] = []
+            self.closed = False
+
+        def cursor(self):
+            return _RoutingCursor(self._response_map, self.call_log)
+
+        def close(self):
+            self.closed = True
+
+    project_ids = [str(i) for i in range(1, 51)]  # 50件
+    response_map = {
+        "FROM purchase_orders": ([_po_row(pid) for pid in project_ids], po_columns),
+        "FROM sales": ([], ["LOGS_CODE", "min"]),
+        "FROM purchases": ([], ["LOGS_CODE", "min"]),
+        "FROM production_mass": ([], ["POnum"]),
+    }
+    fake_conn = _RoutingConnection(response_map)
+    monkeypatch.setattr("services.project_service.get_connection", lambda: fake_conn)
+
+    service = ProjectService()
+    result = service._build_project_data_batch(project_ids)
+
+    assert len(result) == 50
+    # 1(PO取得) + 3(sales/purchases/production_massのまとめクエリ) = 4回。
+    # 案件数（50件）に比例していないことがポイント。
+    assert len(fake_conn.call_log) == 4
+
+
 def test_build_project_aggregates_bulk_preserves_order_and_skips_missing(monkeypatch):
     """存在しないIDは静かにスキップし、残りは要求した順序を保つ。"""
     rows = [_fake_row("1"), _fake_row("3")]
