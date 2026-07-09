@@ -288,6 +288,71 @@ def test_get_product_detail_derives_sales_admin_from_po_first(monkeypatch):
     assert detail["master"]["営業事務担当者名"] == "高越規嗣"  # PO側を優先
 
 
+def test_get_product_detail_includes_planned_and_actual_cost_fields(monkeypatch):
+    """2026-07-09（14.44、Noritsuguの指定）: 発注単価・予定輸入経費率・
+    予定原価はPO履歴の最新行（PO発行日が新しい順で先頭）、実績輸入経費率・
+    実績原価は仕入履歴の最新行（伝票日が新しい順で先頭）から取る。"""
+    master_cols = ["ID", "LOGS_CODE", "Sample_CODE", "商品名"]
+    master_rows = [(101, "5145", None, "Baseball Cap")]
+
+    po_cols = ["ID", "PO_No", "顧客名", "営業担当者名", "営業事務担当者名", "生産管理担当者名",
+               "企画担当者名", "発注数量", "発注金額", "PO発行日", "発注単価", "輸入経費率", "売上原価"]
+    po_rows = [
+        (2, "914-2", "US_LOGS Inc.", "山田太郎", None, None, None, 10, 2000, "2026-02-01", 200.0, 1.18, 236.0),
+        (1, "914-1", "US_LOGS Inc.", "山田太郎", None, None, None, 10, 1000, "2026-01-01", 100.0, 1.10, 110.0),
+    ]
+
+    purchase_cols = ["仕入先名", "営業担当者名", "営業事務担当者名", "生産管理担当者名",
+                      "仕入数量pcs", "仕入金額円", "伝票日", "経費率", "実際原価"]
+    purchase_rows = [
+        ("1064STUDIO", "山田太郎", None, "木村美菜", 10, 2360, "2026-02-10", 1.20, 240.0),
+        ("1064STUDIO", "山田太郎", None, "木村美菜", 10, 1100, "2026-01-15", 1.10, 110.0),
+    ]
+
+    monkeypatch.setattr(
+        product_service, "get_connection",
+        lambda: _SequentialFakeConnection([
+            (master_rows, master_cols),
+            (po_rows, po_cols),
+            ([], ["得意先名"]),
+            (purchase_rows, purchase_cols),
+        ]),
+    )
+
+    detail = product_service.get_product_detail("101")
+    master = detail["master"]
+
+    assert master["発注単価"] == 200.0
+    assert master["予定輸入経費率"] == 1.18
+    assert master["予定原価"] == 236.0
+    assert master["実績輸入経費率"] == 1.20
+    assert master["実績原価"] == 240.0
+
+
+def test_get_product_detail_cost_fields_are_none_when_no_po_or_purchase_history(monkeypatch):
+    master_cols = ["ID", "LOGS_CODE", "Sample_CODE", "商品名"]
+    master_rows = [(101, "5145", None, "Baseball Cap")]
+
+    monkeypatch.setattr(
+        product_service, "get_connection",
+        lambda: _SequentialFakeConnection([
+            (master_rows, master_cols),
+            ([], ["ID"]),
+            ([], ["得意先名"]),
+            ([], ["仕入先名"]),
+        ]),
+    )
+
+    detail = product_service.get_product_detail("101")
+    master = detail["master"]
+
+    assert master["発注単価"] is None
+    assert master["予定輸入経費率"] is None
+    assert master["予定原価"] is None
+    assert master["実績輸入経費率"] is None
+    assert master["実績原価"] is None
+
+
 def test_get_product_detail_falls_back_to_purchase_for_sales_admin(monkeypatch):
     """PO履歴に営業事務担当者名が無い場合は、仕入履歴から拾う。"""
     master_cols = ["ID", "LOGS_CODE", "Sample_CODE", "商品名"]
