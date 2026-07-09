@@ -76,8 +76,25 @@ class ProjectService:
 
     _PO_SELECT_COLUMNS = (
         '"ID", "PO_No", "仕入先ID", "仕入先名", "顧客ID", "顧客名", '
-        '"PO発行日", "顧客納品日", "納品日", '
+        '"PO発行日", "顧客納品日", "納品日", "LOGS_CODE", '
         '"合計発注金額", "合計売上原価", "合計売上金額"'
+    )
+
+    # 2026-07-09（14.33）: 納品日/支払日はPOデータに実質入らないため、
+    # 「納品済みか」「原価確定済みか」を判定するのに使えない
+    # （Noritsuguの指摘、実データで確認済み）。代わりに、同じLOGS_CODEで
+    # sales/purchasesに実際にデータが入っているかをEXISTSで判定する。
+    # production_mass（生産管理『量産』シート）の"表示"列が0の行が
+    # 1件でもあれば、担当者が案件を終了済みとして表示OFFにした印として
+    # 「納品済み」扱いにする（14.28で学んだ通り、N回接続ではなく
+    # サブクエリで1回のクエリにまとめている）。
+    _EXISTENCE_SELECT_COLUMNS = (
+        'EXISTS(SELECT 1 FROM sales s WHERE s."LOGS_CODE" = po."LOGS_CODE") AS "has_sales", '
+        'EXISTS(SELECT 1 FROM purchases pu WHERE pu."LOGS_CODE" = po."LOGS_CODE") AS "has_purchase", '
+        'EXISTS('
+        '    SELECT 1 FROM production_mass pm '
+        '    WHERE pm."POnum" = po."PO_No" AND pm."表示"::text = \'0\''
+        ') AS "production_closed"'
     )
 
     @staticmethod
@@ -90,6 +107,18 @@ class ProjectService:
             return datetime.fromisoformat(str(date_val).replace("Z", "+00:00"))
         except Exception:
             return None
+
+    @staticmethod
+    def _format_logs_code_for_project(value: Any) -> str | None:
+        """purchase_orders.LOGS_CODEもproducts.LOGS_CODEと同じ理由
+        （Supabase上でdouble precision型のため13564が13564.0になる、14.30）
+        で正規化が必要。sales/purchasesとの突合キーとして使う前に統一する。
+        """
+        if value is None:
+            return None
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        return str(value)
 
     def _po_dict_to_project_data(self, project_id: str, po_dict: dict[str, Any]) -> ProjectData | None:
         """Convert an already-fetched purchase_orders row (as a dict) into
@@ -132,6 +161,10 @@ class ProjectService:
                 sale_amount=float(po_dict.get("合計売上金額", 0) or 0),
                 gross_profit=None,
                 gross_profit_margin=None,
+                logs_code=self._format_logs_code_for_project(po_dict.get("LOGS_CODE")),
+                has_sales=bool(po_dict.get("has_sales", False)),
+                has_purchase=bool(po_dict.get("has_purchase", False)),
+                production_closed=bool(po_dict.get("production_closed", False)),
             )
 
             if project_data.cost_amount and project_data.sale_amount:
@@ -154,7 +187,8 @@ class ProjectService:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    f'SELECT {self._PO_SELECT_COLUMNS} FROM purchase_orders WHERE "ID" = %s',
+                    f'SELECT {self._PO_SELECT_COLUMNS}, {self._EXISTENCE_SELECT_COLUMNS} '
+                    'FROM purchase_orders po WHERE po."ID" = %s',
                     (project_id,),
                 )
                 row = cur.fetchone()
@@ -185,7 +219,8 @@ class ProjectService:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    f'SELECT {self._PO_SELECT_COLUMNS} FROM purchase_orders WHERE "ID" = ANY(%s)',
+                    f'SELECT {self._PO_SELECT_COLUMNS}, {self._EXISTENCE_SELECT_COLUMNS} '
+                    'FROM purchase_orders po WHERE po."ID" = ANY(%s)',
                     (list(project_ids),),
                 )
                 rows = cur.fetchall()
@@ -347,211 +382,168 @@ class ProjectService:
         return events
 
     def _determine_state(self, data: ProjectData) -> ProjectState:
-        """Determine project state based on data."""
-        now = datetime.now()
+        """Determine project state based on data.
 
-        if now > data.po_required_delivery_date and not data.actual_delivery_date:
+        2026-07-09（14.33、Noritsuguの指摘を反映した修正）: POデータの
+        納品日/支払日は実質常に空のため、以前はこれに依存した判定
+        （AWAITING_PAYMENT・GROSS_PROFIT_DEGRADED等）が実データでは
+        機能していなかった。代わりに、同じLOGS_CODEにsales/purchasesの
+        実データがあるか（has_sales/has_purchase）、または生産管理
+        『量産』シートで表示OFFにされているか（production_closed）で
+        判定する。優先順位: 完了 > 納期超過 > 原価未確定 > 開始済み。
+        粗利のズレ（PO予定粗利 vs 仕入確定粗利）は状態バッジではなく
+        案件詳細の評価項目として別途扱う（今日のタスクの対象外）。
+        """
+        if data.is_delivered:
+            return ProjectState.COMPLETED
+
+        if data.is_overdue:
             return ProjectState.DELIVERY_OVERDUE
 
-        if data.actual_delivery_date and data.po_amount and not data.actual_payment_date:
-            return ProjectState.AWAITING_PAYMENT
-
-        if data.cost_amount and not data.actual_delivery_date:
+        if not data.has_purchase:
             return ProjectState.COST_UNCONFIRMED
-
-        if data.sale_amount and data.cost_amount:
-            margin = data.profit_margin_pct
-            if margin and margin < 15:
-                return ProjectState.GROSS_PROFIT_DEGRADED
-
-        if data.actual_delivery_date and data.actual_payment_date:
-            return ProjectState.COMPLETED
 
         return ProjectState.INITIATED
 
     def _evaluate_goals(self, data: ProjectData, state: ProjectState) -> GoalEvaluations:
-        """Evaluate all business goals for a project."""
+        """Evaluate business goals for a project.
+
+        2026-07-09（14.33）: 今日のタスクを「売上入力の必要性」「仕入
+        入力の必要性」の2種類だけに絞り込むため、それ以外の目標
+        （納期遵守・粗利確保・支払処理・顧客満足度）は評価しない
+        （どこにも表示されず、Decisionも生成していなかった、
+        Noritsuguの確認済み）。CONFIRM_DELIVERY（納品確認=売上入力の
+        有無）とCONFIRM_COST（原価確定=仕入入力の有無）の2つだけを
+        評価する。
+        """
         evals = GoalEvaluations(project_id=data.project_id)
 
-        days_until = data.days_until_delivery
-        if days_until < 7:
-            evals.evaluations[ProjectGoal.MEET_DEADLINE] = GoalEvaluation(
-                goal=ProjectGoal.MEET_DEADLINE,
+        if data.has_purchase and not data.has_sales:
+            evals.evaluations[ProjectGoal.CONFIRM_DELIVERY] = GoalEvaluation(
+                goal=ProjectGoal.CONFIRM_DELIVERY,
                 status=GoalStatus.AT_RISK,
-                reason=f"Delivery in {days_until} days (< 7 days)",
-                confidence=0.95,
+                reason="仕入は入力済みだが売上が未入力",
+                confidence=0.9,
             )
-        elif data.actual_delivery_date:
-            evals.evaluations[ProjectGoal.MEET_DEADLINE] = GoalEvaluation(
-                goal=ProjectGoal.MEET_DEADLINE,
+        elif data.has_sales:
+            evals.evaluations[ProjectGoal.CONFIRM_DELIVERY] = GoalEvaluation(
+                goal=ProjectGoal.CONFIRM_DELIVERY,
                 status=GoalStatus.ACHIEVED,
-                reason="Delivery completed",
-                confidence=1.0,
-            )
-        else:
-            evals.evaluations[ProjectGoal.MEET_DEADLINE] = GoalEvaluation(
-                goal=ProjectGoal.MEET_DEADLINE,
-                status=GoalStatus.UNKNOWN,
-                reason="Delivery pending",
-                confidence=0.5,
-            )
-
-        if data.profit_margin_pct and data.profit_margin_pct >= 15:
-            evals.evaluations[ProjectGoal.SECURE_MARGIN] = GoalEvaluation(
-                goal=ProjectGoal.SECURE_MARGIN,
-                status=GoalStatus.ACHIEVED,
-                reason=f"Margin {data.profit_margin_pct:.1f}% >= 15%",
-                confidence=1.0,
-            )
-        elif data.profit_margin_pct and data.profit_margin_pct < 15:
-            evals.evaluations[ProjectGoal.SECURE_MARGIN] = GoalEvaluation(
-                goal=ProjectGoal.SECURE_MARGIN,
-                status=GoalStatus.FAILED,
-                reason=f"Margin {data.profit_margin_pct:.1f}% < 15%",
+                reason="売上入力済み（納品済みと判断）",
                 confidence=0.9,
             )
         else:
-            evals.evaluations[ProjectGoal.SECURE_MARGIN] = GoalEvaluation(
-                goal=ProjectGoal.SECURE_MARGIN,
+            evals.evaluations[ProjectGoal.CONFIRM_DELIVERY] = GoalEvaluation(
+                goal=ProjectGoal.CONFIRM_DELIVERY,
                 status=GoalStatus.UNKNOWN,
-                reason="Cost/sale data incomplete",
+                reason="仕入・売上ともまだ未入力",
                 confidence=0.5,
             )
 
-        if data.cost_amount:
+        if data.has_sales and not data.has_purchase and data.is_overdue:
+            evals.evaluations[ProjectGoal.CONFIRM_COST] = GoalEvaluation(
+                goal=ProjectGoal.CONFIRM_COST,
+                status=GoalStatus.AT_RISK,
+                reason="納期を過ぎ売上は入力済みだが仕入が未入力",
+                confidence=0.9,
+            )
+        elif data.has_purchase:
             evals.evaluations[ProjectGoal.CONFIRM_COST] = GoalEvaluation(
                 goal=ProjectGoal.CONFIRM_COST,
                 status=GoalStatus.ACHIEVED,
-                reason="Cost confirmed",
+                reason="仕入入力済み（原価確定済みと判断）",
                 confidence=0.9,
             )
         else:
             evals.evaluations[ProjectGoal.CONFIRM_COST] = GoalEvaluation(
                 goal=ProjectGoal.CONFIRM_COST,
-                status=GoalStatus.AT_RISK,
-                reason="Cost not yet confirmed",
-                confidence=0.9,
-            )
-
-        if data.actual_payment_date:
-            evals.evaluations[ProjectGoal.PROCESS_PAYMENT] = GoalEvaluation(
-                goal=ProjectGoal.PROCESS_PAYMENT,
-                status=GoalStatus.ACHIEVED,
-                reason="Payment completed",
-                confidence=1.0,
-            )
-        else:
-            evals.evaluations[ProjectGoal.PROCESS_PAYMENT] = GoalEvaluation(
-                goal=ProjectGoal.PROCESS_PAYMENT,
                 status=GoalStatus.UNKNOWN,
-                reason="Payment pending",
+                reason="仕入未入力（まだ納期前、または売上も未入力）",
                 confidence=0.5,
             )
-
-        evals.evaluations[ProjectGoal.CUSTOMER_SATISFACTION] = GoalEvaluation(
-            goal=ProjectGoal.CUSTOMER_SATISFACTION,
-            status=GoalStatus.UNKNOWN,
-            reason="No customer feedback",
-            confidence=0.5,
-        )
 
         return evals
 
     def _generate_decisions(self, data: ProjectData, state: ProjectState, goals: GoalEvaluations) -> list[ProjectDecisionDetail]:
-        """Generate decisions from state and goal failures."""
+        """Generate decisions from goal evaluations.
+
+        2026-07-09（14.33）: 今日のタスクをa/bの2種類だけに絞る
+        （Noritsuguの指定）。CONFIRM_DELIVERYがAT_RISK（仕入はあるが
+        売上が無い）ならRECORD_SALES、CONFIRM_COSTがAT_RISK（納期後で
+        売上はあるが仕入が無い）ならRECORD_PURCHASE。この2つは
+        定義上同時には成立しない（前者はhas_salesが偽、後者は真が
+        前提のため）。
+        """
         decisions = []
-
         goal_dict = goals.evaluations
-        meet_deadline_eval = goal_dict.get(ProjectGoal.MEET_DEADLINE)
-        secure_margin_eval = goal_dict.get(ProjectGoal.SECURE_MARGIN)
-        confirm_cost_eval = goal_dict.get(ProjectGoal.CONFIRM_COST)
 
-        if meet_deadline_eval and meet_deadline_eval.status == GoalStatus.AT_RISK:
+        confirm_delivery_eval = goal_dict.get(ProjectGoal.CONFIRM_DELIVERY)
+        if confirm_delivery_eval and confirm_delivery_eval.status == GoalStatus.AT_RISK:
             decisions.append(ProjectDecisionDetail(
-                decision=ProjectDecision.EXPEDITE_PO,
+                decision=ProjectDecision.RECORD_SALES,
                 priority=1,
-                reason="Delivery within 7 days - expedite required",
-                confidence=0.95,
-                triggered_by_goals=[ProjectGoal.MEET_DEADLINE],
-                business_rule="DELIVERY_SLA_7DAYS",
+                reason="仕入は入力済みだが売上が未入力",
+                confidence=0.9,
+                triggered_by_goals=[ProjectGoal.CONFIRM_DELIVERY],
+                business_rule="SALES_ENTRY_NEEDED",
             ))
 
+        confirm_cost_eval = goal_dict.get(ProjectGoal.CONFIRM_COST)
         if confirm_cost_eval and confirm_cost_eval.status == GoalStatus.AT_RISK:
             decisions.append(ProjectDecisionDetail(
-                decision=ProjectDecision.REQUEST_COST_CONFIRMATION,
-                priority=2,
-                reason="Cost not yet confirmed",
+                decision=ProjectDecision.RECORD_PURCHASE,
+                priority=1,
+                reason="納期を過ぎ売上は入力済みだが仕入が未入力",
                 confidence=0.9,
                 triggered_by_goals=[ProjectGoal.CONFIRM_COST],
-                business_rule="COST_CONFIRMATION_REQUIRED",
-            ))
-
-        if secure_margin_eval and secure_margin_eval.status == GoalStatus.FAILED:
-            decisions.append(ProjectDecisionDetail(
-                decision=ProjectDecision.IMPROVE_MARGIN,
-                priority=3,
-                reason=f"Margin below 15% threshold",
-                confidence=0.85,
-                triggered_by_goals=[ProjectGoal.SECURE_MARGIN],
-                business_rule="MARGIN_THRESHOLD_15PCT",
+                business_rule="PURCHASE_ENTRY_NEEDED",
             ))
 
         return decisions
 
     def _generate_actions(self, data: ProjectData, state: ProjectState, decisions: list[ProjectDecisionDetail], trace_id: str) -> list[ProjectAction]:
-        """Generate concrete actions from decisions."""
+        """Generate concrete actions from decisions.
+
+        2026-07-09（14.33）: 今日のタスクはa（売上入力の必要性）・b
+        （仕入入力の必要性）の2種類のみ（Noritsuguの指定）。粗利改善・
+        納期急ぎ連絡等の旧アクションは、実データで判定に使えない前提
+        （POの納品日/支払日が空、粗利の予定/確定比較はまだ未実装）に
+        基づいていたため廃止した。
+        """
         actions = []
         action_id = 1
 
         for decision in decisions:
-            if decision.decision == ProjectDecision.EXPEDITE_PO:
+            if decision.decision == ProjectDecision.RECORD_SALES:
                 actions.append(ProjectAction(
                     action_id=f"act-{action_id}",
                     project_id=data.project_id,
-                    title=f"仕入先へ納期急ぎ連絡: {data.po_number}",
-                    description=f"納期まで{data.days_until_delivery}日。{data.supplier_name}に急ぎ対応を依頼してください。",
+                    title=f"売上入力の必要性: {data.po_number}",
+                    description=f"仕入は入力済みですが、{data.customer_name}への売上がまだ入力されていません。売上の入力をお願いします。",
                     priority="high",
                     related_state=state,
-                    related_goal=ProjectGoal.MEET_DEADLINE,
+                    related_goal=ProjectGoal.CONFIRM_DELIVERY,
                     decision_source=decision.decision,
-                    source_tables=["purchase_orders"],
-                    action_type="phone_call",
+                    source_tables=["purchase_orders", "sales", "purchases"],
+                    action_type="data_entry",
                     trace_id=trace_id,
                     confidence=decision.confidence,
                     condition=decision.reason,
                 ))
                 action_id += 1
 
-            elif decision.decision == ProjectDecision.REQUEST_COST_CONFIRMATION:
+            elif decision.decision == ProjectDecision.RECORD_PURCHASE:
                 actions.append(ProjectAction(
                     action_id=f"act-{action_id}",
                     project_id=data.project_id,
-                    title=f"原価確認要求: {data.po_number}",
-                    description=f"{data.supplier_name}に原価の正式確認を依頼してください。",
-                    priority="medium",
+                    title=f"仕入入力の必要性: {data.po_number}",
+                    description=f"納期（{data.po_required_delivery_date.strftime('%Y-%m-%d')}）を過ぎ、{data.customer_name}への売上は入力済みですが、{data.supplier_name}への仕入がまだ入力されていません。仕入の入力をお願いします。",
+                    priority="high",
                     related_state=state,
                     related_goal=ProjectGoal.CONFIRM_COST,
                     decision_source=decision.decision,
-                    source_tables=["purchase_orders"],
-                    action_type="email",
-                    trace_id=trace_id,
-                    confidence=decision.confidence,
-                    condition=decision.reason,
-                ))
-                action_id += 1
-
-            elif decision.decision == ProjectDecision.IMPROVE_MARGIN:
-                actions.append(ProjectAction(
-                    action_id=f"act-{action_id}",
-                    project_id=data.project_id,
-                    title=f"粗利改善検討: {data.po_number}",
-                    description=f"粗利{data.profit_margin_pct:.1f}%が目標値15%未満です。コスト削減または価格改定を検討してください。",
-                    priority="medium",
-                    related_state=state,
-                    related_goal=ProjectGoal.SECURE_MARGIN,
-                    decision_source=decision.decision,
-                    source_tables=["purchase_orders"],
-                    action_type="review",
+                    source_tables=["purchase_orders", "sales", "purchases"],
+                    action_type="data_entry",
                     trace_id=trace_id,
                     confidence=decision.confidence,
                     condition=decision.reason,

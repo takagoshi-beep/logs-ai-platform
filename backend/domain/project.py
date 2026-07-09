@@ -30,6 +30,9 @@ class ProjectGoal(str, Enum):
     CONFIRM_COST = "confirm_cost"
     PROCESS_PAYMENT = "process_payment"
     CUSTOMER_SATISFACTION = "customer_satisfaction"
+    # 2026-07-09: 納品日/支払日はPOデータに実質入らないため使えない
+    # （14.33、Noritsuguの指摘）。代わりに売上入力の有無で納品を確認する。
+    CONFIRM_DELIVERY = "confirm_delivery"
 
 
 class ProjectDecision(str, Enum):
@@ -41,6 +44,10 @@ class ProjectDecision(str, Enum):
     CONTACT_CUSTOMER = "contact_customer"
     ESCALATE_TO_MANAGEMENT = "escalate_to_management"
     DOCUMENT_VARIANCE = "document_variance"
+    # 2026-07-09（14.33）: 今日のタスクを「売上入力の必要性」「仕入入力の
+    # 必要性」の2種類だけに絞り込むための決定。
+    RECORD_SALES = "record_sales"
+    RECORD_PURCHASE = "record_purchase"
 
 
 class ProjectEventType(str, Enum):
@@ -155,6 +162,15 @@ class ProjectData:
     gross_profit: Optional[float] = None
     gross_profit_margin: Optional[float] = None
     data_source_tables: list[str] = field(default_factory=lambda: ["仕入"])
+    # 2026-07-09（14.33）: purchase_ordersのLOGS_CODE。sales/purchasesとの
+    # 突合キー（14.30・14.32と同じ考え方）。has_sales/has_purchaseの判定に使う。
+    logs_code: Optional[str] = None
+    # 納品日/支払日はPOデータに実質入らないため（Noritsuguの指摘）、
+    # 「納品済みかどうか」はhas_sales（売上入力の有無）または
+    # production_closed（生産管理『量産』シートの表示フラグ=0）で判断する。
+    has_sales: bool = False
+    has_purchase: bool = False
+    production_closed: bool = False
 
     @property
     def days_until_delivery(self) -> int:
@@ -164,6 +180,14 @@ class ProjectData:
     @property
     def is_overdue(self) -> bool:
         return datetime.now() > self.po_required_delivery_date
+
+    @property
+    def is_delivered(self) -> bool:
+        """納品済みかどうか。POの納品日は実質常に空のため、売上入力の
+        有無、または生産管理『量産』シートで表示OFFにされたか（担当者が
+        案件を終了済みとして扱った印）で判断する（2026-07-09、14.33）。
+        """
+        return self.has_sales or self.production_closed
 
     @property
     def profit_margin_pct(self) -> Optional[float]:
