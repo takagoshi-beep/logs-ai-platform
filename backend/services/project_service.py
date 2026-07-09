@@ -21,7 +21,6 @@ from domain.project import (
     ProjectEventType,
     ProjectEvents,
     ProjectGoal,
-    ProjectHealth,
     ProjectState,
 )
 from capability.domain import ExecutionStatus
@@ -89,8 +88,8 @@ class ProjectService:
     # 「納品済み」扱いにする（14.28で学んだ通り、N回接続ではなく
     # サブクエリで1回のクエリにまとめている）。
     _EXISTENCE_SELECT_COLUMNS = (
-        'EXISTS(SELECT 1 FROM sales s WHERE s."LOGS_CODE" = po."LOGS_CODE") AS "has_sales", '
-        'EXISTS(SELECT 1 FROM purchases pu WHERE pu."LOGS_CODE" = po."LOGS_CODE") AS "has_purchase", '
+        '(SELECT MIN(s."売上入力日") FROM sales s WHERE s."LOGS_CODE" = po."LOGS_CODE") AS "sales_date", '
+        '(SELECT MIN(pu."伝票日") FROM purchases pu WHERE pu."LOGS_CODE" = po."LOGS_CODE") AS "purchase_date", '
         'EXISTS('
         '    SELECT 1 FROM production_mass pm '
         '    WHERE pm."POnum" = po."PO_No" AND pm."表示"::text = \'0\''
@@ -162,9 +161,11 @@ class ProjectService:
                 gross_profit=None,
                 gross_profit_margin=None,
                 logs_code=self._format_logs_code_for_project(po_dict.get("LOGS_CODE")),
-                has_sales=bool(po_dict.get("has_sales", False)),
-                has_purchase=bool(po_dict.get("has_purchase", False)),
+                has_sales=self._parse_date(po_dict.get("sales_date")) is not None,
+                has_purchase=self._parse_date(po_dict.get("purchase_date")) is not None,
                 production_closed=bool(po_dict.get("production_closed", False)),
+                sales_date=self._parse_date(po_dict.get("sales_date")),
+                purchase_date=self._parse_date(po_dict.get("purchase_date")),
             )
 
             if project_data.cost_amount and project_data.sale_amount:
@@ -241,11 +242,21 @@ class ProjectService:
         return result
 
     def _generate_project_events(self, data: ProjectData, trace_id: str) -> ProjectEvents:
-        """Generate business events from project data."""
+        """Generate business events from project data.
+
+        2026-07-09（14.35、Noritsuguの指摘の修正）: 「売上登録」「仕入
+        登録」の日付が、実際の入力日ではなくこの処理を実行した瞬間の
+        現在時刻（now）になっていた不具合を修正。sales/purchasesの実際
+        の日付（sales_date/purchase_date、複数行あればMIN）を使う。
+
+        また、実質常に空のactual_delivery_date/actual_payment_dateに
+        依存していた「納品完了」「支払完了」「納期リスク検知」イベント
+        と、案件詳細のスコープ外に移した粗利再計算イベントは削除した
+        （14.33・14.35で判明・整理済み）。
+        """
         events = ProjectEvents(project_id=data.project_id)
 
         event_id = 1
-        now = datetime.now()
 
         events.add_event(ProjectEvent(
             event_id=f"evt-{event_id}",
@@ -262,30 +273,13 @@ class ProjectService:
         ))
         event_id += 1
 
-        if data.sale_amount and data.sale_amount > 0:
-            events.add_event(ProjectEvent(
-                event_id=f"evt-{event_id}",
-                project_id=data.project_id,
-                event_type=ProjectEventType.SALES_REGISTERED,
-                event_time=now,
-                source_table="purchase_orders",
-                business_meaning="売上登録 - 収入確定",
-                impact_summary="売上が確定し、粗利を計算可能に",
-                trace_id=trace_id,
-                event_source_type="actual",
-                before_state=ProjectState.INITIATED,
-                after_state=ProjectState.AWAITING_PAYMENT,
-                confidence=1.0,
-            ))
-            event_id += 1
-
-        if data.cost_amount and data.cost_amount > 0:
+        if data.has_purchase and data.purchase_date:
             events.add_event(ProjectEvent(
                 event_id=f"evt-{event_id}",
                 project_id=data.project_id,
                 event_type=ProjectEventType.PURCHASE_REGISTERED,
-                event_time=now,
-                source_table="purchase_orders",
+                event_time=data.purchase_date,
+                source_table="purchases",
                 business_meaning="仕入登録 - 原価確定",
                 impact_summary="原価が確定し、粗利を計算可能に",
                 trace_id=trace_id,
@@ -296,86 +290,19 @@ class ProjectService:
             ))
             event_id += 1
 
-        if data.actual_delivery_date:
+        if data.has_sales and data.sales_date:
             events.add_event(ProjectEvent(
                 event_id=f"evt-{event_id}",
                 project_id=data.project_id,
-                event_type=ProjectEventType.DELIVERY_COMPLETED,
-                event_time=data.actual_delivery_date,
-                source_table="purchase_orders",
-                business_meaning="納品完了 - 納期達成",
-                impact_summary="納期目標達成",
+                event_type=ProjectEventType.SALES_REGISTERED,
+                event_time=data.sales_date,
+                source_table="sales",
+                business_meaning="売上登録 - 納品完了と判断",
+                impact_summary="売上が確定し、納品済みと判断",
                 trace_id=trace_id,
                 event_source_type="actual",
-                before_state=ProjectState.INITIATED,
-                after_state=ProjectState.DELIVERY_RECEIVED,
-                confidence=1.0,
-            ))
-            event_id += 1
-
-        if data.actual_payment_date:
-            events.add_event(ProjectEvent(
-                event_id=f"evt-{event_id}",
-                project_id=data.project_id,
-                event_type=ProjectEventType.PAYMENT_PROCESSED,
-                event_time=data.actual_payment_date,
-                source_table="purchase_orders",
-                business_meaning="支払完了 - 現金化",
-                impact_summary="全資金回収完了",
-                trace_id=trace_id,
-                event_source_type="actual",
-                before_state=ProjectState.AWAITING_PAYMENT,
                 after_state=ProjectState.COMPLETED,
                 confidence=1.0,
-            ))
-            event_id += 1
-
-        if data.gross_profit_margin and data.gross_profit_margin >= 15:
-            events.add_event(ProjectEvent(
-                event_id=f"evt-{event_id}",
-                project_id=data.project_id,
-                event_type=ProjectEventType.GROSS_PROFIT_RECALCULATED,
-                event_time=now,
-                source_table="purchase_orders",
-                business_meaning="粗利再計算 - 目標達成",
-                impact_summary="粗利15%以上確保",
-                trace_id=trace_id,
-                event_source_type="derived",
-                derivation_rule="MARGIN_CALCULATION",
-                confidence=0.95,
-            ))
-            event_id += 1
-        elif data.gross_profit_margin and data.gross_profit_margin < 15:
-            events.add_event(ProjectEvent(
-                event_id=f"evt-{event_id}",
-                project_id=data.project_id,
-                event_type=ProjectEventType.GROSS_PROFIT_DECLINED,
-                event_time=now,
-                source_table="purchase_orders",
-                business_meaning="粗利低下 - リスク検知",
-                impact_summary="粗利が15%未満に低下",
-                trace_id=trace_id,
-                event_source_type="derived",
-                derivation_rule="MARGIN_THRESHOLD",
-                after_state=ProjectState.GROSS_PROFIT_DEGRADED,
-                confidence=0.95,
-            ))
-            event_id += 1
-
-        if data.days_until_delivery < 7 and not data.actual_delivery_date:
-            events.add_event(ProjectEvent(
-                event_id=f"evt-{event_id}",
-                project_id=data.project_id,
-                event_type=ProjectEventType.DELIVERY_RISK_DETECTED,
-                event_time=now,
-                source_table="purchase_orders",
-                business_meaning="納期リスク検知 - 7日以内",
-                impact_summary="納期まで時間が少ない - 急ぎ対応必要",
-                trace_id=trace_id,
-                event_source_type="derived",
-                derivation_rule="DELIVERY_SLA_7DAYS",
-                after_state=ProjectState.INITIATED,
-                confidence=0.9,
             ))
             event_id += 1
 
@@ -552,198 +479,30 @@ class ProjectService:
 
         return actions
 
-    def _calculate_health_score(self, data: ProjectData, state: ProjectState, goals: GoalEvaluations, decisions: list[ProjectDecisionDetail], actions: list[ProjectAction], trace_id: str) -> ProjectHealth:
-        """Calculate project health score - reflects current operational health."""
-        score = 100
-        factors = {}
+    def _determine_delivery_month_bucket(self, data: ProjectData) -> str:
+        """納品予定月を「今月」「来月」「再来月以降」の3段階で分類する
+        バッジ（docs/architecture.md 14.35）。
 
-        if state == ProjectState.COMPLETED:
-            if data.profit_margin_pct and data.profit_margin_pct < 10:
-                score = 85
-                factors["completed_low_margin"] = -15
-            return ProjectHealth(
-                health_score=score,
-                health_status="healthy" if score >= 80 else "watch",
-                factors=factors,
-                reason="Completed",
-                trace_id=trace_id,
-            )
+        以前あった健全性・リスク・機会スコアは、POの納品日/支払日が
+        実質常に空という実データの制約下では意味を成していなかった
+        （14.33で判明、Noritsuguの判断で廃止）。代わりに、今から納品日
+        までの月数だけで判定する単純なロジックに置き換えた。
 
-        if data.profit_margin_pct is not None:
-            if data.profit_margin_pct < 0:
-                penalty = 70
-                factors["margin_negative"] = -penalty
-            elif data.profit_margin_pct < 5:
-                penalty = 55
-                factors["margin_critical"] = -penalty
-            elif data.profit_margin_pct < 10:
-                penalty = 40
-                factors["margin_low"] = -penalty
-            elif data.profit_margin_pct < 15:
-                penalty = 20
-                factors["margin_below_target"] = -penalty
-            else:
-                penalty = 0
-            if penalty > 0:
-                score -= penalty
+        月差が0以下（今月中、または既に納期を過ぎている）は"this_month"
+        にまとめる — 過ぎている場合は状態バッジの方で「納期超過」として
+        別途表示されるため、ここでは「今月中」として扱って問題ない。
+        """
+        now = datetime.now()
+        target = data.po_required_delivery_date
+        month_diff = (target.year - now.year) * 12 + (target.month - now.month)
 
-        if not data.actual_delivery_date and data.days_until_delivery is not None:
-            if data.days_until_delivery < 0:
-                penalty = 50
-                factors["delivery_overdue"] = -penalty
-            elif data.days_until_delivery < 3:
-                penalty = 35
-                factors["delivery_critical"] = -penalty
-            elif data.days_until_delivery < 7:
-                penalty = 20
-                factors["delivery_risk"] = -penalty
-            elif data.days_until_delivery < 14:
-                penalty = 5
-                factors["delivery_approaching"] = -penalty
-            else:
-                penalty = 0
-            if penalty > 0:
-                score -= penalty
+        if month_diff <= 0:
+            return "this_month"
+        if month_diff == 1:
+            return "next_month"
+        return "month_after_next_or_later"
 
-        if state == ProjectState.DELIVERY_RECEIVED or (state == ProjectState.AWAITING_PAYMENT and data.actual_delivery_date):
-            penalty = 20
-            score -= penalty
-            factors["cash_flow_pending"] = -penalty
 
-        confirm_cost_eval = goals.evaluations.get(ProjectGoal.CONFIRM_COST)
-        if confirm_cost_eval and confirm_cost_eval.status == GoalStatus.AT_RISK:
-            penalty = 15
-            score -= penalty
-            factors["cost_unconfirmed"] = -penalty
-
-        if len(actions) > 0 and any(a.priority == "high" for a in actions):
-            penalty = 15
-            score -= penalty
-            factors["high_priority_action"] = -penalty
-
-        has_missing_data = ((data.sale_amount == 0 or data.sale_amount is None) or
-                           (data.cost_amount == 0 or data.cost_amount is None) or
-                           (data.po_amount == 0 or data.po_amount is None))
-        if has_missing_data and state not in (ProjectState.COMPLETED, ProjectState.DELIVERY_RECEIVED):
-            penalty = 20
-            score -= penalty
-            factors["data_incomplete"] = -penalty
-
-        score = max(0, min(100, score))
-
-        if score >= 80:
-            status = "healthy"
-        elif score >= 60:
-            status = "watch"
-        elif score >= 40:
-            status = "risk"
-        else:
-            status = "critical"
-
-        reason = f"Score {score}: {', '.join([f'{k}({v})' for k, v in factors.items()])}" if factors else "All metrics optimal"
-
-        return ProjectHealth(
-            health_score=score,
-            health_status=status,
-            factors=factors,
-            reason=reason,
-            trace_id=trace_id,
-        )
-
-    def _calculate_risk_score(self, data: ProjectData, state: ProjectState, goals: GoalEvaluations) -> tuple[int, str]:
-        """Calculate risk score (0-100) reflecting danger if ignored."""
-        risk_components = []
-
-        if data.profit_margin_pct is not None:
-            if data.profit_margin_pct < 0:
-                margin_risk = 100
-            elif data.profit_margin_pct < 5:
-                margin_risk = 90
-            elif data.profit_margin_pct < 10:
-                margin_risk = 75
-            elif data.profit_margin_pct < 15:
-                margin_risk = 55
-            else:
-                margin_risk = 20
-            risk_components.append(("margin", margin_risk, 0.40))
-
-        if not data.actual_delivery_date and data.days_until_delivery is not None:
-            if data.days_until_delivery < 0:
-                delivery_risk = 100
-            elif data.days_until_delivery < 1:
-                delivery_risk = 95
-            elif data.days_until_delivery < 3:
-                delivery_risk = 85
-            elif data.days_until_delivery < 7:
-                delivery_risk = 70
-            elif data.days_until_delivery < 14:
-                delivery_risk = 40
-            else:
-                delivery_risk = 15
-            risk_components.append(("delivery", delivery_risk, 0.35))
-        else:
-            risk_components.append(("delivery", 0, 0.35))
-
-        if data.actual_delivery_date and not data.actual_payment_date:
-            billing_risk = 70
-        elif state == ProjectState.DELIVERY_OVERDUE:
-            billing_risk = 65
-        else:
-            billing_risk = 15
-        risk_components.append(("billing", billing_risk, 0.25))
-
-        risk_score = sum(component[1] * component[2] for component in risk_components)
-        risk_score = min(100, int(risk_score))
-
-        if risk_score >= 80:
-            risk_level = "critical"
-        elif risk_score >= 60:
-            risk_level = "high"
-        elif risk_score >= 40:
-            risk_level = "medium"
-        else:
-            risk_level = "low"
-
-        return risk_score, risk_level
-
-    def _calculate_opportunity_score(self, data: ProjectData, customer_priority: str = "normal") -> tuple[int, str]:
-        """Calculate opportunity score (0-100) from margins and deal size."""
-        opportunity_score = 0
-        vip_multiplier = 1.5 if customer_priority == "vip" else (1.2 if customer_priority == "high" else 1.0)
-
-        if data.profit_margin_pct and data.profit_margin_pct >= 35:
-            margin_score = int(50 * vip_multiplier)
-            opportunity_score += margin_score
-        elif data.profit_margin_pct and data.profit_margin_pct >= 25:
-            margin_score = int(30 * vip_multiplier)
-            opportunity_score += margin_score
-        elif data.profit_margin_pct and data.profit_margin_pct >= 15:
-            margin_score = int(15 * vip_multiplier)
-            opportunity_score += margin_score
-
-        if data.sale_amount and data.sale_amount >= 2000000:
-            deal_score = int(30 * vip_multiplier)
-            opportunity_score += deal_score
-        elif data.sale_amount and data.sale_amount >= 1000000:
-            deal_score = int(15 * vip_multiplier)
-            opportunity_score += deal_score
-
-        opportunity_score = min(100, opportunity_score)
-
-        if opportunity_score >= 70:
-            opportunity_level = "high"
-        elif opportunity_score >= 40:
-            opportunity_level = "medium"
-        else:
-            opportunity_level = "low"
-
-        return opportunity_score, opportunity_level
-
-    def _recommend_focus(self, health_score: int, risk_score: int, opportunity_score: int) -> str:
-        """Recommend focus based on 3-axis scores."""
-        from business.evaluation_rules import FocusRecommendationRule
-
-        return FocusRecommendationRule.recommend(health_score, risk_score, opportunity_score)
 
     def build_project_aggregate(self, project_id: str, record_capability: bool = True) -> ProjectAggregate | None:
         """Build complete ProjectAggregate for a single project.
@@ -826,11 +585,7 @@ class ProjectService:
         goals = self._evaluate_goals(data, state)
         decisions = self._generate_decisions(data, state, goals)
         actions = self._generate_actions(data, state, decisions, trace_id)
-
-        health = self._calculate_health_score(data, state, goals, decisions, actions, trace_id)
-        risk_score, risk_level = self._calculate_risk_score(data, state, goals)
-        opportunity_score, opportunity_level = self._calculate_opportunity_score(data)
-        recommended_focus = self._recommend_focus(health.health_score, risk_score, opportunity_score)
+        delivery_month_bucket = self._determine_delivery_month_bucket(data)
 
         aggregate = ProjectAggregate(
             project_id=project_id,
@@ -843,12 +598,7 @@ class ProjectService:
             actions=actions,
             trace_id=trace_id,
             priority="high" if decisions else "medium",
-            health=health,
-            risk_score=risk_score,
-            risk_level=risk_level,
-            opportunity_score=opportunity_score,
-            opportunity_level=opportunity_level,
-            recommended_focus=recommended_focus,
+            delivery_month_bucket=delivery_month_bucket,
         )
 
         if save_trace_flag:

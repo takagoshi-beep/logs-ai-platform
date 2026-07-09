@@ -171,6 +171,10 @@ class ProjectData:
     has_sales: bool = False
     has_purchase: bool = False
     production_closed: bool = False
+    # 2026-07-09（14.35）: 活動履歴の日付をnow()で埋めていた不具合の修正。
+    # sales/purchasesの実際の入力日（複数行あればMIN）。
+    sales_date: Optional[datetime] = None
+    purchase_date: Optional[datetime] = None
 
     @property
     def days_until_delivery(self) -> int:
@@ -282,12 +286,11 @@ class ProjectAggregate:
     updated_at: datetime = field(default_factory=datetime.now)
     assigned_to: str = "AI"
     priority: str = "medium"
-    health: Optional[ProjectHealth] = None
-    risk_score: int = 0
-    risk_level: str = "low"
-    opportunity_score: int = 0
-    opportunity_level: str = "low"
-    recommended_focus: str = "monitor"
+    # 2026-07-09（14.35）: health/risk/opportunity/recommended_focusは
+    # POの納品日/支払日が常に空という実データの制約下では意味を成して
+    # いなかった（Noritsuguの判断）ため廃止。代わりに現在日から納品日
+    # までの月数だけで判定するdelivery_month_bucketに置き換えた。
+    delivery_month_bucket: str = "this_month"
 
     def get_at_risk_goals(self) -> list[ProjectGoal]:
         return [goal for goal, eval in self.goal_evaluations.evaluations.items()
@@ -300,12 +303,7 @@ class ProjectAggregate:
             "trace_id": self.trace_id,
             "state": self.state.value,
             "priority": self.priority,
-            "health": self.health.to_dict() if self.health else None,
-            "risk_score": self.risk_score,
-            "risk_level": self.risk_level,
-            "opportunity_score": self.opportunity_score,
-            "opportunity_level": self.opportunity_level,
-            "recommended_focus": self.recommended_focus,
+            "delivery_month_bucket": self.delivery_month_bucket,
             "events": {
                 "count": self.events.event_count,
                 "items": [e.to_dict() for e in self.events.events],

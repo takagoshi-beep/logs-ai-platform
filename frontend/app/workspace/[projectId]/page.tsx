@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ActionPanel, Badge, Button, Card, SectionHeader, StatusBadge, TaskCard, Timeline } from "@/components/design-system";
+import { Badge, Button, Card, SectionHeader, StatusBadge, TaskCard, Timeline } from "@/components/design-system";
 import { getProject } from "@/lib/api-client";
 
 type Params = { params: { projectId: string } };
@@ -59,12 +59,7 @@ interface ProjectDetail {
   po_number: string;
   state: string;
   priority: string;
-  health: { health_score: number; health_status: string; reason: string } | null;
-  risk_score: number;
-  risk_level: string;
-  opportunity_score: number;
-  opportunity_level: string;
-  recommended_focus: string;
+  delivery_month_bucket: string;
   data: {
     customer_name: string;
     supplier_name: string;
@@ -91,6 +86,14 @@ const STATE_LABEL: Record<string, string> = {
   payment_overdue: "支払遅延",
   cost_discrepancy: "原価相違",
   customer_confirmation_needed: "顧客確認待ち",
+};
+
+// 2026-07-09（14.35）: 健全性・リスク・推奨対応を廃止し、現在から納品日
+// までの月数だけで判定する単純なバッジに置き換えた（Noritsuguの指定）。
+const DELIVERY_BUCKET_LABEL: Record<string, string> = {
+  this_month: "c: 今月納品予定",
+  next_month: "b: 来月納品予定",
+  month_after_next_or_later: "a: 再来月以降納品予定",
 };
 
 function fmtYen(v: number | null | undefined): string {
@@ -139,7 +142,7 @@ export default function WorkspacePage({ params }: Params) {
         <p className="page-subtitle">Supabase（purchase_orders）の実データに基づく分析です。</p>
       </header>
 
-      <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
+      <div className="grid gap-4">
         <Card>
           <div className="mb-2 flex items-center justify-between gap-2">
             <h3 className="text-sm font-semibold text-ink">{project.data.customer_name}</h3>
@@ -153,28 +156,10 @@ export default function WorkspacePage({ params }: Params) {
             <div>粗利: {fmtYen(project.data.gross_profit)}</div>
             <div>粗利率: {project.data.gross_profit_margin != null ? `${project.data.gross_profit_margin.toFixed(1)}%` : "—"}</div>
           </div>
-          {project.health && (
-            <div className="mt-3 flex items-center gap-2">
-              <Badge label={`健全性 ${project.health.health_score} (${project.health.health_status})`} />
-              <Badge label={`リスク ${project.risk_score} (${project.risk_level})`} />
-              <Badge label={`推奨対応: ${project.recommended_focus}`} />
-            </div>
-          )}
+          <div className="mt-3">
+            <Badge label={DELIVERY_BUCKET_LABEL[project.delivery_month_bucket] ?? project.delivery_month_bucket} />
+          </div>
         </Card>
-
-        <ActionPanel
-          title="AIが提案する次のアクション"
-          items={
-            project.actions.length > 0
-              ? project.actions.map((a) => ({ label: a.priority, value: a.title }))
-              : [{ label: "情報", value: "現時点で推奨アクションはありません" }]
-          }
-          action={
-            <Button href="/tasks" size="sm">
-              関連タスクを見る
-            </Button>
-          }
-        />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
