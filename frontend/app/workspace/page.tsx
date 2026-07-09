@@ -33,20 +33,23 @@ const STATE_LABEL: Record<string, string> = {
 export default function WorkspaceListPage() {
   const [search, setSearch] = useState("");
   const [stateFilter, setStateFilter] = useState("all");
+  const [scopeChoice, setScopeChoice] = useState<"mine" | "all">("mine");
   const [projects, setProjects] = useState<ApiProject[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getProjects(50).then((data: any) => {
+    setLoading(true);
+    getProjects(50, scopeChoice).then((data: any) => {
       setLoading(false);
       if (data?.success === false) {
         setError(data.error ?? "データの取得に失敗しました");
         return;
       }
+      setError(null);
       setProjects(data?.projects ?? []);
     });
-  }, []);
+  }, [scopeChoice]);
 
   const states = Array.from(new Set(projects.map((p) => p.state)));
 
@@ -70,7 +73,31 @@ export default function WorkspaceListPage() {
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2">
+      {!loading && !error && scopeChoice === "mine" && projects.length === 0 && (
+        <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-sub">
+          関連する案件が見つかりませんでした（社員マスタの氏名と、PO上の担当者名が一致しない可能性があります）。「すべての案件」に切り替えてご覧いただけます。
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="inline-flex rounded-lg border border-slate-300 bg-white p-0.5 text-sm">
+          <button
+            onClick={() => setScopeChoice("mine")}
+            className={`rounded-md px-3 py-1.5 font-medium transition ${
+              scopeChoice === "mine" ? "bg-accent text-white" : "text-ink hover:bg-slate-100"
+            }`}
+          >
+            自分の案件
+          </button>
+          <button
+            onClick={() => setScopeChoice("all")}
+            className={`rounded-md px-3 py-1.5 font-medium transition ${
+              scopeChoice === "all" ? "bg-accent text-white" : "text-ink hover:bg-slate-100"
+            }`}
+          >
+            すべての案件
+          </button>
+        </div>
         <input
           type="text"
           value={search}

@@ -82,8 +82,8 @@ export async function storeProductEvent(event: {
 /**
  * Get list of project candidates
  */
-export async function getProjects(limit: number = 10) {
-  return apiCall("/api/projects", {
+export async function getProjects(limit: number = 10, scope: "mine" | "all" = "mine") {
+  return apiCall(`/api/projects?limit=${limit}&scope=${scope}`, {
     method: "GET",
   });
 }
@@ -288,8 +288,8 @@ export async function getProjectTrace(projectId: string) {
 /**
  * Get today's actions from all projects
  */
-export async function getTodayActions(limit: number = 20) {
-  return apiCall(`/api/today-actions?limit=${limit}`);
+export async function getTodayActions(limit: number = 20, scope: "mine" | "all" = "mine") {
+  return apiCall(`/api/today-actions?limit=${limit}&scope=${scope}`);
 }
 
 /**

@@ -53,11 +53,13 @@ export default function TaskCenterPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [usedRealData, setUsedRealData] = useState(false);
+  const [scopeChoice, setScopeChoice] = useState<"mine" | "all">("mine");
 
   useEffect(() => {
     async function loadTasks() {
+      setIsLoading(true);
       try {
-        const response = await getTodayActions(50);
+        const response = await getTodayActions(50, scopeChoice);
         if (response.success && response.actions) {
           const mappedTasks: Task[] = response.actions.map((action: any, idx: number) => ({
             id: action.action_id || `task-${idx}`,
@@ -98,17 +100,35 @@ export default function TaskCenterPage() {
     }
 
     loadTasks();
-  }, []);
+  }, [scopeChoice]);
 
   return (
     <div className="space-y-5">
       <header className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex items-start justify-between">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="page-title">今日のタスク</h1>
             <p className="page-subtitle">優先度・理由・次の対応を1画面で確認できます。</p>
             {usedRealData && <p className="text-xs text-green-600 mt-2">最新データを表示中</p>}
             {!usedRealData && !isLoading && <p className="text-xs text-orange-600 mt-2">サンプルデータを表示中</p>}
+          </div>
+          <div className="inline-flex rounded-lg border border-slate-300 bg-white p-0.5 text-sm">
+            <button
+              onClick={() => setScopeChoice("mine")}
+              className={`rounded-md px-3 py-1.5 font-medium transition ${
+                scopeChoice === "mine" ? "bg-accent text-white" : "text-ink hover:bg-slate-100"
+              }`}
+            >
+              自分のタスク
+            </button>
+            <button
+              onClick={() => setScopeChoice("all")}
+              className={`rounded-md px-3 py-1.5 font-medium transition ${
+                scopeChoice === "all" ? "bg-accent text-white" : "text-ink hover:bg-slate-100"
+              }`}
+            >
+              すべてのタスク
+            </button>
           </div>
         </div>
       </header>
