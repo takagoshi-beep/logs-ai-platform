@@ -289,17 +289,20 @@ def test_get_product_detail_derives_sales_admin_from_po_first(monkeypatch):
 
 
 def test_get_product_detail_includes_planned_and_actual_cost_fields(monkeypatch):
-    """2026-07-09（14.44、Noritsuguの指定）: 発注単価・予定輸入経費率・
-    予定原価はPO履歴の最新行（PO発行日が新しい順で先頭）、実績輸入経費率・
-    実績原価は仕入履歴の最新行（伝票日が新しい順で先頭）から取る。"""
+    """2026-07-09（14.44・14.46、Noritsuguの指定）: 発注単価・予定輸入
+    経費率・予定原価単価はPO履歴の最新行（PO発行日が新しい順で先頭）、
+    実績輸入経費率・実績原価は仕入履歴の最新行（伝票日が新しい順で先頭）
+    から取る。予定原価単価は"売上原価"（明細合計金額）を"発注数量"で
+    割った単価にする（14.46: 売上原価が合計金額であり単価ではないと
+    Excel原本の列順から確認済み、Noritsuguの指摘）。"""
     master_cols = ["ID", "LOGS_CODE", "Sample_CODE", "商品名"]
     master_rows = [(101, "5145", None, "Baseball Cap")]
 
     po_cols = ["ID", "PO_No", "顧客名", "営業担当者名", "営業事務担当者名", "生産管理担当者名",
-               "企画担当者名", "発注数量", "発注金額", "PO発行日", "発注単価", "輸入経費率", "売上原価"]
+               "企画担当者名", "発注数量", "発注金額", "PO発行日", "発注単価", "輸入経費率", "売上原価", "通貨"]
     po_rows = [
-        (2, "914-2", "US_LOGS Inc.", "山田太郎", None, None, None, 10, 2000, "2026-02-01", 200.0, 1.18, 236.0),
-        (1, "914-1", "US_LOGS Inc.", "山田太郎", None, None, None, 10, 1000, "2026-01-01", 100.0, 1.10, 110.0),
+        (2, "914-2", "US_LOGS Inc.", "山田太郎", None, None, None, 10, 2000, "2026-02-01", 200.0, 1.18, 2360.0, "USD"),
+        (1, "914-1", "US_LOGS Inc.", "山田太郎", None, None, None, 10, 1000, "2026-01-01", 100.0, 1.10, 1100.0, "USD"),
     ]
 
     purchase_cols = ["仕入先名", "営業担当者名", "営業事務担当者名", "生産管理担当者名",
@@ -323,8 +326,9 @@ def test_get_product_detail_includes_planned_and_actual_cost_fields(monkeypatch)
     master = detail["master"]
 
     assert master["発注単価"] == 200.0
+    assert master["発注単価通貨"] == "USD"
     assert master["予定輸入経費率"] == 1.18
-    assert master["予定原価"] == 236.0
+    assert master["予定原価単価"] == 236.0  # 2360.0（売上原価=合計） ÷ 10（発注数量）
     assert master["実績輸入経費率"] == 1.20
     assert master["実績原価"] == 240.0
 
@@ -348,7 +352,7 @@ def test_get_product_detail_cost_fields_are_none_when_no_po_or_purchase_history(
 
     assert master["発注単価"] is None
     assert master["予定輸入経費率"] is None
-    assert master["予定原価"] is None
+    assert master["予定原価単価"] is None
     assert master["実績輸入経費率"] is None
     assert master["実績原価"] is None
 

@@ -139,14 +139,14 @@ export default function ProductDetailPage({ params }: Params) {
           <div>通常売価: {fmtYen(m.通常売価)}</div>
         </div>
         <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-sub sm:grid-cols-3 border-t border-slate-100 pt-3">
-          <div>発注単価: {fmtYen(m.発注単価)}</div>
+          <div>発注単価: {m.発注単価 != null ? `${m.発注単価.toLocaleString()} ${m.発注単価通貨 ?? ""}`.trim() : "—"}</div>
           <div>予定輸入経費率: {m.予定輸入経費率 != null ? Number(m.予定輸入経費率).toFixed(2) : "—"}</div>
-          <div>予定原価: {fmtYen(m.予定原価)}</div>
+          <div>予定原価単価: {fmtYen(m.予定原価単価)}</div>
           <div>実績輸入経費率: {m.実績輸入経費率 != null ? Number(m.実績輸入経費率).toFixed(2) : "—"}</div>
           <div>実績原価: {fmtYen(m.実績原価)}</div>
         </div>
         <p className="mt-1 text-xs text-sub">
-          いずれも最新のPO・仕入明細（それぞれPO発行日・伝票日が最新の1件）から取得。発注単価・予定輸入経費率・予定原価はPO入力時点、実績輸入経費率・実績原価は仕入確定後の値です。
+          いずれも最新のPO・仕入明細（それぞれPO発行日・伝票日が最新の1件）から取得。発注単価・予定輸入経費率・予定原価単価はPO入力時点、実績輸入経費率・実績原価は仕入確定後の値です。発注単価はPOに入力された通貨のままで、円ではない場合があります。
         </p>
       </Card>
 
