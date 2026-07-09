@@ -12,6 +12,22 @@ from typing import Any
 from services.supabase_client import get_connection
 
 
+_PRODUCT_CATEGORY_LABELS = {
+    1: "帽子", 2: "バッグ", 3: "財布/小物", 4: "サングラス/メガネ",
+    5: "巻物", 6: "アパレル", 7: "ベルト", 8: "履物", 9: "アクセサリー",
+}
+
+
+def _product_category_label(code: Any) -> str:
+    """商品分類の数値コードを実際の名称に変換する。対応表は既存の
+    reference/02_database/sync/sync.py の v_product_master ビュー定義、
+    および services/product_service.py の同名関数と完全に一致させている
+    （2026-07-09、DBビューのCASE式をPython側から直接再利用する手段が
+    無いため複製している。変更する際は3箇所とも合わせて直すこと）。
+    """
+    return _PRODUCT_CATEGORY_LABELS.get(code, "その他")
+
+
 def _evidence(
     provider: str,
     dataset: str,
@@ -70,36 +86,54 @@ class LogsysProvider:
         # ステータス・決済方法の集計フィルタは、本番運用中のシステムプロンプト
         # （別アプリ app.py の system_sql）で確認済みの正式ルール。
         # 赤伝（ステータス=3）は返品として含める。仮出庫（決済方法=4）は除外する。
+        where = "\"ステータス\" IN (2, 3, 4, 5) AND \"決済方法\" != '4'"
+        args: list[Any] = []
+        if params.get("period_start"):
+            where += ' AND "売上入力日" >= %s'
+            args.append(params["period_start"])
+        if params.get("period_end"):
+            where += ' AND "売上入力日" <= %s'
+            args.append(params["period_end"])
+        if params.get("customer_keyword"):
+            where += ' AND "得意先名" LIKE %s'
+            args.append(f"%{params['customer_keyword']}%")
+        if params.get("sales_rep_keyword"):
+            where += ' AND "営業担当者名" LIKE %s'
+            args.append(f"%{params['sales_rep_keyword']}%")
+
         sql = (
             'SELECT "売上入力日", "得意先ID", "得意先名", "登録商品名", '
             '"事業分類", "数量pcs", "売上金額", "明細粗利", "営業担当者名" '
-            'FROM sales '
-            "WHERE \"ステータス\" IN (2, 3, 4, 5) AND \"決済方法\" != '4'"
+            f'FROM sales WHERE {where} ORDER BY "売上入力日"'
         )
-        args: list[Any] = []
-        if params.get("period_start"):
-            sql += ' AND "売上入力日" >= %s'
-            args.append(params["period_start"])
-        if params.get("period_end"):
-            sql += ' AND "売上入力日" <= %s'
-            args.append(params["period_end"])
-        if params.get("customer_keyword"):
-            sql += ' AND "得意先名" LIKE %s'
-            args.append(f"%{params['customer_keyword']}%")
-        if params.get("sales_rep_keyword"):
-            sql += ' AND "営業担当者名" LIKE %s'
-            args.append(f"%{params['sales_rep_keyword']}%")
-        sql += ' ORDER BY "売上入力日"'
         rows = self._query(sql, tuple(args))
+
+        # 2026-07-09: この行一覧はツール結果の上限（_MAX_RECORDS_FOR_CLAUDE）で
+        # 切り捨てられることがあるため、合計金額・件数は切り捨て後のサンプルを
+        # Claudeが手計算するのではなく、SQL側で正確に計算して別途渡す
+        # （「石川さんの7月の売上」のような質問で、643件のうち200件しか見えず
+        # 実際より少ない金額を回答してしまっていた実例の修正）。
+        agg_sql = (
+            'SELECT COUNT(*) AS "件数", COALESCE(SUM("売上金額"), 0) AS "売上金額合計", '
+            'COALESCE(SUM("明細粗利"), 0) AS "粗利合計" '
+            f'FROM sales WHERE {where}'
+        )
+        agg_rows = self._query(agg_sql, tuple(args))
+        aggregate = agg_rows[0] if agg_rows else {"件数": len(rows), "売上金額合計": 0, "粗利合計": 0}
+
         period = (
             f"{params.get('period_start', '')}〜{params.get('period_end', '')}"
             if params.get("period_start") else "全期間"
         )
-        return _evidence(
+        evidence = _evidence(
             self.name, "sales_lines", "ok",
-            f"売上明細 {len(rows)}件を取得（{period}、有効な受注のみ・標準フィルタ適用済み）",
+            f"売上明細 {len(rows)}件を取得（{period}、有効な受注のみ・標準フィルタ適用済み）。"
+            f"合計金額・件数はaggregateフィールドの値を使うこと（recordsが後で"
+            f"切り捨てられても、aggregateは常にフィルタ条件全体に対する正確な値）。",
             rows,
         )
+        evidence["aggregate"] = aggregate
+        return evidence
 
     def _purchase_lines(self, params: dict[str, Any]) -> dict[str, Any]:
         # ステータスIN(2,3)は本番運用中のシステムプロンプトで確認済みの
@@ -107,30 +141,47 @@ class LogsysProvider:
         # 営業担当者名は伝票レベル・明細レベルの両方に存在するため、
         # 明細を優先し、空欄の場合のみ伝票の値を採用する（14.30で確認した
         # purchasesテーブル特有の二重構造）。
+        where = '"ステータス" IN (2, 3)'
+        args: list[Any] = []
+        if params.get("period_start"):
+            where += ' AND "伝票日" >= %s'
+            args.append(params["period_start"])
+        if params.get("period_end"):
+            where += ' AND "伝票日" <= %s'
+            args.append(params["period_end"])
+        if params.get("sales_rep_keyword"):
+            where += ' AND COALESCE(NULLIF("明細営業担当者名", \'\'), "営業担当者名") LIKE %s'
+            args.append(f"%{params['sales_rep_keyword']}%")
+
         sql = (
             'SELECT "伝票日", "仕入先名", "商品分類", "仕入数量pcs", '
             '"仕入金額円", "諸掛込金額円", '
             'COALESCE(NULLIF("明細営業担当者名", \'\'), "営業担当者名") AS "営業担当者名" '
-            'FROM purchases '
-            'WHERE "ステータス" IN (2, 3)'
+            f'FROM purchases WHERE {where} ORDER BY "伝票日"'
         )
-        args: list[Any] = []
-        if params.get("period_start"):
-            sql += ' AND "伝票日" >= %s'
-            args.append(params["period_start"])
-        if params.get("period_end"):
-            sql += ' AND "伝票日" <= %s'
-            args.append(params["period_end"])
-        if params.get("sales_rep_keyword"):
-            sql += ' AND COALESCE(NULLIF("明細営業担当者名", \'\'), "営業担当者名") LIKE %s'
-            args.append(f"%{params['sales_rep_keyword']}%")
-        sql += ' ORDER BY "伝票日"'
         rows = self._query(sql, tuple(args))
-        return _evidence(
+
+        # 2026-07-09: sales_linesと同じ理由で、正確な合計はSQL側で
+        # 別途計算する（recordsの切り捨てとは無関係な値にするため）。
+        agg_sql = (
+            'SELECT COUNT(*) AS "件数", COALESCE(SUM("仕入金額円"), 0) AS "仕入金額合計", '
+            'COALESCE(SUM("諸掛込金額円"), 0) AS "諸掛込金額合計" '
+            f'FROM purchases WHERE {where}'
+        )
+        agg_rows = self._query(agg_sql, tuple(args))
+        aggregate = agg_rows[0] if agg_rows else {"件数": len(rows), "仕入金額合計": 0, "諸掛込金額合計": 0}
+
+        for row in rows:
+            row["商品分類名"] = _product_category_label(row.get("商品分類"))
+
+        evidence = _evidence(
             self.name, "purchase_lines", "ok",
-            f"仕入明細 {len(rows)}件を取得（諸掛り込み金額、標準フィルタ適用済み）",
+            f"仕入明細 {len(rows)}件を取得（諸掛り込み金額、標準フィルタ適用済み）。"
+            f"合計金額・件数はaggregateフィールドの値を使うこと。",
             rows,
         )
+        evidence["aggregate"] = aggregate
+        return evidence
 
     def _projects(self, params: dict[str, Any]) -> dict[str, Any]:
         # 「案件」に相当する実データは purchase_orders テーブル
@@ -149,16 +200,20 @@ class LogsysProvider:
         return _evidence(self.name, "projects", "ok", f"{label}案件 {len(rows)}件を取得", rows)
 
     def _customer_master(self, params: dict[str, Any]) -> dict[str, Any]:
-        sql = 'SELECT "ID", "顧客名称" FROM customers WHERE 1=1'
+        sql = 'SELECT "ID", "顧客名称", "営業担当者名" FROM customers WHERE 1=1'
         args: list[Any] = []
         if params.get("keyword"):
             sql += ' AND "顧客名称" LIKE %s'
             args.append(f"%{params['keyword']}%")
         rows = self._query(sql, tuple(args))
-        return _evidence(self.name, "customer_master", "ok", f"顧客マスタ {len(rows)}件を取得（名寄せ用）", rows)
+        return _evidence(self.name, "customer_master", "ok", f"顧客マスタ {len(rows)}件を取得（名寄せ・営業担当確認用）", rows)
 
     def _product_master(self, params: dict[str, Any]) -> dict[str, Any]:
-        rows = self._query('SELECT "LOGS_CODE", "商品名", "商品分類" FROM products')
+        rows = self._query(
+            'SELECT "LOGS_CODE", "Sample_CODE", "商品名", "型番", "商品分類", "仕入先名" FROM products'
+        )
+        for row in rows:
+            row["商品分類名"] = _product_category_label(row.get("商品分類"))
         return _evidence(self.name, "product_master", "ok", f"商品マスタ {len(rows)}件を取得", rows)
 
     def _code_master(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -197,7 +252,7 @@ class LogsysProvider:
         # PAYMENT_METHOD=4（仮出庫）は未確定出荷のため集計対象外。
         # SALES_STATUS=3（赤伝）は返品であり、除外せずマイナス計上すべき正規取引のため、ここには含めない。
         sql = (
-            'SELECT "売上入力日", "得意先名", "登録商品名", "売上金額", "決済方法" '
+            'SELECT "売上入力日", "得意先名", "登録商品名", "売上金額", "決済方法", "営業担当者名" '
             "FROM sales WHERE \"決済方法\" = '4'"
         )
         args: list[Any] = []
@@ -218,7 +273,7 @@ class LogsysProvider:
     def _returns(self, params: dict[str, Any]) -> dict[str, Any]:
         # SALES_STATUS=3（赤伝）が返品に相当することが code_master で確認済み。
         sql = (
-            'SELECT "売上入力日", "得意先名", "登録商品名", "売上金額", "ステータス" '
+            'SELECT "売上入力日", "得意先名", "登録商品名", "売上金額", "ステータス", "営業担当者名" '
             "FROM sales WHERE \"ステータス\" = '3'"
         )
         args: list[Any] = []
