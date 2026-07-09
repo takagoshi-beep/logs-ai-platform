@@ -153,14 +153,28 @@ export default function TaskCenterPage() {
         </Card>
       )}
 
-      {!isLoading && signals && (signals.gmail_unread_total > 0 || signals.slack_recent_total > 0) && (
-        <div className="flex flex-wrap gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          {signals.gmail_unread_total > 0 && (
-            <span>📧 今日のタスクに関連する未読メールが{signals.gmail_unread_total}件あります</span>
-          )}
-          {signals.slack_recent_total > 0 && (
-            <span>💬 今日のタスクに関連する直近のSlackメッセージが{signals.slack_recent_total}件あります</span>
-          )}
+      {!isLoading && signals && (
+        <div className="flex flex-wrap gap-4 rounded-lg border border-slate-200 bg-white p-3 text-sm text-sub">
+          <span>
+            📧 関連する未読メール:{" "}
+            {signals.gmail_status === "ok" ? (
+              <strong className="text-ink">{signals.gmail_unread_total}件</strong>
+            ) : signals.gmail_status === "unavailable" ? (
+              <span className="text-amber-700">Gmail未連携 (<a href="/settings" className="underline">設定画面へ</a>)</span>
+            ) : (
+              <span className="text-amber-700">取得エラー</span>
+            )}
+          </span>
+          <span>
+            💬 関連する直近のSlackメッセージ:{" "}
+            {signals.slack_status === "ok" ? (
+              <strong className="text-ink">{signals.slack_recent_total}件</strong>
+            ) : signals.slack_status === "unavailable" ? (
+              <span className="text-amber-700">Slack未連携 (<a href="/settings" className="underline">設定画面へ</a>)</span>
+            ) : (
+              <span className="text-amber-700">取得エラー</span>
+            )}
+          </span>
         </div>
       )}
 
