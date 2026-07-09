@@ -20,6 +20,15 @@ interface Task {
   trace_id?: string;
   related_state?: string;
   related_goal?: string;
+  gmail_unread?: number;
+  slack_recent?: number;
+}
+
+interface Signals {
+  gmail_unread_total: number;
+  slack_recent_total: number;
+  gmail_status: string;
+  slack_status: string;
 }
 
 function priorityLabel(p: string) {
@@ -54,6 +63,7 @@ export default function TaskCenterPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [usedRealData, setUsedRealData] = useState(false);
   const [scopeChoice, setScopeChoice] = useState<"mine" | "all">("mine");
+  const [signals, setSignals] = useState<Signals | null>(null);
 
   useEffect(() => {
     async function loadTasks() {
@@ -75,8 +85,11 @@ export default function TaskCenterPage() {
             trace_id: action.trace_id,
             related_state: action.related_state,
             related_goal: action.related_goal,
+            gmail_unread: action.gmail_unread || 0,
+            slack_recent: action.slack_recent || 0,
           }));
           setTasks(mappedTasks);
+          setSignals(response.signals ?? null);
           setUsedRealData(true);
         } else {
           throw new Error("No actions returned");
@@ -94,6 +107,7 @@ export default function TaskCenterPage() {
           reason: task.reason,
         }));
         setTasks(mockTasks);
+        setSignals(null);
       } finally {
         setIsLoading(false);
       }
@@ -139,6 +153,17 @@ export default function TaskCenterPage() {
         </Card>
       )}
 
+      {!isLoading && signals && (signals.gmail_unread_total > 0 || signals.slack_recent_total > 0) && (
+        <div className="flex flex-wrap gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          {signals.gmail_unread_total > 0 && (
+            <span>📧 今日のタスクに関連する未読メールが{signals.gmail_unread_total}件あります</span>
+          )}
+          {signals.slack_recent_total > 0 && (
+            <span>💬 今日のタスクに関連する直近のSlackメッセージが{signals.slack_recent_total}件あります</span>
+          )}
+        </div>
+      )}
+
       {!isLoading && (
         <Card>
           <SectionHeader
@@ -158,6 +183,12 @@ export default function TaskCenterPage() {
                     <span>{task.project}</span>
                     <span>期限: {task.due}</span>
                     <span>担当: {task.owner || "-"}</span>
+                    {!!task.gmail_unread && (
+                      <span className="text-amber-700">📧未読{task.gmail_unread}件</span>
+                    )}
+                    {!!task.slack_recent && (
+                      <span className="text-amber-700">💬関連{task.slack_recent}件</span>
+                    )}
                   </div>
                   {task.reason && (
                     <p className="mt-2 text-xs text-sub">理由: {task.reason}</p>

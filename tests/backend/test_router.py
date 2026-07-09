@@ -391,6 +391,49 @@ def test_today_actions_via_http_sorted_by_priority(monkeypatch):
     assert body["actions"][0]["reason"] == "納期超過"
 
 
+def test_today_actions_includes_gmail_slack_signals(monkeypatch):
+    """docs/architecture.md 14.34: 今日のタスクに関連する未読Gmail・
+    直近Slackメッセージ件数が、タスクごととサマリの両方に含まれる。"""
+    from services import project_relations
+
+    _mock_project_service(monkeypatch, {"7722": _fake_aggregate("7722")})
+    monkeypatch.setattr(
+        project_relations, "get_task_signals",
+        lambda user_email, po_numbers: {
+            "gmail_unread_total": 2, "slack_recent_total": 1,
+            "gmail_status": "ok", "slack_status": "ok",
+            "by_task": {po: {"gmail_unread": 2, "slack_recent": 1} for po in po_numbers},
+        },
+    )
+
+    response = _client().get("/api/today-actions")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["signals"]["gmail_unread_total"] == 2
+    assert body["signals"]["slack_recent_total"] == 1
+    assert body["actions"][0]["gmail_unread"] == 2
+    assert body["actions"][0]["slack_recent"] == 1
+
+
+def test_today_actions_signals_degrade_gracefully_on_error(monkeypatch):
+    """get_task_signals自体が例外を出しても、案件データ本体は正常に返る。"""
+    from services import project_relations
+
+    _mock_project_service(monkeypatch, {"7722": _fake_aggregate("7722")})
+
+    def _raise(user_email, po_numbers):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(project_relations, "get_task_signals", _raise)
+
+    response = _client().get("/api/today-actions")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["count"] == 1
+    assert body["actions"][0]["gmail_unread"] == 0
+    assert body["signals"]["gmail_unread_total"] == 0
+
+
 # ---------------------------------------------------------------------------
 # products (docs/architecture.md 14.30)
 # ---------------------------------------------------------------------------

@@ -343,12 +343,36 @@ def get_today_actions(limit: int = 20, scope: str = "mine", user: dict = Depends
         # Take top N
         actions = all_actions[:limit]
 
+        # 案件データだけでなく、関連しそうな未読Gmail・直近Slackメッセージ
+        # 件数も一緒に返す（docs/architecture.md 14.34）。タスク数だけ
+        # 外部APIを呼ぶと14.28と同じ遅延問題を再現するため、全PO番号を
+        # まとめてGmail・Slackそれぞれ1回だけ呼び出す。
+        try:
+            from services.project_relations import get_task_signals
+            po_numbers = list({a["project_name"] for a in actions if a.get("project_name")})
+            signals = get_task_signals(user.get("email"), po_numbers)
+            for action in actions:
+                task_signal = signals["by_task"].get(action.get("project_name"), {})
+                action["gmail_unread"] = task_signal.get("gmail_unread", 0)
+                action["slack_recent"] = task_signal.get("slack_recent", 0)
+        except Exception:
+            signals = {"gmail_unread_total": 0, "slack_recent_total": 0, "gmail_status": "unavailable", "slack_status": "unavailable"}
+            for action in actions:
+                action["gmail_unread"] = 0
+                action["slack_recent"] = 0
+
         return {
             "success": True,
             "actions": actions,
             "count": len(actions),
             "total": len(all_actions),
             "scope": "mine" if owner_name else "all",
+            "signals": {
+                "gmail_unread_total": signals.get("gmail_unread_total", 0),
+                "slack_recent_total": signals.get("slack_recent_total", 0),
+                "gmail_status": signals.get("gmail_status", "unavailable"),
+                "slack_status": signals.get("slack_status", "unavailable"),
+            },
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

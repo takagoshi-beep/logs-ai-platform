@@ -128,6 +128,74 @@ def _search_slack_related(
     return result
 
 
+def get_task_signals(user_email: str | None, po_numbers: list[str], max_results: int = 25) -> dict[str, Any]:
+    """今日のタスク一覧に対して、関連しそうな未読Gmail・直近Slackメッセージの
+    件数を返す (docs/architecture.md 14.34)。
+
+    タスク数だけGmail/Slackを呼び出すと、14.28で直したのと同種の遅延
+    問題（N回の外部API呼び出し）を再現してしまうため、**全PO番号を1つの
+    クエリにOR結合して、Gmail・Slackそれぞれ1回だけ**呼び出す。返って
+    きたメッセージの件名/本文抜粋にどのPO番号が含まれるかで、タスクごと
+    に振り分ける（複数PO番号を含むメッセージは両方にカウントされうる、
+    ベストエフォートの振り分け）。
+
+    Gmail: `is:unread`で未読のみに絞る（Gmail検索構文が正式にサポート
+    している）。
+    Slack: 「未読」に相当する概念がsearch APIには無いため、直近の関連
+    メッセージ件数として扱う（Gmailの未読件数と同じ意味ではないことを
+    呼び出し側で区別できるようキー名を分けている）。またSlackは
+    ハイフンを含む語を引用符で囲むと一致しなくなるため（14.31）、
+    PO番号は引用符なしで検索する。
+
+    未連携・PO番号が無い場合はゼロ件として返す（架空の件数を作らない）。
+    """
+    empty = {
+        "gmail_unread_total": 0, "slack_recent_total": 0,
+        "gmail_status": "unavailable", "slack_status": "unavailable",
+        "by_task": {},
+    }
+    if not user_email or not po_numbers:
+        return empty
+
+    by_task = {po: {"gmail_unread": 0, "slack_recent": 0} for po in po_numbers}
+
+    try:
+        from services import gmail_service
+        gmail_query = "(" + " OR ".join(f'"{po}"' for po in po_numbers) + ") is:unread"
+        gmail_result = gmail_service.search_messages(user_email, gmail_query, max_results)
+    except Exception as e:
+        gmail_result = {"status": "error", "summary": str(e), "records": []}
+
+    try:
+        from services import slack_service
+        slack_query = " OR ".join(po_numbers)  # 引用符なし（14.31）
+        slack_result = slack_service.search_messages(user_email, slack_query, max_results)
+    except Exception as e:
+        slack_result = {"status": "error", "summary": str(e), "records": []}
+
+    if gmail_result.get("status") == "ok":
+        for rec in gmail_result.get("records", []):
+            text = f"{rec.get('subject', '')} {rec.get('snippet', '')}"
+            for po in po_numbers:
+                if po in text:
+                    by_task[po]["gmail_unread"] += 1
+
+    if slack_result.get("status") == "ok":
+        for rec in slack_result.get("records", []):
+            text = rec.get("text", "")
+            for po in po_numbers:
+                if po in text:
+                    by_task[po]["slack_recent"] += 1
+
+    return {
+        "gmail_unread_total": len(gmail_result.get("records", [])) if gmail_result.get("status") == "ok" else 0,
+        "slack_recent_total": len(slack_result.get("records", [])) if slack_result.get("status") == "ok" else 0,
+        "gmail_status": gmail_result.get("status", "unavailable"),
+        "slack_status": slack_result.get("status", "unavailable"),
+        "by_task": by_task,
+    }
+
+
 def get_related_communications(
     user_email: str | None,
     po_number: str,
