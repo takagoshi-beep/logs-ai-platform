@@ -301,8 +301,8 @@ def test_get_product_detail_includes_planned_and_actual_cost_fields(monkeypatch)
     po_cols = ["ID", "PO_No", "顧客名", "営業担当者名", "営業事務担当者名", "生産管理担当者名",
                "企画担当者名", "発注数量", "発注金額", "PO発行日", "発注単価", "輸入経費率", "売上原価", "通貨"]
     po_rows = [
-        (2, "914-2", "US_LOGS Inc.", "山田太郎", None, None, None, 10, 2000, "2026-02-01", 200.0, 1.18, 2360.0, "USD"),
-        (1, "914-1", "US_LOGS Inc.", "山田太郎", None, None, None, 10, 1000, "2026-01-01", 100.0, 1.10, 1100.0, "USD"),
+        (2, "914-2", "US_LOGS Inc.", "山田太郎", None, None, None, 10, 2000, "2026-02-01", 200.0, 1.18, 2360.0, 1),
+        (1, "914-1", "US_LOGS Inc.", "山田太郎", None, None, None, 10, 1000, "2026-01-01", 100.0, 1.10, 1100.0, 1),
     ]
 
     purchase_cols = ["仕入先名", "営業担当者名", "営業事務担当者名", "生産管理担当者名",
@@ -330,7 +330,20 @@ def test_get_product_detail_includes_planned_and_actual_cost_fields(monkeypatch)
     assert master["予定輸入経費率"] == 1.18
     assert master["予定原価単価"] == 236.0  # 2360.0（売上原価=合計） ÷ 10（発注数量）
     assert master["実績輸入経費率"] == 1.20
-    assert master["実績原価"] == 240.0
+    assert master["実績原価単価"] == 240.0
+
+
+def test_currency_label_translates_code_master_values():
+    """2026-07-09（14.47、Noritsuguが実際にcode_masterで確認した対応表）:
+    CURRENCY: 1=USD, 2=円, 3=RMB。"""
+    assert product_service._currency_label(1) == "USD"
+    assert product_service._currency_label(2) == "円"
+    assert product_service._currency_label(3) == "RMB"
+
+
+def test_currency_label_falls_back_to_raw_value_for_unknown_code():
+    assert product_service._currency_label(99) == "99"
+    assert product_service._currency_label(None) is None
 
 
 def test_get_product_detail_cost_fields_are_none_when_no_po_or_purchase_history(monkeypatch):
@@ -354,7 +367,7 @@ def test_get_product_detail_cost_fields_are_none_when_no_po_or_purchase_history(
     assert master["予定輸入経費率"] is None
     assert master["予定原価単価"] is None
     assert master["実績輸入経費率"] is None
-    assert master["実績原価"] is None
+    assert master["実績原価単価"] is None
 
 
 def test_get_product_detail_falls_back_to_purchase_for_sales_admin(monkeypatch):

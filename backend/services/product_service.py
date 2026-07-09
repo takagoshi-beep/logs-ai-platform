@@ -89,6 +89,21 @@ def _product_category_label(code: Any) -> str:
     return _PRODUCT_CATEGORY_LABELS.get(code, "その他")
 
 
+# 2026-07-09（14.47、Noritsuguの指定）: code_master CURRENCY の対応表。
+# purchase_orders."通貨"は数値コードで、そのままでは何の通貨か分からない
+# （1=USD, 2=円, 3=RMB、Noritsuguが実際にcode_masterで確認して提示）。
+_CURRENCY_LABELS = {1: "USD", 2: "円", 3: "RMB"}
+
+
+def _currency_label(code: Any) -> str | None:
+    if code is None:
+        return None
+    try:
+        return _CURRENCY_LABELS.get(int(code), str(code))
+    except (TypeError, ValueError):
+        return str(code)
+
+
 def _format_logs_code(value: Any) -> str | None:
     """LOGS_CODE列はSupabase上でdouble precision型のため、13564のような
     整数値でもPythonからは13564.0という浮動小数点として返ってくる。
@@ -385,13 +400,13 @@ def get_product_detail(product_id: str) -> dict[str, Any] | None:
     po_quantity = latest_po.get("発注数量")
     po_total_cost = latest_po.get("売上原価")
     master["発注単価"] = latest_po.get("発注単価")
-    master["発注単価通貨"] = latest_po.get("通貨")
+    master["発注単価通貨"] = _currency_label(latest_po.get("通貨"))
     master["予定輸入経費率"] = latest_po.get("輸入経費率")
     master["予定原価単価"] = (
         po_total_cost / po_quantity if po_total_cost is not None and po_quantity else None
     )
     master["実績輸入経費率"] = latest_purchase.get("経費率")
-    master["実績原価"] = latest_purchase.get("実際原価")
+    master["実績原価単価"] = latest_purchase.get("実際原価")
 
     return {
         "master": master,
