@@ -75,7 +75,7 @@ class ProjectService:
 
     _PO_SELECT_COLUMNS = (
         '"ID", "PO_No", "仕入先ID", "仕入先名", "顧客ID", "顧客名", '
-        '"PO発行日", "顧客納品日", "納品日", "LOGS_CODE", "案件名", "輸入経費率", '
+        '"PO発行日", "顧客納品日", "納品日", "LOGS_CODE", "案件名", "輸入経費率", "ステータス", '
         '"合計発注金額", "合計売上原価", "合計売上金額"'
     )
 
@@ -152,6 +152,7 @@ class ProjectService:
                 project_name=po_dict.get("案件名") or None,
                 planned_import_cost_ratio=float(po_dict["輸入経費率"]) if po_dict.get("輸入経費率") is not None else None,
                 actual_import_cost_ratio=float(po_dict["actual_import_cost_ratio"]) if po_dict.get("actual_import_cost_ratio") is not None else None,
+                po_status=int(po_dict["ステータス"]) if po_dict.get("ステータス") is not None else None,
             )
 
             if project_data.cost_amount and project_data.sale_amount:
@@ -414,22 +415,27 @@ class ProjectService:
         return ProjectState.SALES_UNCONFIRMED
 
     def _determine_status_badges(self, data: ProjectData) -> list[str]:
-        """画面表示用の状態バッジ（複数可）。2026-07-09（14.39、
+        """画面表示用の状態バッジ（複数可）。2026-07-09（14.39、14.42、
         Noritsuguの指定）:
           - 完了: 売上・仕入とも入力済み
           - 売上未確定: 売上未入力
           - 原価未確定: 仕入未入力
         売上未確定・原価未確定は同時に成立しうる（どちらも未入力の場合、
         両方のバッジが返る）。完了はこの2つとは排他的。
+
+        別軸として、PO発行済み／PO未発行（purchase_orders."ステータス"
+        =4かどうか）を常にどちらか一方追加する（14.42）。
         """
         if data.has_sales and data.has_purchase:
-            return [ProjectState.COMPLETED.value]
+            badges = [ProjectState.COMPLETED.value]
+        else:
+            badges = []
+            if not data.has_sales:
+                badges.append(ProjectState.SALES_UNCONFIRMED.value)
+            if not data.has_purchase:
+                badges.append(ProjectState.COST_UNCONFIRMED.value)
 
-        badges = []
-        if not data.has_sales:
-            badges.append(ProjectState.SALES_UNCONFIRMED.value)
-        if not data.has_purchase:
-            badges.append(ProjectState.COST_UNCONFIRMED.value)
+        badges.append(ProjectState.PO_ISSUED.value if data.is_po_issued else ProjectState.PO_NOT_ISSUED.value)
         return badges
 
     def _evaluate_goals(self, data: ProjectData, state: ProjectState) -> GoalEvaluations:
@@ -489,6 +495,23 @@ class ProjectService:
                 confidence=0.5,
             )
 
+        # 2026-07-09（14.42、Noritsuguの指定）: 今日のタスクの3種類目。
+        # PO自体がまだ発行されていない（purchase_orders."ステータス"≠4）。
+        if not data.is_po_issued:
+            evals.evaluations[ProjectGoal.ISSUE_PO] = GoalEvaluation(
+                goal=ProjectGoal.ISSUE_PO,
+                status=GoalStatus.AT_RISK,
+                reason="POが未発行（ステータスが発注済以外）",
+                confidence=0.9,
+            )
+        else:
+            evals.evaluations[ProjectGoal.ISSUE_PO] = GoalEvaluation(
+                goal=ProjectGoal.ISSUE_PO,
+                status=GoalStatus.ACHIEVED,
+                reason="PO発行済み",
+                confidence=0.9,
+            )
+
         return evals
 
     def _generate_decisions(self, data: ProjectData, state: ProjectState, goals: GoalEvaluations) -> list[ProjectDecisionDetail]:
@@ -524,6 +547,18 @@ class ProjectService:
                 confidence=0.9,
                 triggered_by_goals=[ProjectGoal.CONFIRM_COST],
                 business_rule="PURCHASE_ENTRY_NEEDED",
+            ))
+
+        # 2026-07-09（14.42、Noritsuguの指定）: 今日のタスクの3種類目。
+        issue_po_eval = goal_dict.get(ProjectGoal.ISSUE_PO)
+        if issue_po_eval and issue_po_eval.status == GoalStatus.AT_RISK:
+            decisions.append(ProjectDecisionDetail(
+                decision=ProjectDecision.ISSUE_PO,
+                priority=1,
+                reason="POが未発行（ステータスが発注済以外）",
+                confidence=0.9,
+                triggered_by_goals=[ProjectGoal.ISSUE_PO],
+                business_rule="PO_ISSUANCE_NEEDED",
             ))
 
         return decisions
@@ -570,6 +605,24 @@ class ProjectService:
                     related_goal=ProjectGoal.CONFIRM_COST,
                     decision_source=decision.decision,
                     source_tables=["purchase_orders", "sales", "purchases"],
+                    action_type="data_entry",
+                    trace_id=trace_id,
+                    confidence=decision.confidence,
+                    condition=decision.reason,
+                ))
+                action_id += 1
+
+            elif decision.decision == ProjectDecision.ISSUE_PO:
+                actions.append(ProjectAction(
+                    action_id=f"act-{action_id}",
+                    project_id=data.project_id,
+                    title=f"PO発行が必要: {data.po_number}",
+                    description=f"{data.customer_name}・{data.supplier_name}のPOがまだ発行されていません（ステータスが発注済以外）。POの発行をお願いします。",
+                    priority="high",
+                    related_state=state,
+                    related_goal=ProjectGoal.ISSUE_PO,
+                    decision_source=decision.decision,
+                    source_tables=["purchase_orders"],
                     action_type="data_entry",
                     trace_id=trace_id,
                     confidence=decision.confidence,

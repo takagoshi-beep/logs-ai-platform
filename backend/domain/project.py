@@ -27,6 +27,11 @@ class ProjectState(str, Enum):
     PAYMENT_OVERDUE = "payment_overdue"
     COST_DISCREPANCY = "cost_discrepancy"
     CUSTOMER_CONFIRMATION_NEEDED = "customer_confirmation_needed"
+    # 2026-07-09（14.42、Noritsuguの指定）: purchase_orders."ステータス"
+    # （code_master ORDER_STATUS）が4（発注済）かどうかを示すバッジ。
+    # 完了/売上未確定/原価未確定とは別軸で、常にどちらか一方が付く。
+    PO_ISSUED = "po_issued"
+    PO_NOT_ISSUED = "po_not_issued"
 
 
 class ProjectGoal(str, Enum):
@@ -39,6 +44,8 @@ class ProjectGoal(str, Enum):
     # 2026-07-09: 納品日/支払日はPOデータに実質入らないため使えない
     # （14.33、Noritsuguの指摘）。代わりに売上入力の有無で納品を確認する。
     CONFIRM_DELIVERY = "confirm_delivery"
+    # 2026-07-09（14.42、Noritsuguの指定）: PO自体が発行済みかどうか。
+    ISSUE_PO = "issue_po"
 
 
 class ProjectDecision(str, Enum):
@@ -54,6 +61,8 @@ class ProjectDecision(str, Enum):
     # 必要性」の2種類だけに絞り込むための決定。
     RECORD_SALES = "record_sales"
     RECORD_PURCHASE = "record_purchase"
+    # 2026-07-09（14.42、Noritsuguの指定）: 今日のタスクの3種類目。
+    ISSUE_PO = "issue_po"
 
 
 class ProjectEventType(str, Enum):
@@ -191,6 +200,11 @@ class ProjectData:
     # 検索・チャットからも意味が分かるよう、このコメントで明記している。
     planned_import_cost_ratio: Optional[float] = None
     actual_import_cost_ratio: Optional[float] = None
+    # 2026-07-09（14.42、Noritsuguの指定）: purchase_orders."ステータス"。
+    # code_master(ORDER_STATUS)で4=発注済、それ以外(1=依頼,2=依頼保留,
+    # 3=差戻,5=発注保留)は未発行。実データでは4が34,947件、他は合計22件
+    # という圧倒的な分布（2026-07-09、実際にcode_masterで確認済み）。
+    po_status: Optional[int] = None
 
     @property
     def days_until_delivery(self) -> int:
@@ -208,6 +222,12 @@ class ProjectData:
         案件を終了済みとして扱った印）で判断する（2026-07-09、14.33）。
         """
         return self.has_sales or self.production_closed
+
+    @property
+    def is_po_issued(self) -> bool:
+        """PO自体が発行済みか（purchase_orders."ステータス"=4=発注済、
+        code_master ORDER_STATUS、2026-07-09・14.42）。"""
+        return self.po_status == 4
 
     @property
     def profit_margin_pct(self) -> Optional[float]:

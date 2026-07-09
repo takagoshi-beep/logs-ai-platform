@@ -85,6 +85,8 @@ const STATE_LABEL: Record<string, string> = {
   completed: "完了",
   sales_unconfirmed: "売上未確定",
   cost_unconfirmed: "原価未確定",
+  po_issued: "PO発行済み",
+  po_not_issued: "PO未発行",
 };
 
 // 2026-07-09（14.35）: 健全性・リスク・推奨対応を廃止し、現在から納品日

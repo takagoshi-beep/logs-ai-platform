@@ -34,6 +34,9 @@ def _make_data(**overrides) -> ProjectData:
         has_sales=False,
         has_purchase=False,
         production_closed=False,
+        po_status=4,  # 2026-07-09（14.42）: 既定は発行済み（発注済）。
+        # PO発行の有無の軸を切り分けてテストしたい場合はpo_status=を
+        # 明示的に上書きすること。
     )
     defaults.update(overrides)
     return ProjectData(**defaults)
@@ -64,7 +67,7 @@ def test_state_is_sales_unconfirmed_when_only_purchase_missing_is_false():
 
 def test_status_badges_completed_when_both_recorded():
     data = _make_data(has_sales=True, has_purchase=True)
-    assert ProjectService()._determine_status_badges(data) == ["completed"]
+    assert ProjectService()._determine_status_badges(data) == ["completed", "po_issued"]
 
 
 def test_status_badges_shows_both_when_neither_recorded():
@@ -72,17 +75,30 @@ def test_status_badges_shows_both_when_neither_recorded():
     同時に表示されうる（画面表示用のstatus_badgesは複数可）。"""
     data = _make_data(has_sales=False, has_purchase=False)
     badges = ProjectService()._determine_status_badges(data)
-    assert set(badges) == {"sales_unconfirmed", "cost_unconfirmed"}
+    assert set(badges) == {"sales_unconfirmed", "cost_unconfirmed", "po_issued"}
 
 
 def test_status_badges_shows_only_sales_unconfirmed():
     data = _make_data(has_sales=False, has_purchase=True)
-    assert ProjectService()._determine_status_badges(data) == ["sales_unconfirmed"]
+    assert ProjectService()._determine_status_badges(data) == ["sales_unconfirmed", "po_issued"]
 
 
 def test_status_badges_shows_only_cost_unconfirmed():
     data = _make_data(has_sales=True, has_purchase=False)
-    assert ProjectService()._determine_status_badges(data) == ["cost_unconfirmed"]
+    assert ProjectService()._determine_status_badges(data) == ["cost_unconfirmed", "po_issued"]
+
+
+def test_status_badges_includes_po_not_issued_when_status_is_not_4():
+    """2026-07-09（14.42、Noritsuguの指定）: purchase_orders."ステータス"
+    がcode_master ORDER_STATUSの4（発注済）以外なら「PO未発行」を追加。
+    完了/売上未確定/原価未確定とは別軸なので、常にどちらか一方が付く。"""
+    data = _make_data(has_sales=True, has_purchase=True, po_status=1)  # 1=依頼
+    assert ProjectService()._determine_status_badges(data) == ["completed", "po_not_issued"]
+
+
+def test_status_badges_includes_po_issued_when_status_is_4():
+    data = _make_data(has_sales=True, has_purchase=True, po_status=4)  # 4=発注済
+    assert ProjectService()._determine_status_badges(data) == ["completed", "po_issued"]
 
 
 def test_goal_confirm_delivery_at_risk_when_purchase_without_sales():
@@ -169,3 +185,31 @@ def test_no_actions_when_neither_sales_nor_purchase_recorded_and_not_overdue():
     decisions = service._generate_decisions(data, state, goals)
 
     assert decisions == []
+
+
+def test_decisions_and_actions_produce_issue_po_when_po_status_is_not_issued():
+    """2026-07-09（14.42、Noritsuguの指定）: 今日のタスクの3種類目。
+    purchase_orders."ステータス"が発注済（4）以外なら「PO発行が必要」。"""
+    service = ProjectService()
+    data = _make_data(has_sales=True, has_purchase=True, po_status=2)  # 2=依頼保留
+    state = service._determine_state(data)
+    goals = service._evaluate_goals(data, state)
+    decisions = service._generate_decisions(data, state, goals)
+
+    assert len(decisions) == 1
+    assert decisions[0].decision == ProjectDecision.ISSUE_PO
+
+    actions = service._generate_actions(data, state, decisions, "trace-1")
+    assert len(actions) == 1
+    assert "PO発行が必要" in actions[0].title
+    assert actions[0].priority == "high"
+
+
+def test_decisions_do_not_include_issue_po_when_po_is_issued():
+    service = ProjectService()
+    data = _make_data(has_sales=True, has_purchase=True, po_status=4)
+    state = service._determine_state(data)
+    goals = service._evaluate_goals(data, state)
+    decisions = service._generate_decisions(data, state, goals)
+
+    assert all(d.decision != ProjectDecision.ISSUE_PO for d in decisions)

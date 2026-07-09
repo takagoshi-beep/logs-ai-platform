@@ -25,6 +25,8 @@ const STATE_LABEL: Record<string, string> = {
   completed: "完了",
   sales_unconfirmed: "売上未確定",
   cost_unconfirmed: "原価未確定",
+  po_issued: "PO発行済み",
+  po_not_issued: "PO未発行",
 };
 
 export default function WorkspaceListPage() {
