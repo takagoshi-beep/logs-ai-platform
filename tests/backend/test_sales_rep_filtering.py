@@ -39,6 +39,24 @@ def test_sales_lines_filters_by_sales_rep_keyword(monkeypatch):
     assert "%石川%" in calls[0]["params"]
 
 
+def test_sales_lines_sales_rep_keyword_matches_any_of_four_roles(monkeypatch):
+    """2026-07-09: 「〇〇さんが作成した伝票」のような聞き方で、伝票作成者
+    (作成者名)・営業事務(事務処理担当者名)・経理担当者名にも一致する
+    ようにした（従来は営業担当者名だけで、それ以外の役割の人を検索すると
+    0件になっていた実例の修正）。"""
+    calls = []
+    monkeypatch.setattr(LogsysProvider, "_query", _tracking_query(calls))
+
+    LogsysProvider()._sales_lines({"sales_rep_keyword": "高橋"})
+
+    sql = calls[0]["sql"]
+    assert '"営業担当者名" LIKE %s' in sql
+    assert '"事務処理担当者名" LIKE %s' in sql
+    assert '"経理担当者名" LIKE %s' in sql
+    assert '"作成者名" LIKE %s' in sql
+    assert calls[0]["params"].count("%高橋%") == 4
+
+
 def test_sales_lines_also_computes_exact_aggregate(monkeypatch):
     """14.31追記(2026-07-09): recordsが200件で切り捨てられても、合計金額・
     件数はSQL側で正確に計算する（切り捨てとは無関係な値にするため）。"""

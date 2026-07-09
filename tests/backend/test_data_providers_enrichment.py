@@ -146,3 +146,21 @@ def test_sales_by_category_supports_customer_category_group_by(monkeypatch):
 def test_sales_by_category_rejects_unknown_group_by():
     result = LogsysProvider()._sales_by_category({"group_by": "not_a_real_column"})
     assert result["status"] == "unavailable"
+
+
+def test_sales_by_category_sales_rep_keyword_matches_any_of_four_roles(monkeypatch):
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured["sql"] = sql
+        captured["params"] = params
+        return []
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    LogsysProvider()._sales_by_category({"sales_rep_keyword": "高橋"})
+
+    sql = captured["sql"]
+    assert '"事務処理担当者名" LIKE %s' in sql
+    assert '"作成者名" LIKE %s' in sql
+    assert captured["params"].count("%高橋%") == 4

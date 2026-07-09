@@ -35,8 +35,9 @@ TOOLS: list[dict[str, Any]] = [
             "期間を絞り込んで呼び出すこと（「今月」なら今月の初日〜末日を指定する）。"
             "取得した行には「事業分類」という数値コード列が含まれるが、"
             "その意味を推測してはいけない。get_code_masterで実際の意味を確認すること。"
-            "「〇〇さんの売上」のように営業担当者で絞り込みたい場合はsales_rep_keywordを使う"
-            "（架空の担当者名で検索しても0件になるだけなので、実在するか不安な場合は"
+            "「〇〇さんの売上/伝票」のように担当者で絞り込みたい場合はsales_rep_keywordを使う"
+            "（営業担当者・営業事務・経理担当・伝票作成者のいずれかに一致すればヒットする。"
+            "架空の担当者名で検索しても0件になるだけなので、実在するか不安な場合は"
             "get_customer_master等で事前確認する必要はない。0件ならそのまま正直に伝えること）。"
         ),
         "input_schema": {
@@ -45,7 +46,7 @@ TOOLS: list[dict[str, Any]] = [
                 "period_start": {"type": "string", "description": "期間開始日（YYYY-MM-DD形式）"},
                 "period_end": {"type": "string", "description": "期間終了日（YYYY-MM-DD形式）"},
                 "customer_keyword": {"type": "string", "description": "顧客名の部分一致キーワード"},
-                "sales_rep_keyword": {"type": "string", "description": "営業担当者名の部分一致キーワード"},
+                "sales_rep_keyword": {"type": "string", "description": "担当者名の部分一致キーワード（営業担当者・営業事務・経理担当・伝票作成者のいずれかに一致すればヒット）"},
             },
         },
     },
@@ -70,7 +71,7 @@ TOOLS: list[dict[str, Any]] = [
                 },
                 "period_start": {"type": "string", "description": "期間開始日（YYYY-MM-DD形式）"},
                 "period_end": {"type": "string", "description": "期間終了日（YYYY-MM-DD形式）"},
-                "sales_rep_keyword": {"type": "string", "description": "営業担当者名の部分一致キーワード"},
+                "sales_rep_keyword": {"type": "string", "description": "担当者名の部分一致キーワード（営業担当者・営業事務・経理担当・伝票作成者のいずれかに一致すればヒット）"},
             },
         },
     },

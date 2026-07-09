@@ -100,13 +100,23 @@ class LogsysProvider:
             where += ' AND "得意先名" LIKE %s'
             args.append(f"%{params['customer_keyword']}%")
         if params.get("sales_rep_keyword"):
-            where += ' AND "営業担当者名" LIKE %s'
-            args.append(f"%{params['sales_rep_keyword']}%")
+            # 「〇〇さんの売上/伝票」という聞き方は役割を問わないことが多い
+            # ため、営業担当者・営業事務(事務処理担当者)・経理担当・伝票の
+            # 作成者(データ入力した人)のいずれかに名前があればヒットする
+            # ようにOR結合している（2026-07-09、「髙橋さんが作成した伝票」
+            # という質問が営業担当者名だけの検索では0件になった実例の修正）。
+            where += (
+                ' AND ("営業担当者名" LIKE %s OR "事務処理担当者名" LIKE %s '
+                'OR "経理担当者名" LIKE %s OR "作成者名" LIKE %s)'
+            )
+            kw = f"%{params['sales_rep_keyword']}%"
+            args.extend([kw, kw, kw, kw])
 
         sql = (
             'SELECT "売上入力日", "得意先ID", "得意先名", "登録商品名", '
             '"LOGS_CODE", "SAMPLE_CODE", "product_category", '
-            '"事業分類", "数量pcs", "売上金額", "明細粗利", "営業担当者名", '
+            '"事業分類", "数量pcs", "売上金額", "明細粗利", '
+            '"営業担当者名", "事務処理担当者名", "経理担当者名", "作成者名", '
             '"customer_category", "customer_business_scale", "customer_trade_tendency", '
             '"supplier_production_staff", "sales_rep_email", "sales_admin_email", "accounting_email" '
             f'FROM v_sales_enriched WHERE {where} ORDER BY "売上入力日"'
@@ -168,8 +178,12 @@ class LogsysProvider:
             where += ' AND "売上入力日" <= %s'
             args.append(params["period_end"])
         if params.get("sales_rep_keyword"):
-            where += ' AND "営業担当者名" LIKE %s'
-            args.append(f"%{params['sales_rep_keyword']}%")
+            where += (
+                ' AND ("営業担当者名" LIKE %s OR "事務処理担当者名" LIKE %s '
+                'OR "経理担当者名" LIKE %s OR "作成者名" LIKE %s)'
+            )
+            kw = f"%{params['sales_rep_keyword']}%"
+            args.extend([kw, kw, kw, kw])
 
         sql = (
             f'SELECT "{group_by}", COUNT(*) AS "件数", '
