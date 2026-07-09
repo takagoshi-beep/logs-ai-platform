@@ -158,7 +158,9 @@ export default function WorkspacePage({ params }: Params) {
             </div>
           </div>
           <p className="text-sm text-sub">仕入先: {project.data.supplier_name}</p>
-          <p className="mt-2 text-xs text-sub">納期まで: {project.data.days_until_delivery}日</p>
+          <p className="mt-2 text-xs text-sub">
+            {project.data.days_until_delivery < 0 ? "納期経過" : `納期まで: ${project.data.days_until_delivery}日`}
+          </p>
           <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
             <div>売上金額: {fmtYen(project.data.sale_amount)}</div>
             <div>原価: {fmtYen(project.data.cost_amount)}</div>

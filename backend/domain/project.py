@@ -208,8 +208,17 @@ class ProjectData:
 
     @property
     def days_until_delivery(self) -> int:
+        """納品日までの日数。単純に納品日と現在日時を比較するだけで、
+        売上・仕入の入力状況とは無関係（2026-07-09、14.43、Noritsuguの
+        確認）。以前は`max(0, ...)`でフロアをかけていたため、納期を
+        過ぎている案件でも常に「0日」と表示され、実際にどれだけ過ぎて
+        いるかが分からなかった不具合を修正。過ぎている場合は負の値
+        （例: -15）を返す — 表示側（フロントエンド）で「納期経過」に
+        変換する（14.43、負の日数そのものを見せる意味は無いという
+        Noritsuguの指定）。
+        """
         delta = self.po_required_delivery_date - datetime.now()
-        return max(0, delta.days)
+        return delta.days
 
     @property
     def is_overdue(self) -> bool:

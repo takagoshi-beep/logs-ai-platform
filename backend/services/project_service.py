@@ -188,14 +188,19 @@ class ProjectService:
         不具合を修正（MIN→MAX）。同一商品が複数回発注される場合、
         直近の履歴の方が案件の実態に近いと判断した。
 
-        2026-07-09（14.41修正、Noritsuguの指定）: 仕入（has_purchase/
-        purchase_date、活動履歴の「仕入登録」イベントと状態バッジの
-        「原価未確定」判定の両方で使われる）は、商品単位（LOGS_CODE）
-        ではなくPO単位（purchases."POnum" = purchase_orders."PO_No"）
-        で判定するよう変更。1つのPOに複数商品が含まれる場合、そのPOに
-        対応する仕入伝票が1件でもあれば「仕入登録済み」とみなす。
-        一方、実績輸入経費率（actual_import_cost_ratio）は商品固有の
-        指標のため、そちらは引き続きLOGS_CODE単位のまま。
+        2026-07-09（14.41・14.43修正、Noritsuguの指定）: 仕入に関する
+        全ての判定（has_purchase/purchase_date、活動履歴の「仕入登録」
+        イベント、状態バッジの「原価未確定」判定、実績輸入経費率）を、
+        商品単位（LOGS_CODE）ではなくPO単位（purchases."POnum" =
+        purchase_orders."PO_No"）で統一した。
+
+        14.41では実績輸入経費率だけLOGS_CODE単位のまま残していたが、
+        「このPOには仕入が無いのに、別のPO（同じ商品の再発注）の仕入
+        から経費率が表示される」という実際の不整合が発生したため
+        （2026-07-09、Noritsuguが実データで発見）、経費率も含めて
+        PO単位に統一した。1つのPOに複数商品が含まれる場合、経費率は
+        そのPOの最新の仕入明細行のものになる（商品ごとの経費率とは
+        ズレる可能性があるが、Noritsuguの指定によりPO単位を優先）。
         """
         if not po_dicts:
             return
@@ -205,7 +210,7 @@ class ProjectService:
 
         sales_dates: dict[str, Any] = {}
         purchase_dates_by_po: dict[str, Any] = {}
-        actual_import_cost_ratios: dict[str, Any] = {}
+        actual_import_cost_ratios_by_po: dict[str, Any] = {}
         closed_po_numbers: set[str] = set()
 
         try:
@@ -219,30 +224,22 @@ class ProjectService:
                     for logs_code, max_date in cur.fetchall():
                         sales_dates[self._format_logs_code_for_project(logs_code)] = max_date
 
-                # 実績輸入経費率（purchases."経費率"）は商品固有の指標
-                # なので、LOGS_CODE単位のまま。DISTINCT ONでLOGS_CODEごと
-                # に最新の伝票日を持つ1行から日付と経費率を一緒に取る
-                # （別々にMAXを取ると違う行の値が混ざるため、14.40）。
-                with conn.cursor() as cur:
-                    cur.execute(
-                        'SELECT DISTINCT ON ("LOGS_CODE") "LOGS_CODE", "経費率" '
-                        'FROM purchases WHERE "LOGS_CODE" = ANY(%s) '
-                        'ORDER BY "LOGS_CODE", "伝票日" DESC',
-                        (raw_logs_codes,),
-                    )
-                    for logs_code, cost_ratio in cur.fetchall():
-                        actual_import_cost_ratios[self._format_logs_code_for_project(logs_code)] = cost_ratio
-
             if po_numbers:
-                # 仕入登録（活動履歴・状態バッジ用）はPO単位（14.41）。
+                # 仕入登録（活動履歴・状態バッジ用）・実績輸入経費率とも
+                # PO単位（14.41・14.43）。DISTINCT ONでPO番号ごとに
+                # 最新の伝票日を持つ1行から日付と経費率を一緒に取る
+                # （別々にMAXを取ると違う行の値が混ざるため、14.40と
+                # 同じ理由）。
                 with conn.cursor() as cur:
                     cur.execute(
-                        'SELECT "POnum", MAX("伝票日") FROM purchases '
-                        'WHERE "POnum" = ANY(%s) GROUP BY "POnum"',
+                        'SELECT DISTINCT ON ("POnum") "POnum", "伝票日", "経費率" '
+                        'FROM purchases WHERE "POnum" = ANY(%s) '
+                        'ORDER BY "POnum", "伝票日" DESC',
                         (po_numbers,),
                     )
-                    for po_no, max_date in cur.fetchall():
+                    for po_no, max_date, cost_ratio in cur.fetchall():
                         purchase_dates_by_po[po_no] = max_date
+                        actual_import_cost_ratios_by_po[po_no] = cost_ratio
 
                 with conn.cursor() as cur:
                     cur.execute(
@@ -259,7 +256,7 @@ class ProjectService:
             logs_code = self._format_logs_code_for_project(d.get("LOGS_CODE"))
             d["sales_date"] = sales_dates.get(logs_code)
             d["purchase_date"] = purchase_dates_by_po.get(d.get("PO_No"))
-            d["actual_import_cost_ratio"] = actual_import_cost_ratios.get(logs_code)
+            d["actual_import_cost_ratio"] = actual_import_cost_ratios_by_po.get(d.get("PO_No"))
             d["production_closed"] = d.get("PO_No") in closed_po_numbers
 
     def _build_project_data(self, project_id: str) -> ProjectData | None:
