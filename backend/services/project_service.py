@@ -238,16 +238,24 @@ class ProjectService:
                     for po_no, max_date in cur.fetchall():
                         purchase_dates_by_po[po_no] = max_date
 
-                # 2026-07-09（14.49・14.52、Noritsuguの指定）: 実績原価
+                # 2026-07-09（14.49・14.52修正、Noritsuguの指定）: 実績原価
                 # （予定vs確定の粗利比較用）・実績輸入経費率は、同じPO
                 # 番号の明細をまとめてSUM(諸掛込金額円)/SUM(仕入金額円)
                 # で加重平均する。purchases."諸掛込金額円"は実際の
                 # Supabase列名（Excel原本の見出しは括弧付き"諸掛込金額
                 # （円）"だが、sync.pyのクレンジングで括弧が消えている。
                 # 実際にinformation_schema.columnsで確認して判明、14.50）。
+                #
+                # 2026-07-09（14.53修正、Noritsuguが実データで発見）:
+                # 国内メーカー（現金仕入等）からの仕入は輸入諸掛が
+                # 発生しないため"諸掛込金額円"が入力されずNULLのままに
+                # なっており、実績原価・実績輸入経費率が0になっていた。
+                # "諸掛込金額円"が無ければ「諸掛が無い（輸入品ではない）」
+                # という意味なので、COALESCEで"仕入金額円"にフォールバック
+                # する（経費率は1.0相当になる）。
                 with conn.cursor() as cur:
                     cur.execute(
-                        'SELECT "POnum", SUM("諸掛込金額円"), SUM("仕入金額円") '
+                        'SELECT "POnum", SUM(COALESCE("諸掛込金額円", "仕入金額円")), SUM("仕入金額円") '
                         'FROM purchases WHERE "POnum" = ANY(%s) GROUP BY "POnum"',
                         (po_numbers,),
                     )

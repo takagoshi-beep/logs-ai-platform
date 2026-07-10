@@ -203,7 +203,7 @@ def test_attach_existence_data_uses_max_date_not_min(monkeypatch):
                         return [(5145.0, datetime(2026, 6, 1))]
                     if "MAX(\"伝票日\")" in sql:
                         return [("PO-1", datetime(2026, 5, 1))]
-                    if "SUM(\"諸掛込金額円\")" in sql:
+                    if "COALESCE(\"諸掛込金額円\"" in sql:
                         return [("PO-1", 1150.0, 1000.0)]  # 1150/1000 = 1.15
                     return []
 
@@ -252,7 +252,7 @@ def test_attach_existence_data_matches_purchase_by_po_number_not_logs_code(monke
                         return []
                     if "MAX(\"伝票日\")" in sql:
                         return [("PO-1", datetime(2026, 5, 1))]  # 同じPOの別商品の仕入
-                    if "SUM(\"諸掛込金額円\")" in sql:
+                    if "COALESCE(\"諸掛込金額円\"" in sql:
                         return [("PO-1", 1300.0, 1000.0)]
                     return []
 
@@ -267,6 +267,56 @@ def test_attach_existence_data_matches_purchase_by_po_number_not_logs_code(monke
 
     assert po_dicts[0]["purchase_date"] == datetime(2026, 5, 1)
     assert po_dicts[0]["actual_import_cost_ratio"] == 1.30
+
+
+def test_attach_existence_data_falls_back_to_base_amount_for_domestic_purchase(monkeypatch):
+    """2026-07-09（14.53、Noritsuguが実データで発見）: 国内メーカー
+    （現金仕入等）からの仕入は輸入諸掛が発生しないため"諸掛込金額円"
+    が入力されずNULLのままになる。これを"諸掛が無い"（=経費率1.0相当）
+    としてではなく単純に除外して合算すると、"仕入金額円"側は合算
+    されるのに"諸掛込金額円"側は0のままになり、実績原価・実績輸入
+    経費率が誤って0になっていた。COALESCEで"仕入金額円"にフォール
+    バックし、正しく1.0相当の経費率になるよう修正した。"""
+    from services.project_service import ProjectService
+
+    class _RoutingConn:
+        def cursor(self):
+            sql_holder = {}
+
+            class _Cur:
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, *a):
+                    return False
+
+                def execute(self_inner, sql, params=None):
+                    sql_holder["sql"] = sql
+
+                def fetchall(self_inner):
+                    sql = sql_holder.get("sql", "")
+                    if "FROM sales" in sql:
+                        return []
+                    if "MAX(\"伝票日\")" in sql:
+                        return [("PO-1", datetime(2026, 6, 25))]
+                    if "COALESCE(\"諸掛込金額円\"" in sql:
+                        # 諸掛込金額円がNULLのためCOALESCEで仕入金額円
+                        # （161000）にフォールバックし、SUM=161000。
+                        # SUM(仕入金額円)も同じ161000なので、経費率=1.0。
+                        return [("PO-1", 161000.0, 161000.0)]
+                    return []
+
+            return _Cur()
+
+        def close(self):
+            pass
+
+    service = ProjectService()
+    po_dicts = [{"LOGS_CODE": 13561.0, "PO_No": "PO-1"}]
+    service._attach_existence_data(_RoutingConn(), po_dicts)
+
+    assert po_dicts[0]["actual_import_cost_ratio"] == 1.0
+    assert po_dicts[0]["actual_cost_total"] == 161000.0
 
 
 def test_attach_existence_data_cost_ratio_is_none_when_po_has_no_purchase(monkeypatch):

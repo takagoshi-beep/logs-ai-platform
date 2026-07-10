@@ -411,7 +411,17 @@ def get_product_detail(product_id: str) -> dict[str, Any] | None:
     # 加重平均する。カラー/サイズのバリエーションやリピートオーダーで
     # 複数の仕入明細行がある場合、1行だけでは実態を反映できないため
     # （案件詳細側でも同じ理由でPO単位のSUM/SUM加重平均に統一済み）。
-    total_with_fees = sum(r["諸掛込金額円"] for r in purchase_dicts if r.get("諸掛込金額円") is not None)
+    # 2026-07-09（14.53修正、Noritsuguが実データで発見）: 国内メーカー
+    # （現金仕入等）からの仕入は輸入諸掛が発生しないため"諸掛込金額円"
+    # が入力されずNULLのままになっており、これを単純に除外して合算
+    # すると実績原価・実績輸入経費率が0になってしまっていた（"仕入
+    # 金額円"側は合算されるのに"諸掛込金額円"側だけ0扱いになるため）。
+    # "諸掛込金額円"が無い行は「諸掛が無い（輸入品ではない）」という
+    # 意味なので、その行だけ"仕入金額円"にフォールバックする。
+    total_with_fees = sum(
+        r["諸掛込金額円"] if r.get("諸掛込金額円") is not None else (r.get("仕入金額円") or 0)
+        for r in purchase_dicts
+    )
     total_base = sum(r["仕入金額円"] for r in purchase_dicts if r.get("仕入金額円") is not None)
     total_qty = sum(r["仕入数量pcs"] for r in purchase_dicts if r.get("仕入数量pcs") is not None)
     master["実績輸入経費率"] = (total_with_fees / total_base) if total_base else None

@@ -290,6 +290,37 @@ def test_get_product_detail_derives_sales_admin_from_po_first(monkeypatch):
     assert detail["master"]["営業事務担当者名"] == "高越規嗣"  # PO側を優先
 
 
+def test_get_product_detail_falls_back_to_base_amount_for_domestic_purchase(monkeypatch):
+    """2026-07-09（14.53、Noritsuguが実データで発見）: 国内メーカー
+    （現金仕入等）からの仕入は輸入諸掛が発生しないため"諸掛込金額円"
+    がNULLのままになる。これを単純に除外して合算すると実績原価・
+    実績輸入経費率が誤って0になる。"諸掛込金額円"が無い行は"仕入
+    金額円"にフォールバックし、経費率1.0相当になるようにした。"""
+    master_cols = ["ID", "LOGS_CODE", "Sample_CODE", "商品名"]
+    master_rows = [(101, "13561", "SLG-06118", "BCR_エルモア_竹うちわB")]
+
+    monkeypatch.setattr(
+        product_service, "get_connection",
+        lambda: _SequentialFakeConnection([
+            (master_rows, master_cols),
+            ([], ["ID"]),
+            ([], ["得意先名"]),
+            (
+                [("現金仕入", "古見彰利", None, None, 500, 161000, "2026-06-25", None, 0.0, None)],
+                ["仕入先名", "営業担当者名", "営業事務担当者名", "生産管理担当者名",
+                 "仕入数量pcs", "仕入金額円", "伝票日", "経費率", "実際原価", "諸掛込金額円"],
+            ),
+            ([], ["SPL品番"]),
+        ]),
+    )
+
+    detail = product_service.get_product_detail("101")
+    master = detail["master"]
+
+    assert master["実績輸入経費率"] == 1.0
+    assert master["実績原価単価"] == 322.0  # 161000（仕入金額円にフォールバック） ÷ 500
+
+
 def test_get_product_detail_includes_planned_and_actual_cost_fields(monkeypatch):
     """2026-07-09（14.44・14.46・14.52、Noritsuguの指定）: 発注単価・
     予定輸入経費率・予定原価単価はPO履歴の最新行（PO発行日が新しい順で
