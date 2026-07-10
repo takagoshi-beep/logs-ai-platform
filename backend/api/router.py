@@ -399,7 +399,10 @@ def download_proposal_image(trace_id: str):
 # ===== NEW: Product Endpoints (docs/architecture.md 14.30) =====
 
 @router.get("/products")
-def list_products(limit: int = 20, scope: str = "mine", user: dict = Depends(require_login)) -> dict:
+def list_products(
+    limit: int = 20, offset: int = 0, search: str | None = None,
+    scope: str = "mine", user: dict = Depends(require_login),
+) -> dict:
     """商品一覧を返す。キーは商品ID（products."ID"、常に存在する内部キー）。
     LOGS_CODEは発注フラグが立った時点で初めて払い出されるため、未発注の
     商品はLOGS_CODEがNULLのまま一覧に含まれる（正常な状態、docs/architecture.md 14.30）。
@@ -409,13 +412,20 @@ def list_products(limit: int = 20, scope: str = "mine", user: dict = Depends(req
     対応の回答者/依頼元）に関連する商品だけを返す。本人特定できない
     場合は空リストを返す（案件と異なり、商品では「担当者不明なら全件」
     にすると母数が大きすぎるため）。
-    scope="all": 商品マスタから直近登録分をlimit件返す（MVP実装。
-    総件数を考慮したページングは今後の検討課題）。
+    scope="all": 商品マスタ全体からSample_CODE降順でlimit件・offset件
+    スキップして返す（2026-07-09・14.54、「もっと見る」ボタン方式の
+    ページネーション）。searchを指定すると商品名・Sample_CODE・型番・
+    LOGS_CODEのいずれかに部分一致する行だけをサーバー側で全件検索する
+    （以前は取得済みのlimit件の中だけしか検索できなかった）。
     """
     from services.product_service import _format_logs_code, get_all_products, get_products_master_batch, get_related_product_ids, sample_code_sort_key
 
     if scope == "all":
-        rows = get_all_products(limit=limit)
+        # has_more判定用に1件多く取得する（総件数のCOUNT(*)を避けるため。
+        # 「もっと見る」方式なので厳密な総件数は不要、Noritsuguの指定）。
+        rows = get_all_products(limit=limit + 1, offset=offset, search=search)
+        has_more = len(rows) > limit
+        rows = rows[:limit]
         products = [
             {
                 "product_id": str(r.get("ID")),
@@ -427,7 +437,10 @@ def list_products(limit: int = 20, scope: str = "mine", user: dict = Depends(req
             }
             for r in rows
         ]
-        return {"success": True, "products": products, "count": len(products), "scope": "all"}
+        return {
+            "success": True, "products": products, "count": len(products),
+            "scope": "all", "has_more": has_more, "next_offset": offset + len(products),
+        }
 
     from services.auth_service import get_staff_name_by_email
     owner_name = get_staff_name_by_email(user.get("email"))

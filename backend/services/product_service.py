@@ -147,24 +147,52 @@ def _rows_to_dicts(rows: list[tuple], columns: list[str]) -> list[dict[str, Any]
     return [dict(zip(columns, row)) for row in rows]
 
 
-def get_all_products(limit: int = 50) -> list[dict[str, Any]]:
-    """商品マスタ全件から、直近登録分をlimit件だけ取得する(scope=all)。
+def get_all_products(limit: int = 50, offset: int = 0, search: str | None = None) -> list[dict[str, Any]]:
+    """商品マスタ全件から、Sample_CODE降順でlimit件・offsetオフセットで
+    取得する（scope=all、2026-07-09・14.54、Noritsuguの指定：サーバー
+    側全件検索＋「もっと見る」方式のページネーション）。
     LOGS_CODEがNULLの商品（未発注）も正常に含める。
 
-    現時点ではMVP実装: "ID"降順（直近登録順）でlimit件だけ取得してから
-    Sample_CODEでソートし直している。商品マスタの総件数が大きい場合、
-    本当の意味での「Sample_CODE全体で見た上位N件」にはならない
-    （limit件に絞り込んだ後でのソートのため）。ページング等を含めた
-    設計は、Noritsuguの指摘の通り今後の検討課題（2026-07-08）。
+    以前（2026-07-08のMVP実装）は「ID降順でlimit件取得→Sample_CODEで
+    並べ直す」という順序だったため、limit件に絞り込んだ**後**でのソート
+    になり、2ページ目以降が正しい順序にならないという既知の課題が
+    あった。ORDER BYをSQL側でLIMIT/OFFSETの前に行うことで解消した。
+
+    Sample_CODEは"SLG-06120"のような英数字コードで、多くの行は数値
+    として解釈できない（sample_code_sort_keyのPython実装と同じ考え方
+    をSQLのCASE式で再現）。数値として解釈できる行を優先し、その中では
+    数値として降順、それ以外は文字列として降順にする。
+
+    searchを指定すると、商品名・Sample_CODE・型番・LOGS_CODE（文字列化）
+    のいずれかに部分一致する行だけを対象にする（サーバー側の全件検索。
+    以前はフロントエンドで取得済みのlimit件の中だけを検索していたため、
+    1万件超の商品マスタ全体からは探せなかった）。
     """
+    where = ""
+    args: list[Any] = []
+    if search:
+        where = (
+            ' WHERE "商品名" ILIKE %s OR "Sample_CODE" ILIKE %s '
+            'OR "型番" ILIKE %s OR "LOGS_CODE"::text ILIKE %s'
+        )
+        kw = f"%{search}%"
+        args = [kw, kw, kw, kw]
+
+    order_by = (
+        ' ORDER BY '
+        '(CASE WHEN "Sample_CODE" ~ \'^[0-9]+\\.?[0-9]*$\' THEN 1 ELSE 0 END) DESC, '
+        '(CASE WHEN "Sample_CODE" ~ \'^[0-9]+\\.?[0-9]*$\' THEN "Sample_CODE"::numeric END) DESC NULLS LAST, '
+        '"Sample_CODE" DESC NULLS LAST'
+    )
+
     try:
         conn = get_connection()
         try:
             with conn.cursor() as cur:
                 cur.execute(
                     'SELECT "ID", "LOGS_CODE", "Sample_CODE", "商品名", "型番", "仕入先名" '
-                    'FROM products ORDER BY "ID" DESC LIMIT %s',
-                    (limit,),
+                    f'FROM products{where}{order_by} LIMIT %s OFFSET %s',
+                    (*args, limit, offset),
                 )
                 rows = cur.fetchall()
                 columns = [desc[0] for desc in cur.description]
@@ -174,9 +202,7 @@ def get_all_products(limit: int = 50) -> list[dict[str, Any]]:
         print(f"Error fetching all products: {e}")
         return []
 
-    products = _rows_to_dicts(rows, columns)
-    products.sort(key=lambda p: sample_code_sort_key(p.get("Sample_CODE")), reverse=True)
-    return products
+    return _rows_to_dicts(rows, columns)
 
 
 def get_related_product_ids(owner_name: str, limit: int = 50) -> list[str]:

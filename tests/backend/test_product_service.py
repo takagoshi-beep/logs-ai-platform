@@ -105,18 +105,87 @@ def test_sample_code_sort_key_places_non_numeric_and_none_last():
     assert set(ordered[2:]) == {None, "abc"}
 
 
-def test_get_all_products_returns_sorted_by_sample_code(monkeypatch):
-    columns = ["ID", "LOGS_CODE", "Sample_CODE", "商品名", "型番", "仕入先名"]
-    rows = [
-        (1, "a", "5", "P1", "M1", "S1"),
-        (2, None, "100", "P2", "M2", "S2"),  # LOGS_CODEがNULL（未発注）でも正常に含まれる
-        (3, "c", "20", "P3", "M3", "S3"),
-    ]
-    monkeypatch.setattr(product_service, "get_connection", lambda: _FakeConnection(rows, columns))
+def test_get_all_products_orders_and_paginates_in_sql(monkeypatch):
+    """2026-07-09（14.54、Noritsuguの指定）: 以前は「ID降順でlimit件
+    取得→Sample_CODEで並べ直す」という順序で、limit件に絞り込んだ後で
+    のソートだったため2ページ目以降が正しい順序にならなかった。ORDER
+    BYをSQL側でLIMIT/OFFSETの前に行うよう修正した。"""
+    captured = {}
 
-    result = product_service.get_all_products(limit=10)
-    assert [r["ID"] for r in result] == [2, 3, 1]
+    class _CapturingCursor:
+        def __init__(self):
+            self._rows = [(2, None, "100", "P2", "M2", "S2")]
+            self.description = [(c,) for c in ["ID", "LOGS_CODE", "Sample_CODE", "商品名", "型番", "仕入先名"]]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, sql, params=None):
+            captured["sql"] = sql
+            captured["params"] = params
+
+        def fetchall(self):
+            return self._rows
+
+    class _CapturingConn:
+        def cursor(self):
+            return _CapturingCursor()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(product_service, "get_connection", lambda: _CapturingConn())
+
+    result = product_service.get_all_products(limit=50, offset=100)
+
+    assert "ORDER BY" in captured["sql"]
+    assert '"Sample_CODE"' in captured["sql"]
+    assert "LIMIT %s OFFSET %s" in captured["sql"]
+    assert captured["params"] == (50, 100)
+    assert result[0]["ID"] == 2
     assert result[0]["LOGS_CODE"] is None
+
+
+def test_get_all_products_search_adds_where_clause_across_multiple_fields(monkeypatch):
+    """2026-07-09（14.54、Noritsuguの指定）: サーバー側の全件検索。
+    商品名・Sample_CODE・型番・LOGS_CODEのいずれかに部分一致すればよい。"""
+    captured = {}
+
+    class _CapturingCursor:
+        def __init__(self):
+            self.description = [(c,) for c in ["ID", "LOGS_CODE", "Sample_CODE", "商品名", "型番", "仕入先名"]]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, sql, params=None):
+            captured["sql"] = sql
+            captured["params"] = params
+
+        def fetchall(self):
+            return []
+
+    class _CapturingConn:
+        def cursor(self):
+            return _CapturingCursor()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(product_service, "get_connection", lambda: _CapturingConn())
+
+    product_service.get_all_products(limit=50, offset=0, search="SLOBE")
+
+    assert "WHERE" in captured["sql"]
+    assert '"商品名" ILIKE' in captured["sql"]
+    assert '"Sample_CODE" ILIKE' in captured["sql"]
+    assert captured["params"][:4] == ("%SLOBE%", "%SLOBE%", "%SLOBE%", "%SLOBE%")
 
 
 def test_get_all_products_returns_empty_on_query_failure(monkeypatch):

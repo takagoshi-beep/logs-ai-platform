@@ -13,16 +13,31 @@ interface ApiProduct {
   sample_code: string | null;
 }
 
+const PAGE_SIZE = 50;
+
 export default function ProductsListPage() {
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [scopeChoice, setScopeChoice] = useState<"mine" | "all">("mine");
   const [products, setProducts] = useState<ApiProduct[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [nextOffset, setNextOffset] = useState(0);
   const [error, setError] = useState<string | null>(null);
+
+  // 2026-07-09（14.54、Noritsuguの指定）: scope=allはサーバー側の全件
+  // 検索にするため、入力ごとに毎回リクエストしないよう300msデバウンス
+  // する。scope=mineは元々取得済みの少数件をクライアント側で絞り込む
+  // だけなので、デバウンス不要（下のfilteredで直接searchを使う）。
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
 
   useEffect(() => {
     setLoading(true);
-    getProducts(50, scopeChoice).then((data: any) => {
+    getProducts(PAGE_SIZE, scopeChoice, 0, scopeChoice === "all" ? debouncedSearch : "").then((data: any) => {
       setLoading(false);
       if (data?.success === false) {
         setError(data.error ?? "データの取得に失敗しました");
@@ -30,10 +45,25 @@ export default function ProductsListPage() {
       }
       setError(null);
       setProducts(data?.products ?? []);
+      setHasMore(data?.has_more ?? false);
+      setNextOffset(data?.next_offset ?? 0);
     });
-  }, [scopeChoice]);
+  }, [scopeChoice, debouncedSearch]);
 
-  const filtered = products.filter((p) => {
+  function loadMore() {
+    setLoadingMore(true);
+    getProducts(PAGE_SIZE, "all", nextOffset, debouncedSearch).then((data: any) => {
+      setLoadingMore(false);
+      if (data?.success === false) return;
+      setProducts((prev) => [...prev, ...(data?.products ?? [])]);
+      setHasMore(data?.has_more ?? false);
+      setNextOffset(data?.next_offset ?? 0);
+    });
+  }
+
+  // scope=mineは取得済みの少数件をその場で絞り込むだけ（サーバー検索
+  // 不要な規模のため）。scope=allは既にサーバー側で絞り込み済み。
+  const filtered = scopeChoice === "all" ? products : products.filter((p) => {
     if (!search) return true;
     const q = search.toLowerCase();
     return (
@@ -65,7 +95,6 @@ export default function ProductsListPage() {
       )}
 
       <div className="flex flex-wrap items-center gap-3">
-        {/* 2026-07-08: トグルの選択肢・他の検索オプションは今後検討予定 */}
         <div className="inline-flex rounded-lg border border-slate-300 bg-white p-0.5 text-sm">
           <button
             onClick={() => setScopeChoice("mine")}
@@ -91,6 +120,9 @@ export default function ProductsListPage() {
           placeholder="商品名・LOGS_CODE・仕入先名で検索"
           className="rounded border border-slate-300 px-3 py-2 text-sm"
         />
+        {scopeChoice === "all" && (
+          <span className="text-xs text-sub">「すべての商品」では商品名・Sample_CODE・型番・LOGS_CODEを全件から検索します</span>
+        )}
       </div>
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -118,11 +150,22 @@ export default function ProductsListPage() {
             <span className="text-sub">{p.supplier_name ?? "—"}</span>
           </Link>
         ))}
-        {!loading && filtered.length === 0 && products.length > 0 && (
+        {!loading && filtered.length === 0 && (
           <p className="px-4 py-8 text-center text-sm text-sub">該当する商品がありません</p>
         )}
       </div>
+
+      {!loading && scopeChoice === "all" && hasMore && (
+        <div className="flex justify-center">
+          <button
+            onClick={loadMore}
+            disabled={loadingMore}
+            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-ink hover:bg-slate-50 disabled:opacity-50"
+          >
+            {loadingMore ? "読み込み中..." : "もっと見る"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
-

@@ -493,16 +493,38 @@ def test_list_products_scope_all_returns_master_products(monkeypatch):
 
     monkeypatch.setattr(
         product_service, "get_all_products",
-        lambda limit=20: [{"ID": 101, "LOGS_CODE": None, "Sample_CODE": "100", "商品名": "Baseball Cap", "型番": "K01", "仕入先名": "1064STUDIO"}],
+        lambda limit=20, offset=0, search=None: [{"ID": 101, "LOGS_CODE": None, "Sample_CODE": "100", "商品名": "Baseball Cap", "型番": "K01", "仕入先名": "1064STUDIO"}],
     )
 
     response = _client().get("/api/products?scope=all")
     assert response.status_code == 200
     body = response.json()
     assert body["scope"] == "all"
+    assert body["has_more"] is False
     assert body["products"] == [
         {"product_id": "101", "logs_code": None, "product_name": "Baseball Cap", "model_no": "K01", "supplier_name": "1064STUDIO", "sample_code": "100"}
     ]
+
+
+def test_list_products_scope_all_has_more_when_extra_row_returned(monkeypatch):
+    """2026-07-09（14.54、Noritsuguの指定）:「もっと見る」ボタン方式。
+    総件数のCOUNT(*)を避けるため、limit+1件取得してhas_moreを判定する。"""
+    from services import product_service
+
+    extra_row = [
+        {"ID": i, "LOGS_CODE": None, "Sample_CODE": str(i), "商品名": f"P{i}", "型番": None, "仕入先名": None}
+        for i in range(3)
+    ]
+    monkeypatch.setattr(
+        product_service, "get_all_products",
+        lambda limit=20, offset=0, search=None: extra_row,
+    )
+
+    response = _client().get("/api/products?scope=all&limit=2&offset=0")
+    body = response.json()
+    assert body["has_more"] is True
+    assert body["count"] == 2
+    assert body["next_offset"] == 2
 
 
 def test_get_product_via_http(monkeypatch):
