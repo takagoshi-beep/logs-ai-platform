@@ -212,6 +212,60 @@ def test_sales_by_category_rejects_unknown_group_by():
     assert result["status"] == "unavailable"
 
 
+def test_find_similar_name_requires_term_and_valid_domain():
+    result = LogsysProvider()._find_similar_name({"term": "石川"})
+    assert result["status"] == "unavailable"
+
+    result = LogsysProvider()._find_similar_name({"term": "石川", "domain": "not_a_real_domain"})
+    assert result["status"] == "unavailable"
+
+
+def test_find_similar_name_searches_staff_table_with_trigram_similarity(monkeypatch):
+    """2026-07-10（14.65、Noritsuguの指定）: LIKE部分一致では見つからない
+    表記ゆれ・スペルミスにも対応するあいまい検索。pg_trgmの類似度で
+    候補をランキングして返す。"""
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured["sql"] = sql
+        captured["params"] = params
+        return [{"名称": "石川達也", "類似度": 0.83}]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._find_similar_name({"term": "石川", "domain": "staff"})
+
+    assert result["status"] == "ok"
+    assert "staff" in captured["sql"]
+    assert '"社員氏名"' in captured["sql"]
+    assert "similarity" in captured["sql"]
+    assert result["records"][0]["名称"] == "石川達也"
+
+
+def test_find_similar_name_searches_customer_table(monkeypatch):
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured["sql"] = sql
+        return [{"名称": "US_LOGS Inc.", "類似度": 0.6}]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._find_similar_name({"term": "USLOGS", "domain": "customer"})
+
+    assert result["status"] == "ok"
+    assert "customers" in captured["sql"]
+    assert '"顧客名称"' in captured["sql"]
+
+
+def test_find_similar_name_returns_unavailable_when_no_candidates_found(monkeypatch):
+    monkeypatch.setattr(LogsysProvider, "_query", lambda self, sql, params=(): [])
+
+    result = LogsysProvider()._find_similar_name({"term": "存在しない名前", "domain": "staff"})
+
+    assert result["status"] == "unavailable"
+
+
 def test_import_cost_estimate_requires_all_params():
     result = LogsysProvider()._import_cost_estimate({"quantity": 100})
     assert result["status"] == "unavailable"

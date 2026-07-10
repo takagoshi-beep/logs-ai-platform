@@ -607,6 +607,51 @@ class LogsysProvider:
             note="粗利トレンドの算出基準が会社として未整備",
         )
 
+    def _find_similar_name(self, params: dict[str, Any]) -> dict[str, Any]:
+        """あいまい検索（2026-07-10、14.65、Noritsuguの指定）: 入力文字列
+        （表記ゆれ・スペルミス・曖昧な入力を含む）に最も近い実在の顧客名・
+        社員氏名を、pg_trgmのトライグラム類似度でランキングして返す。
+
+        これまでの検索は全てLIKE '%キーワード%'（部分一致）のみで、
+        「たかはし」と「タカハシ」のような表記ゆれには対応できなかった。
+        get_sales_lines等のsales_rep_keyword・customer_keywordで0件、
+        または該当が不確かな場合は、まずこのツールで実在する正式名称を
+        確認し、「『XX』を『YY』として検索しました」と明示してから
+        本来のツールを呼び出すこと（架空の名前で検索を続けてはいけない）。
+        """
+        term = params.get("term")
+        domain = params.get("domain")
+        if not term or domain not in ("customer", "staff"):
+            return _evidence(
+                self.name, "find_similar_name", "unavailable",
+                "term（検索したい名前）とdomain（customerまたはstaff）はいずれも必須。",
+            )
+
+        table, column = ("customers", "顧客名称") if domain == "customer" else ("staff", "社員氏名")
+        sql = (
+            f'SELECT "{column}" AS "名称", similarity("{column}", %s) AS "類似度" '
+            f'FROM {table} '
+            f'WHERE "{column}" % %s '
+            f'ORDER BY "類似度" DESC LIMIT 5'
+        )
+        rows = self._query(sql, (term, term))
+
+        if not rows:
+            return _evidence(
+                self.name, "find_similar_name", "unavailable",
+                f"「{term}」に類似する{'顧客名' if domain == 'customer' else '社員氏名'}が"
+                f"見つかりませんでした。架空の名前で検索を続けてはいけない — "
+                f"ユーザーに正確な名称を確認すること。",
+            )
+
+        return _evidence(
+            self.name, "find_similar_name", "ok",
+            f"「{term}」に類似する{'顧客名' if domain == 'customer' else '社員氏名'}を"
+            f"類似度順に{len(rows)}件取得。最も類似度が高いものが必ずしも正解とは"
+            f"限らないため、複数候補がある場合はユーザーに確認すること。",
+            rows,
+        )
+
 
 class GmailProvider:
     """Gmail。v0.1はAPI未接続。

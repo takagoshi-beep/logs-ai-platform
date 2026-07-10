@@ -61,7 +61,7 @@ TOOLS: list[dict[str, Any]] = [
                 "period_start": {"type": "string", "description": "期間開始日（YYYY-MM-DD形式）"},
                 "period_end": {"type": "string", "description": "期間終了日（YYYY-MM-DD形式）"},
                 "customer_keyword": {"type": "string", "description": "顧客名の部分一致キーワード"},
-                "sales_rep_keyword": {"type": "string", "description": "担当者名の部分一致キーワード（営業担当者・営業事務・経理担当・伝票作成者のいずれかに一致すればヒット）"},
+                "sales_rep_keyword": {"type": "string", "description": "担当者名の部分一致キーワード（営業担当者・営業事務・経理担当・伝票作成者のいずれかに一致すればヒット）。0件、または名前の一致が不確かな場合はfind_similar_name（domain=\"staff\"）で正式名称を確認してから呼び直すこと。"},
             },
         },
     },
@@ -86,7 +86,7 @@ TOOLS: list[dict[str, Any]] = [
                 },
                 "period_start": {"type": "string", "description": "期間開始日（YYYY-MM-DD形式）"},
                 "period_end": {"type": "string", "description": "期間終了日（YYYY-MM-DD形式）"},
-                "sales_rep_keyword": {"type": "string", "description": "担当者名の部分一致キーワード（営業担当者・営業事務・経理担当・伝票作成者のいずれかに一致すればヒット）"},
+                "sales_rep_keyword": {"type": "string", "description": "担当者名の部分一致キーワード（営業担当者・営業事務・経理担当・伝票作成者のいずれかに一致すればヒット）。0件、または名前の一致が不確かな場合はfind_similar_name（domain=\"staff\"）で正式名称を確認してから呼び直すこと。"},
             },
         },
     },
@@ -185,12 +185,39 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "get_customer_master",
-        "description": "顧客マスタを検索する。顧客名の表記ゆれ確認・名寄せ・営業担当者の確認に使う（営業担当者名列を含む）。",
+        "description": (
+            "顧客マスタを検索する。顧客名の表記ゆれ確認・名寄せ・営業担当者の確認に使う"
+            "（営業担当者名列を含む）。keywordが0件、または一致するか不確かな場合は、"
+            "先にfind_similar_name（domain=\"customer\"）で類似度の高い候補を確認してから、"
+            "確認できた正式名称でこちらを呼び直すこと。"
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "keyword": {"type": "string", "description": "顧客名の部分一致キーワード"},
             },
+        },
+    },
+    {
+        "name": "find_similar_name",
+        "description": (
+            "あいまい検索。入力文字列（表記ゆれ・スペルミス・曖昧な入力を含む）に"
+            "最も近い実在の顧客名・社員氏名を、類似度でランキングして返す"
+            "（LIKE部分一致では見つからない「たかはし」と「タカハシ」のような表記ゆれにも対応）。"
+            "get_sales_lines・get_purchase_linesのsales_rep_keyword・customer_keywordで"
+            "0件、または該当が不確かな場合は、まずこのツールで実在する正式名称を確認し、"
+            "「『（入力された名前）』を『（確認できた正式名称）』として検索しました」と"
+            "回答の中で明示してから、本来のツールを実際の名称で呼び直すこと。"
+            "候補が複数返り、どれが正解か判断できない場合は、ユーザーに確認すること。"
+            "架空の名前・存在しない候補で検索を続けてはいけない。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "term": {"type": "string", "description": "検索したい名前（表記ゆれ・不確かな入力でよい）"},
+                "domain": {"type": "string", "enum": ["customer", "staff"], "description": "customer=顧客名、staff=社員氏名"},
+            },
+            "required": ["term", "domain"],
         },
     },
     {
@@ -420,6 +447,8 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
             result = _PROVIDERS["logsys"].fetch("purchase_lines", tool_input)
         elif tool_name == "get_import_cost_estimate":
             result = _PROVIDERS["logsys"].fetch("import_cost_estimate", tool_input)
+        elif tool_name == "find_similar_name":
+            result = _PROVIDERS["logsys"].fetch("find_similar_name", tool_input)
         elif tool_name == "get_projects":
             result = _PROVIDERS["logsys"].fetch("projects", tool_input)
         elif tool_name == "get_customer_master":
