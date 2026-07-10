@@ -134,18 +134,24 @@ def list_projects(limit: int = 10, scope: str = "mine", user: dict = Depends(req
     全件を返す（表記ゆれで誤って絞り込むより、全件見せる方が安全）。
     scope="all": 常に全件を返す。
     """
+    from services.timing import timed
+
     try:
         owner_name = None
-        if scope == "mine":
-            from services.auth_service import get_staff_name_by_email
-            owner_name = get_staff_name_by_email(user.get("email"))
+        with timed("projects_list.resolve_owner_name"):
+            if scope == "mine":
+                from services.auth_service import get_staff_name_by_email
+                owner_name = get_staff_name_by_email(user.get("email"))
 
         service = ProjectService()
-        project_ids = service._query_projects_from_db(limit=limit, owner_name=owner_name)
-        ids = [r["id"] for r in project_ids[:limit] if r.get("id")]
+        with timed("projects_list.query_ids"):
+            project_ids = service._query_projects_from_db(limit=limit, owner_name=owner_name)
+            ids = [r["id"] for r in project_ids[:limit] if r.get("id")]
 
         projects = []
-        for agg in service.build_project_aggregates_bulk(ids):
+        with timed(f"projects_list.build_aggregates(n={len(ids)})"):
+            aggregates = list(service.build_project_aggregates_bulk(ids))
+        for agg in aggregates:
             # 注意（2026-07-09、14.40）: このAPIレスポンスの"project_name"は
             # 実はPO番号（agg.po_number）を指しており、purchase_orders."案件名"
             # の実際のテキスト（agg.data.project_name）とは別物。Gmail/Slackの
@@ -179,9 +185,12 @@ def list_projects(limit: int = 10, scope: str = "mine", user: dict = Depends(req
 @router.get("/projects/{project_id}")
 def get_project(project_id: str, user: dict = Depends(require_login)) -> dict:
     """Get complete ProjectAggregate for a single project."""
+    from services.timing import timed
+
     try:
         service = ProjectService()
-        agg = service.build_project_aggregate(project_id)
+        with timed(f"project_detail.build_aggregate(id={project_id})"):
+            agg = service.build_project_aggregate(project_id)
 
         if not agg:
             raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
@@ -197,7 +206,8 @@ def get_project(project_id: str, user: dict = Depends(require_login)) -> dict:
         # 補足情報という位置づけのため。
         try:
             from services.production_data import get_production_mass_status
-            result["production"] = get_production_mass_status(agg.po_number)
+            with timed("project_detail.production_mass"):
+                result["production"] = get_production_mass_status(agg.po_number)
         except Exception:
             result["production"] = []
 
@@ -207,12 +217,13 @@ def get_project(project_id: str, user: dict = Depends(require_login)) -> dict:
         # gmail_service/slack_serviceが返す'unavailable'をそのまま返す。
         try:
             from services.project_relations import get_related_communications
-            result["related_communications"] = get_related_communications(
-                user_email=user.get("email"),
-                po_number=agg.po_number,
-                customer_id=agg.data.customer_id,
-                supplier_name=agg.data.supplier_name,
-            )
+            with timed("project_detail.gmail_slack_related_communications"):
+                result["related_communications"] = get_related_communications(
+                    user_email=user.get("email"),
+                    po_number=agg.po_number,
+                    customer_id=agg.data.customer_id,
+                    supplier_name=agg.data.supplier_name,
+                )
         except Exception as e:
             result["related_communications"] = {
                 "gmail": {"status": "error", "summary": str(e), "records": []},
@@ -311,20 +322,27 @@ def get_today_actions(limit: int = 20, scope: str = "mine", user: dict = Depends
     scope="mine"（既定）: ログイン中の本人が担当する案件のタスクだけに
     絞り込む（docs/architecture.md 14.28）。本人特定できない場合は全件。
     """
+    from services.timing import timed
+
     try:
         owner_name = None
-        if scope == "mine":
-            from services.auth_service import get_staff_name_by_email
-            owner_name = get_staff_name_by_email(user.get("email"))
+        with timed("today_actions.resolve_owner_name"):
+            if scope == "mine":
+                from services.auth_service import get_staff_name_by_email
+                owner_name = get_staff_name_by_email(user.get("email"))
 
         service = ProjectService()
 
         # Get multiple projects
-        project_ids = service._query_projects_from_db(limit=50, owner_name=owner_name)
-        ids = [r["id"] for r in project_ids if r.get("id")]
+        with timed("today_actions.query_ids"):
+            project_ids = service._query_projects_from_db(limit=50, owner_name=owner_name)
+            ids = [r["id"] for r in project_ids if r.get("id")]
+
+        with timed(f"today_actions.build_aggregates(n={len(ids)})"):
+            aggregates = list(service.build_project_aggregates_bulk(ids))
 
         all_actions = []
-        for agg in service.build_project_aggregates_bulk(ids):
+        for agg in aggregates:
             for action in agg.actions:
                 all_actions.append({
                     "action_id": action.action_id,
@@ -360,7 +378,8 @@ def get_today_actions(limit: int = 20, scope: str = "mine", user: dict = Depends
         try:
             from services.project_relations import get_task_signals
             po_numbers = list({a["project_name"] for a in actions if a.get("project_name")})
-            signals = get_task_signals(user.get("email"), po_numbers)
+            with timed(f"today_actions.gmail_slack_signals(n_pos={len(po_numbers)})"):
+                signals = get_task_signals(user.get("email"), po_numbers)
             for action in actions:
                 task_signal = signals["by_task"].get(action.get("project_name"), {})
                 action["gmail_unread"] = task_signal.get("gmail_unread", 0)
@@ -419,11 +438,13 @@ def list_products(
     （以前は取得済みのlimit件の中だけしか検索できなかった）。
     """
     from services.product_service import _format_logs_code, get_all_products, get_products_master_batch, get_related_product_ids, sample_code_sort_key
+    from services.timing import timed
 
     if scope == "all":
         # has_more判定用に1件多く取得する（総件数のCOUNT(*)を避けるため。
         # 「もっと見る」方式なので厳密な総件数は不要、Noritsuguの指定）。
-        rows = get_all_products(limit=limit + 1, offset=offset, search=search)
+        with timed(f"products_list.get_all_products(search={bool(search)})"):
+            rows = get_all_products(limit=limit + 1, offset=offset, search=search)
         has_more = len(rows) > limit
         rows = rows[:limit]
         products = [
@@ -448,8 +469,10 @@ def list_products(
     if not owner_name:
         return {"success": True, "products": [], "count": 0, "scope": "mine"}
 
-    product_ids = get_related_product_ids(owner_name, limit=limit)
-    master_map = get_products_master_batch(product_ids)
+    with timed("products_list.get_related_product_ids"):
+        product_ids = get_related_product_ids(owner_name, limit=limit)
+    with timed(f"products_list.get_products_master_batch(n={len(product_ids)})"):
+        master_map = get_products_master_batch(product_ids)
 
     products = []
     for pid in product_ids:
@@ -476,9 +499,11 @@ def get_product(product_id: str, user: dict = Depends(require_login)) -> dict:
     横断履歴、および本人のGmail/Slackから見た関連メッセージを返す。
     """
     from services.product_service import get_product_detail, get_related_communications_for_product
+    from services.timing import timed
 
     try:
-        detail = get_product_detail(product_id)
+        with timed(f"product_detail.get_product_detail(id={product_id})"):
+            detail = get_product_detail(product_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -486,11 +511,12 @@ def get_product(product_id: str, user: dict = Depends(require_login)) -> dict:
         raise HTTPException(status_code=404, detail=f"Product {product_id} not found")
 
     try:
-        detail["related_communications"] = get_related_communications_for_product(
-            user_email=user.get("email"),
-            logs_code=detail["master"].get("LOGS_CODE"),
-            sample_code=detail["master"].get("Sample_CODE"),
-        )
+        with timed("product_detail.gmail_slack_related_communications"):
+            detail["related_communications"] = get_related_communications_for_product(
+                user_email=user.get("email"),
+                logs_code=detail["master"].get("LOGS_CODE"),
+                sample_code=detail["master"].get("Sample_CODE"),
+            )
     except Exception as e:
         detail["related_communications"] = {
             "gmail": {"status": "error", "summary": str(e), "records": []},
