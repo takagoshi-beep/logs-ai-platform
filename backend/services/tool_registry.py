@@ -265,6 +265,12 @@ TOOLS: list[dict[str, Any]] = [
             "のような質問に使う。ログイン中のメールアドレスが社員マスタの氏名と一致しない"
             "場合は取得できない（'unavailable'）ので、その場合は正直に担当者名を特定できな"
             "かった旨を伝えること。架空の案件を作ってはいけない。"
+            "status_badgesは複数付くことがある（例:「売上未確定」と「原価未確定」は同時に"
+            "成立しうる）。「完了」は売上・仕入とも入力済みの意味で、「納品完了（生産管理）」"
+            "は生産管理側の別軸の判定（売上・仕入の入力状況とは無関係）。"
+            "「PO発行済み」「PO未発行」は常にどちらか一方が付く。"
+            "delivery_month_bucketは納品予定月（this_month=今月、next_month=来月、"
+            "month_after_next_or_later=再来月以降）で、既に納期を過ぎている場合はnull。"
         ),
         "input_schema": {
             "type": "object",
@@ -418,12 +424,22 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
                     ids = [p["id"] for p in project_ids if p.get("id")]
                     records = []
                     for agg in service.build_project_aggregates_bulk(ids):
+                        # 2026-07-09（14.58修正）: 以前は単一のstate（14.39で
+                        # status_badgesに置き換える前の古い概念）を返して
+                        # いたが、実際の判定ロジック自体は最新のまま
+                        # （このツールはbuild_project_aggregates_bulk()を
+                        # そのまま呼んでいるため）で、取り出すフィールドだけ
+                        # 古くなっていた。status_badges（複数可、完了/売上
+                        # 未確定/原価未確定/納品完了(生産管理)/PO発行済み・
+                        # 未発行）とdelivery_month_bucket（納品予定月）に
+                        # 更新した。
                         records.append({
                             "project_id": agg.project_id,
                             "po_number": agg.po_number,
+                            "project_name": agg.data.project_name,
                             "customer": agg.data.customer_name,
-                            "state": agg.state.value,
-                            "priority": agg.priority,
+                            "status_badges": agg.status_badges,
+                            "delivery_month_bucket": agg.delivery_month_bucket,
                             "actions_count": len(agg.actions),
                         })
                     result = {

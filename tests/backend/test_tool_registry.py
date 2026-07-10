@@ -58,6 +58,46 @@ def test_execute_tool_dispatches_to_logsys_provider(monkeypatch):
     assert result["records"] == [{"顧客名称": "US_LOGS Inc."}]
 
 
+def test_get_my_projects_surfaces_status_badges_and_delivery_month_bucket(monkeypatch):
+    """2026-07-09（14.58修正）: 以前はstate（14.39でstatus_badgesに
+    置き換える前の古い単一状態）を返していた。build_project_aggregates_
+    bulk()自体は最新のロジックを使っているため（このツールは元々
+    ProjectServiceを直接呼んでおり複製実装ではなかった）、取り出す
+    フィールドだけを最新（status_badges・delivery_month_bucket）に
+    更新した。"""
+    from services import auth_service
+    from services.project_service import ProjectService
+
+    monkeypatch.setattr(auth_service, "get_staff_name_by_email", lambda email: "山田太郎")
+    monkeypatch.setattr(
+        ProjectService, "_query_projects_from_db",
+        lambda self, limit, owner_name: [{"id": "1"}],
+    )
+
+    class _FakeData:
+        project_name = "SLOBE IENA_ハーフオーバルベルト"
+        customer_name = "US_LOGS Inc."
+
+    class _FakeAgg:
+        project_id = "1"
+        po_number = "914-1"
+        data = _FakeData()
+        status_badges = ["sales_unconfirmed", "cost_unconfirmed", "po_not_issued"]
+        delivery_month_bucket = "next_month"
+        actions = []
+
+    monkeypatch.setattr(ProjectService, "build_project_aggregates_bulk", lambda self, ids: [_FakeAgg()])
+
+    result = json.loads(tool_registry.execute_tool("get_my_projects", {}, user_email="yamada@logs.co.jp"))
+
+    assert result["status"] == "ok"
+    record = result["records"][0]
+    assert record["status_badges"] == ["sales_unconfirmed", "cost_unconfirmed", "po_not_issued"]
+    assert record["delivery_month_bucket"] == "next_month"
+    assert "state" not in record  # 古いフィールドはもう返さない
+    assert "priority" not in record
+
+
 def test_execute_tool_dispatches_to_production_provider(monkeypatch):
     from services import production_data
     monkeypatch.setattr(production_data, "list_sample_staff_names", lambda: ["林", "森山"])

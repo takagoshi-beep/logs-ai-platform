@@ -2752,6 +2752,40 @@ purchase_orders."通貨"は数値コードだったため、code_masterのCURREN
 （1=USD, 2=円, 3=RMB、Noritsuguが確認して提示）に基づき実際の名称に
 変換して表示するようにした。
 
+## 14.57 get_projectsに信頼できる納品判定と正確な件数集計を追加 (2026-07-09)
+
+「相談」機能から「KBFの未納品案件をすべて教えて」と聞かれた際、
+`get_projects`ツールが顧客納品日（POへの入力予定日で、実際の納品有無
+とは無関係）から納品済みかどうかを推測しようとし、200件の壁もあって
+正しく答えられなかった実例が見つかった。docs/architecture.md 14.33で
+確立したhas_sales（同じLOGS_CODEでsalesに売上実データがあるか）・
+production_closed（生産管理『量産』シートの表示フラグ=0か）による
+納品判定を、このチャットツールにも反映。delivery_status
+（delivered/undelivered）で絞り込めるようにし、件数は200件の壁の
+影響を受けない正確なaggregateを返すようにした。
+
+## 14.58 チャットツールとWeb画面のロジック同期の運用ルール (2026-07-09)
+
+14.57をきっかけに、Noritsuguから「今日一日実装してきたロジックが
+『相談』機能（チャットツール、backend/services/data_providers.py・
+tool_registry.py）に反映されていないのでは」という指摘があった。
+
+既存のチャットツールを棚卸ししたところ、`get_my_projects`・
+`get_my_products`はProjectService/product_service.pyの関数を直接
+呼んでおり（複製実装ではなく再利用）、ロジック自体は最新のまま保たれて
+いた。ただし`get_my_projects`が案件から取り出すフィールドは、14.39で
+`status_badges`（複数可）に置き換える前の古い単一の`state`のままに
+なっていた（ロジックは最新でも、そこから何を取り出すかが古いままという
+別種のズレ）。`status_badges`・`delivery_month_bucket`を返すよう修正した。
+
+**運用ルール**: project_service.py・product_service.pyの判定ロジック
+（納品完了・原価確定・状態バッジ・納品予定月・予定/実績の原価比較等）
+を追加・変更する際は、同じ変更の中で「これを参照しているチャットツール
+（tool_registry.py・data_providers.py）が無いか」を確認し、古いフィールド
+名や判定基準を参照していれば一緒に直す。後からまとめて棚卸しするのでは
+なく、変更のたびに1手間かけることで、Web画面とチャットの回答が食い違う
+状況を未然に防ぐ。
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.
