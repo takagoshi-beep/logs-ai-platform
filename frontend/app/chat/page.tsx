@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Button, Card } from "@/components/design-system";
 import { consultQuestion } from "@/lib/api-client";
 
@@ -8,6 +10,52 @@ interface ToolCall {
   tool: string;
   input: Record<string, unknown>;
 }
+
+// 2026-07-10（14.64、Noritsuguの指定）: 相談機能でClaudeが返すMarkdown
+// テーブル（輸入経費推定等）が、これまで単純な<p>にプレーンテキストと
+// して表示されていて「|」区切りのまま見づらかった。react-markdownで
+// 実際に表・見出し・強調として描画するようにした。
+const markdownComponents = {
+  p: ({ children }: { children?: React.ReactNode }) => (
+    <p className="mt-1 text-sm text-ink">{children}</p>
+  ),
+  strong: ({ children }: { children?: React.ReactNode }) => (
+    <strong className="font-semibold text-ink">{children}</strong>
+  ),
+  h1: ({ children }: { children?: React.ReactNode }) => (
+    <h1 className="mt-3 text-base font-bold text-ink">{children}</h1>
+  ),
+  h2: ({ children }: { children?: React.ReactNode }) => (
+    <h2 className="mt-3 text-sm font-bold text-ink">{children}</h2>
+  ),
+  h3: ({ children }: { children?: React.ReactNode }) => (
+    <h3 className="mt-2 text-sm font-semibold text-ink">{children}</h3>
+  ),
+  ul: ({ children }: { children?: React.ReactNode }) => (
+    <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm text-ink">{children}</ul>
+  ),
+  ol: ({ children }: { children?: React.ReactNode }) => (
+    <ol className="mt-1 list-decimal space-y-0.5 pl-5 text-sm text-ink">{children}</ol>
+  ),
+  li: ({ children }: { children?: React.ReactNode }) => <li>{children}</li>,
+  code: ({ children }: { children?: React.ReactNode }) => (
+    <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">{children}</code>
+  ),
+  table: ({ children }: { children?: React.ReactNode }) => (
+    <div className="mt-2 overflow-x-auto">
+      <table className="min-w-full border-collapse text-xs">{children}</table>
+    </div>
+  ),
+  thead: ({ children }: { children?: React.ReactNode }) => (
+    <thead className="bg-slate-100">{children}</thead>
+  ),
+  th: ({ children }: { children?: React.ReactNode }) => (
+    <th className="border border-slate-200 px-2 py-1 text-left font-semibold text-ink">{children}</th>
+  ),
+  td: ({ children }: { children?: React.ReactNode }) => (
+    <td className="border border-slate-200 px-2 py-1 align-top text-ink">{children}</td>
+  ),
+};
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -84,7 +132,9 @@ export default function ChatPage() {
               className={msg.role === "user" ? "ml-auto max-w-[80%] rounded-lg bg-accent/10 p-3" : "mr-auto max-w-[80%] rounded-lg bg-slate-50 p-3"}
             >
               <p className="text-xs font-semibold text-sub">{msg.role === "user" ? "あなた" : "AI"}</p>
-              <p className="mt-1 whitespace-pre-wrap text-sm text-ink">{msg.content}</p>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                {msg.content}
+              </ReactMarkdown>
               {msg.toolCalls && msg.toolCalls.length > 0 && (
                 <p className="mt-2 text-xs text-sub">
                   使用したツール: {msg.toolCalls.map((t) => t.tool).join("、")}
