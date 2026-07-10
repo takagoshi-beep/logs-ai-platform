@@ -202,7 +202,7 @@ export default function WorkspacePage({ params }: Params) {
             </div>
             <div>
               実績輸入経費率: {project.data.actual_import_cost_ratio != null ? project.data.actual_import_cost_ratio.toFixed(2) : "—"}
-              <span className="ml-1 text-sub">（仕入確定後）</span>
+              <span className="ml-1 text-sub">（仕入確定後、PO単位）</span>
             </div>
           </div>
           <p className="mt-1 text-xs text-sub">

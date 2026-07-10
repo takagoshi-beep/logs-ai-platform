@@ -189,19 +189,20 @@ class ProjectService:
         不具合を修正（MIN→MAX）。同一商品が複数回発注される場合、
         直近の履歴の方が案件の実態に近いと判断した。
 
-        2026-07-09（14.41・14.43修正、Noritsuguの指定）: 仕入に関する
-        全ての判定（has_purchase/purchase_date、活動履歴の「仕入登録」
-        イベント、状態バッジの「原価未確定」判定、実績輸入経費率）を、
-        商品単位（LOGS_CODE）ではなくPO単位（purchases."POnum" =
-        purchase_orders."PO_No"）で統一した。
+        2026-07-09（14.41修正、Noritsuguの指定）: 仕入登録（has_purchase/
+        purchase_date、活動履歴の「仕入登録」イベント、状態バッジの
+        「原価未確定」判定）は、商品単位（LOGS_CODE）ではなくPO単位
+        （purchases."POnum" = purchase_orders."PO_No"）で判定する。
 
-        14.41では実績輸入経費率だけLOGS_CODE単位のまま残していたが、
-        「このPOには仕入が無いのに、別のPO（同じ商品の再発注）の仕入
-        から経費率が表示される」という実際の不整合が発生したため
-        （2026-07-09、Noritsuguが実データで発見）、経費率も含めて
-        PO単位に統一した。1つのPOに複数商品が含まれる場合、経費率は
-        そのPOの最新の仕入明細行のものになる（商品ごとの経費率とは
-        ズレる可能性があるが、Noritsuguの指定によりPO単位を優先）。
+        2026-07-09（14.52修正、Noritsuguの指定）: 実績輸入経費率・
+        実績原価は、同じPO番号の明細を SUM("諸掛込金額円") /
+        SUM("仕入金額円") で加重平均する。1行だけ（DISTINCT ON）を
+        採用する方式（14.43で一度採用）は、複数明細のうち1行の値しか
+        反映されない問題があったため、加重平均に変更した。PO単位に
+        する理由は、他のPOに同じ商品が含まれる場合に、その案件と無関係
+        な数字が混ざらないようにするため（商品単位で集計すると、他の
+        PO・他の案件の仕入まで混ざってしまう。商品単位の集計は商品詳細
+        側で別途行う）。
         """
         if not po_dicts:
             return
@@ -227,40 +228,33 @@ class ProjectService:
                         sales_dates[self._format_logs_code_for_project(logs_code)] = max_date
 
             if po_numbers:
-                # 仕入登録（活動履歴・状態バッジ用）・実績輸入経費率とも
-                # PO単位（14.41・14.43）。DISTINCT ONでPO番号ごとに
-                # 最新の伝票日を持つ1行から日付と経費率を一緒に取る
-                # （別々にMAXを取ると違う行の値が混ざるため、14.40と
-                # 同じ理由）。
+                # 仕入登録（活動履歴・状態バッジ用）はPO単位（14.41）。
                 with conn.cursor() as cur:
                     cur.execute(
-                        'SELECT DISTINCT ON ("POnum") "POnum", "伝票日", "経費率" '
-                        'FROM purchases WHERE "POnum" = ANY(%s) '
-                        'ORDER BY "POnum", "伝票日" DESC',
-                        (po_numbers,),
-                    )
-                    for po_no, max_date, cost_ratio in cur.fetchall():
-                        purchase_dates_by_po[po_no] = max_date
-                        actual_import_cost_ratios_by_po[po_no] = cost_ratio
-
-                # 2026-07-09（14.49、Noritsuguの指定）: 予定(PO)vs確定
-                # (仕入)の粗利比較用に、実績原価（PO単位の合計）を追加。
-                # purchases."諸掛込金額円"（明細ごとの確定原価合計。
-                # 実際のSupabase列名は括弧が除去されて"諸掛込金額円"に
-                # なっている — Excel原本の見出しは"諸掛込金額（円）"だが
-                # sync.pyのクレンジングで括弧が消える。staff."ID（編集
-                # 禁止）"の逆で、今回は括弧が消える側だった。実際に
-                # information_schema.columnsで確認して判明、14.50。）
-                # を同じPO番号でSUM。1つのPOに複数回の仕入（部分納品等）
-                # があっても正しく合算される。
-                with conn.cursor() as cur:
-                    cur.execute(
-                        'SELECT "POnum", SUM("諸掛込金額円") FROM purchases '
+                        'SELECT "POnum", MAX("伝票日") FROM purchases '
                         'WHERE "POnum" = ANY(%s) GROUP BY "POnum"',
                         (po_numbers,),
                     )
-                    for po_no, total_cost in cur.fetchall():
-                        actual_cost_totals_by_po[po_no] = total_cost
+                    for po_no, max_date in cur.fetchall():
+                        purchase_dates_by_po[po_no] = max_date
+
+                # 2026-07-09（14.49・14.52、Noritsuguの指定）: 実績原価
+                # （予定vs確定の粗利比較用）・実績輸入経費率は、同じPO
+                # 番号の明細をまとめてSUM(諸掛込金額円)/SUM(仕入金額円)
+                # で加重平均する。purchases."諸掛込金額円"は実際の
+                # Supabase列名（Excel原本の見出しは括弧付き"諸掛込金額
+                # （円）"だが、sync.pyのクレンジングで括弧が消えている。
+                # 実際にinformation_schema.columnsで確認して判明、14.50）。
+                with conn.cursor() as cur:
+                    cur.execute(
+                        'SELECT "POnum", SUM("諸掛込金額円"), SUM("仕入金額円") '
+                        'FROM purchases WHERE "POnum" = ANY(%s) GROUP BY "POnum"',
+                        (po_numbers,),
+                    )
+                    for po_no, total_with_fees, total_base in cur.fetchall():
+                        actual_cost_totals_by_po[po_no] = total_with_fees
+                        if total_base:
+                            actual_import_cost_ratios_by_po[po_no] = total_with_fees / total_base
 
                 with conn.cursor() as cur:
                     cur.execute(

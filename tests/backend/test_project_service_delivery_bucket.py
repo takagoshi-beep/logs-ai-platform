@@ -201,8 +201,10 @@ def test_attach_existence_data_uses_max_date_not_min(monkeypatch):
                     sql = sql_holder.get("sql", "")
                     if "FROM sales" in sql:
                         return [(5145.0, datetime(2026, 6, 1))]
-                    if 'FROM purchases' in sql and '"POnum"' in sql:
-                        return [("PO-1", datetime(2026, 5, 1), 1.15)]
+                    if "MAX(\"伝票日\")" in sql:
+                        return [("PO-1", datetime(2026, 5, 1))]
+                    if "SUM(\"諸掛込金額円\")" in sql:
+                        return [("PO-1", 1150.0, 1000.0)]  # 1150/1000 = 1.15
                     return []
 
             return _Cur()
@@ -222,13 +224,11 @@ def test_attach_existence_data_uses_max_date_not_min(monkeypatch):
 
 
 def test_attach_existence_data_matches_purchase_by_po_number_not_logs_code(monkeypatch):
-    """2026-07-09（14.41・14.43、Noritsuguの指定）: 仕入登録（活動履歴・
-    状態バッジ用のhas_purchase/purchase_date）と実績輸入経費率は、
-    商品単位（LOGS_CODE）ではなくPO単位（purchases."POnum"）で判定する。
-    1つのPOに複数商品が含まれる場合、そのPOの仕入伝票が1件でもあれば
-    「仕入登録済み」とみなす（他の商品の仕入だけでも、同じPOなら仕入
-    登録済みと判断する）。実績輸入経費率も同じPO単位の行から取る
-    （14.43: 別のPO・別の商品の経費率が混ざって表示される不具合の修正）。
+    """2026-07-09（14.41、Noritsuguの指定）: 仕入登録（活動履歴・状態
+    バッジ用のhas_purchase/purchase_date）は、商品単位（LOGS_CODE）では
+    なくPO単位（purchases."POnum"）で判定する。1つのPOに複数商品が
+    含まれる場合、そのPOの仕入伝票が1件でもあれば「仕入登録済み」と
+    みなす（他の商品の仕入だけでも、同じPOなら仕入登録済みと判断する）。
     """
     from services.project_service import ProjectService
 
@@ -250,8 +250,10 @@ def test_attach_existence_data_matches_purchase_by_po_number_not_logs_code(monke
                     sql = sql_holder.get("sql", "")
                     if "FROM sales" in sql:
                         return []
-                    if "FROM purchases" in sql and '"POnum"' in sql:
-                        return [("PO-1", datetime(2026, 5, 1), 1.30)]  # 同じPOの別商品の仕入
+                    if "MAX(\"伝票日\")" in sql:
+                        return [("PO-1", datetime(2026, 5, 1))]  # 同じPOの別商品の仕入
+                    if "SUM(\"諸掛込金額円\")" in sql:
+                        return [("PO-1", 1300.0, 1000.0)]
                     return []
 
             return _Cur()

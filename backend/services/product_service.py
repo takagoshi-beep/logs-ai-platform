@@ -348,7 +348,7 @@ def get_product_detail(product_id: str) -> dict[str, Any] | None:
                 'COALESCE(NULLIF("明細営業担当者名", \'\'), "営業担当者名") AS "営業担当者名", '
                 'COALESCE(NULLIF("明細営業事務担当者名", \'\'), "営業事務担当者名") AS "営業事務担当者名", '
                 '"生産管理担当者名", "仕入数量pcs", "仕入金額円", "伝票日", '
-                '"経費率", "実際原価" '
+                '"経費率", "実際原価", "諸掛込金額円" '
                 'FROM purchases WHERE "LOGS_CODE" = %s ORDER BY "伝票日" DESC',
                 (logs_code,),
             )
@@ -383,9 +383,8 @@ def get_product_detail(product_id: str) -> dict[str, Any] | None:
 
     # 2026-07-09（14.44・14.46、Noritsuguの指定）: 発注単価・予定輸入
     # 経費率・予定原価単価はpurchase_orders（明細レベル）の最新行
-    # （PO発行日が新しい順）から、実績輸入経費率・実績原価はpurchases
-    # （明細レベル）の最新行（伝票日が新しい順）から取る。po_dicts/
-    # purchase_dictsは既に日付降順なので、[0]がそれぞれ最新行。
+    # （PO発行日が新しい順）から取る。po_dictsは既に日付降順なので、
+    # [0]が最新行。
     #
     # purchase_orders."売上原価"は明細の合計金額（発注数量×単価。列の
     # 並び順が発注数量・発注数量(pcs)・発注金額・売上原価・売上金額と
@@ -396,7 +395,6 @@ def get_product_detail(product_id: str) -> dict[str, Any] | None:
     # "発注単価"は"通貨"列（円ではない場合がある）で表示するため、
     # 通貨コードも一緒に持たせる。
     latest_po = po_dicts[0] if po_dicts else {}
-    latest_purchase = purchase_dicts[0] if purchase_dicts else {}
     po_quantity = latest_po.get("発注数量")
     po_total_cost = latest_po.get("売上原価")
     master["発注単価"] = latest_po.get("発注単価")
@@ -405,8 +403,19 @@ def get_product_detail(product_id: str) -> dict[str, Any] | None:
     master["予定原価単価"] = (
         po_total_cost / po_quantity if po_total_cost is not None and po_quantity else None
     )
-    master["実績輸入経費率"] = latest_purchase.get("経費率")
-    master["実績原価単価"] = latest_purchase.get("実際原価")
+
+    # 2026-07-09（14.52、Noritsuguの指定）: 実績輸入経費率・実績原価
+    # 単価は、「最新の仕入明細1行だけ」ではなく、この商品（LOGS_CODE）
+    # の**全ての**仕入明細行をSUM("諸掛込金額円")/SUM("仕入金額円")
+    # （経費率）、SUM("諸掛込金額円")/SUM("仕入数量pcs")（原価単価）で
+    # 加重平均する。カラー/サイズのバリエーションやリピートオーダーで
+    # 複数の仕入明細行がある場合、1行だけでは実態を反映できないため
+    # （案件詳細側でも同じ理由でPO単位のSUM/SUM加重平均に統一済み）。
+    total_with_fees = sum(r["諸掛込金額円"] for r in purchase_dicts if r.get("諸掛込金額円") is not None)
+    total_base = sum(r["仕入金額円"] for r in purchase_dicts if r.get("仕入金額円") is not None)
+    total_qty = sum(r["仕入数量pcs"] for r in purchase_dicts if r.get("仕入数量pcs") is not None)
+    master["実績輸入経費率"] = (total_with_fees / total_base) if total_base else None
+    master["実績原価単価"] = (total_with_fees / total_qty) if total_qty else None
 
     return {
         "master": master,

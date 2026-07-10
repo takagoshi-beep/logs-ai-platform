@@ -7,6 +7,8 @@ LOGS_CODE is a staged identifier lifecycle, not a data-quality issue).
 """
 from __future__ import annotations
 
+import pytest
+
 from services import product_service
 
 
@@ -289,12 +291,17 @@ def test_get_product_detail_derives_sales_admin_from_po_first(monkeypatch):
 
 
 def test_get_product_detail_includes_planned_and_actual_cost_fields(monkeypatch):
-    """2026-07-09（14.44・14.46、Noritsuguの指定）: 発注単価・予定輸入
-    経費率・予定原価単価はPO履歴の最新行（PO発行日が新しい順で先頭）、
-    実績輸入経費率・実績原価は仕入履歴の最新行（伝票日が新しい順で先頭）
-    から取る。予定原価単価は"売上原価"（明細合計金額）を"発注数量"で
-    割った単価にする（14.46: 売上原価が合計金額であり単価ではないと
-    Excel原本の列順から確認済み、Noritsuguの指摘）。"""
+    """2026-07-09（14.44・14.46・14.52、Noritsuguの指定）: 発注単価・
+    予定輸入経費率・予定原価単価はPO履歴の最新行（PO発行日が新しい順で
+    先頭）から取る。予定原価単価は"売上原価"（明細合計金額）を"発注
+    数量"で割った単価にする（14.46）。
+
+    実績輸入経費率・実績原価単価は、仕入履歴の最新行1件だけではなく、
+    その商品の**全ての**仕入明細行をSUM("諸掛込金額円")/SUM("仕入金額円")
+    （経費率）、SUM("諸掛込金額円")/SUM("仕入数量pcs")（原価単価）で
+    加重平均する（14.52: カラー/サイズのバリエーションやリピート
+    オーダーで複数行ある場合を正しく反映するため）。
+    """
     master_cols = ["ID", "LOGS_CODE", "Sample_CODE", "商品名"]
     master_rows = [(101, "5145", None, "Baseball Cap")]
 
@@ -306,10 +313,13 @@ def test_get_product_detail_includes_planned_and_actual_cost_fields(monkeypatch)
     ]
 
     purchase_cols = ["仕入先名", "営業担当者名", "営業事務担当者名", "生産管理担当者名",
-                      "仕入数量pcs", "仕入金額円", "伝票日", "経費率", "実際原価"]
+                      "仕入数量pcs", "仕入金額円", "伝票日", "経費率", "実際原価", "諸掛込金額円"]
     purchase_rows = [
-        ("1064STUDIO", "山田太郎", None, "木村美菜", 10, 2360, "2026-02-10", 1.20, 240.0),
-        ("1064STUDIO", "山田太郎", None, "木村美菜", 10, 1100, "2026-01-15", 1.10, 110.0),
+        # 2件の仕入明細行（カラー違い等）を合算する:
+        # 諸掛込金額円 2360+1100=3460, 仕入金額円 2000+1000=3000, 仕入数量pcs 10+10=20
+        # → 実績輸入経費率 = 3460/3000 ≒ 1.1533..., 実績原価単価 = 3460/20 = 173.0
+        ("1064STUDIO", "山田太郎", None, "木村美菜", 10, 2000, "2026-02-10", 1.20, 240.0, 2360),
+        ("1064STUDIO", "山田太郎", None, "木村美菜", 10, 1000, "2026-01-15", 1.10, 110.0, 1100),
     ]
 
     monkeypatch.setattr(
@@ -329,8 +339,8 @@ def test_get_product_detail_includes_planned_and_actual_cost_fields(monkeypatch)
     assert master["発注単価通貨"] == "USD"
     assert master["予定輸入経費率"] == 1.18
     assert master["予定原価単価"] == 236.0  # 2360.0（売上原価=合計） ÷ 10（発注数量）
-    assert master["実績輸入経費率"] == 1.20
-    assert master["実績原価単価"] == 240.0
+    assert master["実績輸入経費率"] == pytest.approx(3460 / 3000)
+    assert master["実績原価単価"] == 173.0  # 3460（諸掛込金額円の合計） ÷ 20（仕入数量pcsの合計）
 
 
 def test_currency_label_translates_code_master_values():
