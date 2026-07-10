@@ -212,6 +212,106 @@ def test_sales_by_category_rejects_unknown_group_by():
     assert result["status"] == "unavailable"
 
 
+def test_import_cost_estimate_requires_all_params():
+    result = LogsysProvider()._import_cost_estimate({"quantity": 100})
+    assert result["status"] == "unavailable"
+
+
+def test_import_cost_estimate_uses_real_recent_fx_rate_not_a_fabricated_one(monkeypatch):
+    """2026-07-10（14.63、Noritsuguの指定）: 架空の為替レートを仮定して
+    計算してはいけない。実際の直近の仕入データから為替レートを取得し、
+    取得できなければ推定自体を行わない（unavailable）。"""
+    calls = {"n": 0}
+
+    def _fake_query(self, sql, params=()):
+        calls["n"] += 1
+        if "為替" in sql and "FROM purchases WHERE" in sql:
+            return []  # 直近の為替レートが実データから見つからない
+        return []
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._import_cost_estimate(
+        {"quantity": 100, "unit_price_usd": 5, "category_code": 2}
+    )
+
+    assert result["status"] == "unavailable"
+    assert "為替" in result["summary"]
+
+
+def test_import_cost_estimate_groups_by_transport_method_with_real_data(monkeypatch):
+    """2026-07-10（14.63、別チャットのapp.py::run_import_cost_estimate()
+    を移植）: 伝票単位に集計してから輸送方法別にグループ化し、件数・
+    数量範囲・経費率の範囲（最小・中央値・最大）・推定金額を返す。
+    少数の実例を選んで外挿するのではなく、実データの分布をそのまま
+    提示できるようにするため。"""
+    calls = {"n": 0}
+
+    def _fake_query(self, sql, params=()):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return [{"為替": 160.0}]
+        return [
+            {"伝票番号": "V1", "輸送方法": 4, "仕入先名": "HAEDONG TRADING", "合計数量pcs": 100, "経費率": 1.20},
+            {"伝票番号": "V2", "輸送方法": 4, "仕入先名": "HAEDONG TRADING", "合計数量pcs": 105, "経費率": 1.30},
+            {"伝票番号": "V3", "輸送方法": 6, "仕入先名": "QINGDAO CHUNXIN", "合計数量pcs": 95, "経費率": 1.15},
+        ]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._import_cost_estimate(
+        {"quantity": 100, "unit_price_usd": 5, "category_code": 2}
+    )
+
+    assert result["status"] == "ok"
+    by_transport = {r["輸送方法"]: r for r in result["records"]}
+    assert by_transport["FERRY_CFS"]["伝票数"] == 2
+    assert by_transport["FERRY_CFS"]["推奨経費率"] == 1.25  # 1.20と1.30の中央値
+    assert by_transport["FERRY_CFS"]["データ不足"] is True  # 2件 < 3件
+    assert by_transport["AIR"]["伝票数"] == 1
+    assert "HAEDONG TRADING" in by_transport["FERRY_CFS"]["主な仕入先"]
+
+
+def test_import_cost_estimate_excludes_newhattan_by_default(monkeypatch):
+    calls = {"n": 0}
+
+    def _fake_query(self, sql, params=()):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return [{"為替": 160.0}]
+        return [
+            {"伝票番号": "V1", "輸送方法": 4, "仕入先名": "NEWHATTAN JAPAN", "合計数量pcs": 100, "経費率": 1.20},
+        ]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._import_cost_estimate(
+        {"quantity": 100, "unit_price_usd": 5, "category_code": 1}
+    )
+
+    assert result["status"] == "unavailable"
+
+
+def test_import_cost_estimate_includes_newhattan_when_requested(monkeypatch):
+    calls = {"n": 0}
+
+    def _fake_query(self, sql, params=()):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return [{"為替": 160.0}]
+        return [
+            {"伝票番号": "V1", "輸送方法": 4, "仕入先名": "NEWHATTAN JAPAN", "合計数量pcs": 100, "経費率": 1.20},
+        ]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._import_cost_estimate(
+        {"quantity": 100, "unit_price_usd": 5, "category_code": 1, "include_newhattan": True}
+    )
+
+    assert result["status"] == "ok"
+
+
 def test_projects_uses_has_sales_and_production_closed_not_customer_delivery_date(monkeypatch):
     """2026-07-09（14.57修正）: 以前は納品済みかどうかを判定する手段が
     無く、Claudeが信頼できない"顧客納品日"（入力予定日で実際の納品有無

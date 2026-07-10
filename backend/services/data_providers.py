@@ -6,6 +6,8 @@ Reasoningは required_data の provider/dataset を指定するだけで、
 """
 from __future__ import annotations
 
+import statistics
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 
@@ -16,6 +18,17 @@ _PRODUCT_CATEGORY_LABELS = {
     1: "帽子", 2: "バッグ", 3: "財布/小物", 4: "サングラス/メガネ",
     5: "巻物", 6: "アパレル", 7: "ベルト", 8: "履物", 9: "アクセサリー",
 }
+
+# 2026-07-10（14.63追加）: 輸送方法コード（purchasesテーブルの"輸送方法"
+# 列）。別チャット（app.py）で確立済みの対応表と一致させている。
+_TRANSPORT_LABELS = {
+    1: "OCEAN(CY)", 2: "OCEAN(CFS)", 3: "SKI EXPRESS", 4: "FERRY_CFS",
+    5: "FERRY_CY", 6: "AIR", 7: "DHL", 8: "FEDEX", 9: "Score Japan",
+    10: "S.F.EXPRESS", 11: "LOCAL DELIVERY", 12: "その他", 13: "OCS",
+}
+
+# NEWHATTANブランドの仕入先キーワード（app.pyと同じデフォルト除外仕入先）。
+_NEWHATTAN_KEYWORDS = ["NEWHATTAN", "NEW HATTAN"]
 
 
 def _product_category_label(code: Any) -> str:
@@ -212,6 +225,140 @@ class LogsysProvider:
             self.name, "sales_by_category", "ok",
             f"{group_by}別の売上を{len(rows)}分類分集計しました（分類数が少ないため全件、切り捨てなし）。",
             rows,
+        )
+
+    def _import_cost_estimate(self, params: dict[str, Any]) -> dict[str, Any]:
+        """輸入経費の推定を、輸送方法別の実データ集計表として返す
+        （2026-07-10、14.63、別チャットで確立済みのapp.py::
+        run_import_cost_estimate()を移植）。
+
+        「バッグ100個×5ドルの輸入経費は？」のような仮定の質問に対して、
+        Claudeが少数の「実例」を選んで散文で外挿すると、①仕入先名から
+        国籍等を作り話してしまう、②実データの分布が見えず検証しにくい、
+        という問題が実際に起きた（Noritsuguの指摘）。この関数は、条件に
+        近い伝票を全て集計し、輸送方法ごとに件数・数量範囲・経費率の
+        範囲（最小〜最大、中央値）・想定金額を表形式で返す。Claudeは
+        個別の実例を選んで外挿するのではなく、この集計結果をそのまま
+        提示すること。
+
+        商品分類・数量帯（質問の数量の0.5〜1.5倍）で対象を絞り込み、
+        伝票（"伝票番号"）単位に集計してから輸送方法ごとにグループ化
+        する（1伝票に複数商品の明細行があるため、明細行単位で集計すると
+        同じ伝票が重複してカウントされてしまう）。
+
+        NEWHATTANブランドの仕入先は既定で除外する（app.pyの既存
+        ルールを継承。include_newhattan=Trueで明示的に含める）。
+
+        為替レートは、実際の直近の仕入データから取得する（架空の為替
+        レートを仮定しない、Noritsuguの指定）。直近データが無い場合は
+        推定を行わずunavailableを返す。
+        """
+        qty = params.get("quantity")
+        unit_price_usd = params.get("unit_price_usd")
+        cat_code = params.get("category_code")
+        include_newhattan = bool(params.get("include_newhattan", False))
+
+        if qty is None or unit_price_usd is None or cat_code is None:
+            return _evidence(
+                self.name, "import_cost_estimate", "unavailable",
+                "quantity（数量）・unit_price_usd（単価USD）・category_code（商品分類コード）は"
+                "いずれも必須。不明な場合はユーザーに確認すること。",
+            )
+
+        fx_rows = self._query(
+            'SELECT "為替" FROM purchases WHERE "為替" > 1 ORDER BY "ID" DESC LIMIT 1'
+        )
+        if not fx_rows or not fx_rows[0].get("為替"):
+            return _evidence(
+                self.name, "import_cost_estimate", "unavailable",
+                "直近の為替レートが実データから取得できなかったため、推定できません。"
+                "架空の為替レートを仮定して計算してはいけない。",
+            )
+        latest_fx = float(fx_rows[0]["為替"])
+
+        qty_min, qty_max = qty * 0.5, qty * 1.5
+
+        sql = (
+            'WITH voucher_agg AS ('
+            '  SELECT "伝票番号", MIN("輸送方法") AS "輸送方法", MIN("仕入先名") AS "仕入先名", '
+            '         SUM("仕入数量pcs") AS "合計数量pcs", SUM("仕入金額円") AS "合計仕入金額円", '
+            '         SUM("諸掛込金額円") AS "合計諸掛込金額円" '
+            '  FROM purchases '
+            '  WHERE "ステータス" IN (2, 3) AND "商品分類" = %s AND "仕入金額円" > 0 '
+            '    AND "諸掛込金額円" > "仕入金額円" '
+            '    AND "伝票日" >= CURRENT_DATE - INTERVAL \'1 year\' '
+            '  GROUP BY "伝票番号"'
+            ') '
+            'SELECT "伝票番号", "輸送方法", "仕入先名", "合計数量pcs", '
+            '       "合計諸掛込金額円" / "合計仕入金額円" AS "経費率" '
+            'FROM voucher_agg '
+            'WHERE "合計数量pcs" BETWEEN %s AND %s'
+        )
+        rows = self._query(sql, (cat_code, qty_min, qty_max))
+
+        if not include_newhattan:
+            rows = [
+                r for r in rows
+                if not any(kw in str(r.get("仕入先名", "")).upper() for kw in _NEWHATTAN_KEYWORDS)
+            ]
+
+        if not rows:
+            return _evidence(
+                self.name, "import_cost_estimate", "unavailable",
+                f"条件（商品分類={cat_code}、数量{int(qty_min)}〜{int(qty_max)}個）に一致する"
+                f"直近1年の仕入データが見つかりませんでした。架空の推定値を作ってはいけない。",
+            )
+
+        by_transport: dict[Any, list[dict[str, Any]]] = {}
+        for r in rows:
+            by_transport.setdefault(r.get("輸送方法"), []).append(r)
+
+        buy_jpy = qty * unit_price_usd * latest_fx
+        results = []
+        for transport_code, group in by_transport.items():
+            ratios = [g["経費率"] for g in group]
+            rate_med = statistics.median(ratios)
+            rate_min, rate_max = min(ratios), max(ratios)
+            est_landed = buy_jpy * rate_med
+            est_cost = est_landed - buy_jpy
+            est_landed_min = buy_jpy * rate_min
+            est_landed_max = buy_jpy * rate_max
+
+            quantities = [g["合計数量pcs"] for g in group]
+            suppliers = [g.get("仕入先名") for g in group if g.get("仕入先名")]
+            top_suppliers = [name for name, _ in Counter(suppliers).most_common(3)]
+
+            results.append({
+                "輸送方法": _TRANSPORT_LABELS.get(transport_code, f"不明({transport_code})"),
+                "伝票数": len(group),
+                "データ不足": len(group) < 3,
+                "対象数量_平均": round(sum(quantities) / len(quantities)),
+                "対象数量_最小": min(quantities),
+                "対象数量_最大": max(quantities),
+                "推奨経費率": round(rate_med, 3),
+                "経費率_最小": round(rate_min, 3),
+                "経費率_最大": round(rate_max, 3),
+                "推定仕入金額円": round(buy_jpy),
+                "推定輸入経費円": round(est_cost),
+                "推定諸掛込原価円": round(est_landed),
+                "推定諸掛込原価_最小円": round(est_landed_min),
+                "推定諸掛込原価_最大円": round(est_landed_max),
+                "1個あたり原価円": round(est_landed / qty),
+                "主な仕入先": top_suppliers,
+            })
+
+        results.sort(key=lambda r: r["伝票数"], reverse=True)
+
+        return _evidence(
+            self.name, "import_cost_estimate", "ok",
+            f"商品分類={_product_category_label(cat_code)}、数量{int(qty_min)}〜{int(qty_max)}個、"
+            f"直近1年の実データを輸送方法別に集計（伝票単位、{len(rows)}伝票、"
+            f"適用為替レート{latest_fx}円/USD、実データから取得）。"
+            f"各輸送方法の結果をそのまま提示すること（少数の実例を選んで外挿しない）。"
+            f"「主な仕入先」に含まれていない属性（国籍等）を作り話してはいけない。"
+            f"「データ不足」がTrueの輸送方法は伝票数が3件未満のため、参考値である旨を"
+            f"必ず伝えること。",
+            results,
         )
 
     def _purchase_lines(self, params: dict[str, Any]) -> dict[str, Any]:

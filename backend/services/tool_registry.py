@@ -121,6 +121,37 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "get_import_cost_estimate",
+        "description": (
+            "「バッグ100個×5ドルの場合の輸入経費は？」のような仮定の質問に対して、"
+            "輸送方法別の実データ集計表（伝票単位、直近1年）を返す。"
+            "商品分類・数量帯（指定数量の0.5〜1.5倍）で対象を絞り込み、輸送方法ごとに"
+            "件数・数量範囲・経費率の範囲（最小・推奨=中央値・最大）・推定金額を集計する。"
+            "為替レートは実際の直近の仕入データから取得する（架空の為替レートは使わない）。"
+            "【使い方】get_purchase_linesで少数の実例を選んで散文で外挿するのではなく、"
+            "このツールが返す集計結果（records、輸送方法ごとの行）をそのまま提示すること。"
+            "各行の`主な仕入先`に無い属性（仕入先の国籍・所在地等）を作り話してはいけない"
+            "（実例: 実在しない仕入先を「HAEDONG TRADING Co., LTD（韓国）」のように国籍を"
+            "付けて説明してしまった事例があった。取得したデータに含まれていない情報を"
+            "推測で付け加えないこと）。"
+            "`データ不足`がTrueの行は伝票数が3件未満のため、参考値である旨を必ず伝えること。"
+            "NEWHATTANブランドの仕入先は既定で除外される（include_newhattan=Trueで含める）。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "quantity": {"type": "number", "description": "想定数量（個）"},
+                "unit_price_usd": {"type": "number", "description": "想定単価（USD）"},
+                "category_code": {
+                    "type": "integer",
+                    "description": "商品分類コード（1=帽子, 2=バッグ, 3=財布/小物, 4=サングラス/メガネ, 5=巻物, 6=アパレル, 7=ベルト, 8=履物, 9=アクセサリー）",
+                },
+                "include_newhattan": {"type": "boolean", "description": "NEWHATTANブランドの仕入先を含めるか（既定false）"},
+            },
+            "required": ["quantity", "unit_price_usd", "category_code"],
+        },
+    },
+    {
         "name": "get_projects",
         "description": (
             "案件（PO）情報を、案件名または顧客名のキーワードで検索する。"
@@ -381,6 +412,8 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
             result = _PROVIDERS["logsys"].fetch("sales_by_category", tool_input)
         elif tool_name == "get_purchase_lines":
             result = _PROVIDERS["logsys"].fetch("purchase_lines", tool_input)
+        elif tool_name == "get_import_cost_estimate":
+            result = _PROVIDERS["logsys"].fetch("import_cost_estimate", tool_input)
         elif tool_name == "get_projects":
             result = _PROVIDERS["logsys"].fetch("projects", tool_input)
         elif tool_name == "get_customer_master":
