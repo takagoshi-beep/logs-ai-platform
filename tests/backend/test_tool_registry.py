@@ -161,7 +161,25 @@ def test_execute_tool_catches_provider_exceptions_without_raising(monkeypatch):
     assert result["status"] == "unavailable"  # LogsysProvider.fetch()自身が吸収する
 
 
-def test_execute_tool_returns_error_status_for_exceptions_outside_provider_fetch(monkeypatch):
+def test_logsys_provider_fetch_logs_the_actual_exception_to_stdout(monkeypatch, capsys):
+    """2026-07-10（14.67、Noritsuguの指摘の修正）: 以前はLogsysProvider.
+    fetch()が例外をnoteフィールドに入れてClaudeに渡すだけで、Renderの
+    ログには一切出力していなかった。Claudeが実際のエラー文をそのまま
+    画面に出さず言い換えてしまうため、繰り返しログを確認しても原因が
+    分からない状況が続いていた。print()で実際の例外をログに出す。"""
+    def _boom(self, params):
+        raise RuntimeError("DB接続エラー")
+    monkeypatch.setattr(data_providers.LogsysProvider, "_sales_lines", _boom)
+
+    tool_registry.execute_tool("get_sales_lines", {})
+
+    captured = capsys.readouterr()
+    assert "[ERROR]" in captured.out
+    assert "sales_lines" in captured.out
+    assert "DB接続エラー" in captured.out
+
+
+def test_execute_tool_returns_error_status_for_exceptions_outside_provider_fetch(monkeypatch, capsys):
     """execute_tool 自身のtry/exceptは、Provider.fetch()の外側で起きる
     予期しない不具合に対する安全網。production_data.get_production_mass_status
     自体が例外を投げるケース（_PROVIDERS経由ではなく直接呼んでいる箇所）で検証する。"""
@@ -174,6 +192,11 @@ def test_execute_tool_returns_error_status_for_exceptions_outside_provider_fetch
     result = json.loads(tool_registry.execute_tool("get_production_mass_status", {"po_number": "914-20260626_1"}))
     assert result["status"] == "error"
     assert "想定外のエラー" in result["summary"]
+
+    # 2026-07-10（14.67）: ここも同様に、実際の例外をログへ出力する。
+    captured = capsys.readouterr()
+    assert "[ERROR]" in captured.out
+    assert "想定外のエラー" in captured.out
 
 
 def test_execute_tool_caps_large_record_counts_before_returning_to_claude(monkeypatch):

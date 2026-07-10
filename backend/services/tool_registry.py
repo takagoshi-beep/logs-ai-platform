@@ -578,6 +578,13 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
         else:
             result = {"status": "unavailable", "summary": f"未知のツール: {tool_name}", "records": []}
     except Exception as e:
+        # 2026-07-10（14.67修正）: data_providers.py側と同じ理由で、
+        # ここも例外を無言で握りつぶしていた。get_my_projects等の直接
+        # 実装分岐（LogsysProvider.fetchを経由しない）で起きた例外は
+        # ここでしか捕まらないため、同様にログへ出力する。
+        import traceback
+        print(f"[ERROR] execute_tool({tool_name!r}, {tool_input!r}) failed: {e}")
+        traceback.print_exc()
         result = {"status": "error", "summary": f"データ取得中にエラーが発生しました: {e}", "records": []}
 
     result = _cap_records(result)

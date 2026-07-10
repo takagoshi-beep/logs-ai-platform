@@ -104,6 +104,16 @@ class LogsysProvider:
                 return _evidence(self.name, dataset, "unavailable", f"未対応のデータセット: {dataset}")
             return handler(params)
         except Exception as exc:  # noqa: BLE001
+            # 2026-07-10（14.67修正、Noritsuguの指摘）: 以前はこの例外を
+            # note フィールドに入れてClaudeに渡すだけで、Renderのログには
+            # 一切出力していなかった。Claudeが実際のエラー文をそのまま
+            # 画面に出さず「技術的な問題が発生しています」のように言い
+            # 換えてしまうため、繰り返しログを確認しても原因が分からない
+            # という状況が続いていた。print()で実際の例外をログに出す
+            # ようにした（14.56のtimingログと同じ考え方）。
+            import traceback
+            print(f"[ERROR] LogsysProvider.fetch({dataset!r}, {params!r}) failed: {exc}")
+            traceback.print_exc()
             return _evidence(
                 self.name, dataset, "unavailable",
                 "Logsysから取得できませんでした",
