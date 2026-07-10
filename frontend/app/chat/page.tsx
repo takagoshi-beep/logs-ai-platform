@@ -3,6 +3,7 @@
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
 import { Button, Card } from "@/components/design-system";
 import { consultQuestion } from "@/lib/api-client";
 
@@ -132,7 +133,7 @@ export default function ChatPage() {
               className={msg.role === "user" ? "ml-auto max-w-[80%] rounded-lg bg-accent/10 p-3" : "mr-auto max-w-[80%] rounded-lg bg-slate-50 p-3"}
             >
               <p className="text-xs font-semibold text-sub">{msg.role === "user" ? "あなた" : "AI"}</p>
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>
                 {msg.content}
               </ReactMarkdown>
               {msg.toolCalls && msg.toolCalls.length > 0 && (
