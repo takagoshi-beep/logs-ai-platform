@@ -269,6 +269,110 @@ def test_attach_existence_data_matches_purchase_by_po_number_not_logs_code(monke
     assert po_dicts[0]["actual_import_cost_ratio"] == 1.30
 
 
+def test_po_dict_to_project_data_uses_delivery_column_not_customer_delivery_date():
+    """2026-07-10（14.69、Noritsuguの指摘の修正）: 納期判定は以前
+    "顧客納品日"を使っていたが、リピート発注の際に営業担当者が前回POの
+    値をコピーしたまま更新し忘れるケースがあり信頼できないことが判明
+    した。Excel原本の"Delivery／納品日"列（sync時に"Delivery_納品日"に
+    クレンジングされる）を正式な納期として使うよう変更した。"""
+    from services.project_service import ProjectService
+
+    service = ProjectService()
+    po_dict = {
+        "PO_No": "PO-1", "仕入先ID": "s1", "仕入先名": "Supplier",
+        "顧客ID": "c1", "顧客名": "Customer",
+        "PO発行日": "2026-07-08",
+        "顧客納品日": "2020-01-01",  # 古いPOからコピーされたままの信頼できない値
+        "Delivery_納品日": "2026-08-30",  # 正式な納期
+    }
+    data = service._po_dict_to_project_data("1", po_dict)
+
+    assert data.po_required_delivery_date == datetime(2026, 8, 30)
+
+
+def test_attach_existence_data_ignores_sales_before_this_pos_delivery_date(monkeypatch):
+    """2026-07-10（14.69、Noritsuguの指定）: リピート商品（同じLOGS_CODE
+    を複数のPOで繰り返し発注している商品）で、過去の別POの売上入力が
+    今回のPOの「売上確定」と誤判定されてしまう問題があった。各POの
+    Delivery_納品日より古い売上は無視し、納品日当日以降の売上がある
+    場合のみ売上確定とする。"""
+    from services.project_service import ProjectService
+
+    class _RoutingConn:
+        def cursor(self):
+            sql_holder = {}
+
+            class _Cur:
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, *a):
+                    return False
+
+                def execute(self_inner, sql, params=None):
+                    sql_holder["sql"] = sql
+
+                def fetchall(self_inner):
+                    sql = sql_holder.get("sql", "")
+                    if "FROM sales" in sql:
+                        # 同じ商品の過去の別注文分の売上（古い）と、
+                        # 今回の注文分の売上（新しい）が両方存在する。
+                        return [
+                            (5145.0, datetime(2024, 1, 10)),  # 過去の別POの売上
+                            (5145.0, datetime(2026, 9, 5)),   # 今回のPO分の売上
+                        ]
+                    return []
+
+            return _Cur()
+
+        def close(self):
+            pass
+
+    service = ProjectService()
+    po_dicts = [{"LOGS_CODE": 5145.0, "PO_No": "PO-2", "Delivery_納品日": datetime(2026, 8, 30)}]
+    service._attach_existence_data(_RoutingConn(), po_dicts)
+
+    # 過去の売上（2024-01-10）は無視され、納期（2026-08-30）以降の
+    # 売上（2026-09-05）だけが採用される。
+    assert po_dicts[0]["sales_date"] == datetime(2026, 9, 5)
+
+
+def test_attach_existence_data_has_sales_false_when_only_old_sales_exist_before_delivery(monkeypatch):
+    """納期より前の売上しか存在しない場合は「売上未確定」（has_sales=False）
+    のままになる。"""
+    from services.project_service import ProjectService
+
+    class _RoutingConn:
+        def cursor(self):
+            sql_holder = {}
+
+            class _Cur:
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, *a):
+                    return False
+
+                def execute(self_inner, sql, params=None):
+                    sql_holder["sql"] = sql
+
+                def fetchall(self_inner):
+                    if "FROM sales" in sql_holder.get("sql", ""):
+                        return [(5145.0, datetime(2024, 1, 10))]  # 過去の別POの売上のみ
+                    return []
+
+            return _Cur()
+
+        def close(self):
+            pass
+
+    service = ProjectService()
+    po_dicts = [{"LOGS_CODE": 5145.0, "PO_No": "PO-3", "Delivery_納品日": datetime(2026, 8, 30)}]
+    service._attach_existence_data(_RoutingConn(), po_dicts)
+
+    assert po_dicts[0]["sales_date"] is None
+
+
 def test_attach_existence_data_falls_back_to_base_amount_for_domestic_purchase(monkeypatch):
     """2026-07-09（14.53、Noritsuguが実データで発見）: 国内メーカー
     （現金仕入等）からの仕入は輸入諸掛が発生しないため"諸掛込金額円"

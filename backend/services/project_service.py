@@ -75,7 +75,7 @@ class ProjectService:
 
     _PO_SELECT_COLUMNS = (
         '"ID", "PO_No", "仕入先ID", "仕入先名", "顧客ID", "顧客名", '
-        '"PO発行日", "顧客納品日", "納品日", "LOGS_CODE", "案件名", "輸入経費率", "ステータス", '
+        '"PO発行日", "顧客納品日", "納品日", "Delivery_納品日", "LOGS_CODE", "案件名", "輸入経費率", "ステータス", '
         '"合計発注金額", "合計売上原価", "合計売上金額"'
     )
 
@@ -114,7 +114,16 @@ class ProjectService:
             customer_id = str(po_dict.get("顧客ID", "") or "unknown")
             customer_name = po_dict.get("顧客名", "") or ""
             po_created = self._parse_date(po_dict.get("PO発行日")) or datetime.now()
-            po_required_delivery = self._parse_date(po_dict.get("顧客納品日")) or (datetime.now() + timedelta(days=30))
+            # 2026-07-10（14.69修正、Noritsuguの指摘）: 納期判定は以前
+            # "顧客納品日"を使っていたが、リピート発注の際に営業担当者が
+            # 前回POの"顧客納品日"をコピーしたまま更新し忘れるケースが
+            # あり、信頼できないことが判明した（14.57で"顧客納品日は入力
+            # 予定日で実際の納品有無とは無関係"と判明していたのと同じ根
+            # の問題）。実際のExcel原本には"顧客納品日"とは別に
+            # "Delivery／納品日"という列があり（sync時に"／"は"_"に
+            # クレンジングされ"Delivery_納品日"になる）、そちらを正式な
+            # 納期として使うよう変更した。
+            po_required_delivery = self._parse_date(po_dict.get("Delivery_納品日")) or (datetime.now() + timedelta(days=30))
 
             project_data = ProjectData(
                 project_id=project_id,
@@ -210,7 +219,16 @@ class ProjectService:
         raw_logs_codes = [d["LOGS_CODE"] for d in po_dicts if d.get("LOGS_CODE") is not None]
         po_numbers = list({d["PO_No"] for d in po_dicts if d.get("PO_No")})
 
-        sales_dates: dict[str, Any] = {}
+        # 2026-07-10（14.69修正、Noritsuguの指定）: リピート商品（同じ
+        # LOGS_CODEを複数のPOで繰り返し発注している商品）で、過去の別PO
+        # の売上入力が今回のPOの「売上確定」と誤判定されてしまう問題が
+        # あった。以前はLOGS_CODEごとにMAX("売上入力日")を1つだけ集計し、
+        # 同じLOGS_CODEを持つ全てのPOに同じ値を割り当てていたため、
+        # 今回のPOがまだ納品されていなくても、過去の別注文の売上入力を
+        # 見て「確定済み」と誤判定してしまっていた。個別の売上日を全て
+        # 保持しておき、各POのDelivery_納品日（①で信頼できる納期に
+        # 変更済み）以降の売上に絞り込んでから判定するよう修正した。
+        sales_dates_by_logs_code: dict[str, list[Any]] = {}
         purchase_dates_by_po: dict[str, Any] = {}
         actual_import_cost_ratios_by_po: dict[str, Any] = {}
         actual_cost_totals_by_po: dict[str, Any] = {}
@@ -220,12 +238,13 @@ class ProjectService:
             if raw_logs_codes:
                 with conn.cursor() as cur:
                     cur.execute(
-                        'SELECT "LOGS_CODE", MAX("売上入力日") FROM sales '
-                        'WHERE "LOGS_CODE" = ANY(%s) GROUP BY "LOGS_CODE"',
+                        'SELECT "LOGS_CODE", "売上入力日" FROM sales '
+                        'WHERE "LOGS_CODE" = ANY(%s)',
                         (raw_logs_codes,),
                     )
-                    for logs_code, max_date in cur.fetchall():
-                        sales_dates[self._format_logs_code_for_project(logs_code)] = max_date
+                    for logs_code, sale_date in cur.fetchall():
+                        key = self._format_logs_code_for_project(logs_code)
+                        sales_dates_by_logs_code.setdefault(key, []).append(sale_date)
 
             if po_numbers:
                 # 仕入登録（活動履歴・状態バッジ用）はPO単位（14.41）。
@@ -277,7 +296,16 @@ class ProjectService:
 
         for d in po_dicts:
             logs_code = self._format_logs_code_for_project(d.get("LOGS_CODE"))
-            d["sales_date"] = sales_dates.get(logs_code)
+            # 2026-07-10（14.69修正、Noritsuguの指定）: 「納品日当日以降の
+            # 売上がある場合に売上確定」とする。Delivery_納品日が無い
+            # POは、従来通り全ての売上を対象にする（フォールバック、
+            # 納期不明の案件を過度に厳しく扱わないため）。
+            delivery_date = self._parse_date(d.get("Delivery_納品日"))
+            candidate_dates = [self._parse_date(dt) for dt in sales_dates_by_logs_code.get(logs_code, [])]
+            candidate_dates = [dt for dt in candidate_dates if dt is not None]
+            if delivery_date:
+                candidate_dates = [dt for dt in candidate_dates if dt >= delivery_date]
+            d["sales_date"] = max(candidate_dates) if candidate_dates else None
             d["purchase_date"] = purchase_dates_by_po.get(d.get("PO_No"))
             d["actual_import_cost_ratio"] = actual_import_cost_ratios_by_po.get(d.get("PO_No"))
             d["actual_cost_total"] = actual_cost_totals_by_po.get(d.get("PO_No"))
