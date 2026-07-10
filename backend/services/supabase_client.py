@@ -77,12 +77,35 @@ def _get_pool():
         db_url = os.getenv("SUPABASE_DB_URL", "")
         if not db_url:
             raise RuntimeError("SUPABASE_DB_URL is not configured")
-        # min_size=1: 起動直後から1本は温めておく。max_size=10: Renderの
-        # 1インスタンスあたりの同時リクエスト数を考えれば十分な範囲。
-        # Supabase側のプーラー（Supavisor、14.54で切り替え済み）と
-        # 二重にプーリングする構成になるが、こちらはアプリ側での
-        # 「プーラーへの接続確立」自体の往復を無くすためのもの。
-        _pool = ConnectionPool(db_url, min_size=1, max_size=10, timeout=10, open=True)
+
+        # 2026-07-10（14.61修正、Noritsuguが実際にRenderのログから発見）:
+        # プール化直後、以下の2つの問題が起きていた。
+        #
+        # ① "rolling back returned connection ... [INTRANS]"
+        #    psycopg3の接続は既定でautocommitがオフ（クエリを実行すると
+        #    暗黙にトランザクションが開始する）のため、コミットせずに
+        #    プールへ返却するたびに未確定のトランザクションが残り、
+        #    psycopg_poolが安全のため自動でロールバックしていた。今回の
+        #    用途（読み取り専用の単発クエリがほとんど）ではトランザクション
+        #    を意図的に使う必要が無いため、configure callbackで新規接続に
+        #    autocommit=Trueを設定し、そもそも未確定トランザクションが
+        #    残らないようにした。
+        #
+        # ② "discarding closed connection ... [BAD]" /
+        #    "server closed the connection unexpectedly"
+        #    Supabase側のプーラー（Supavisor、14.54）がアイドル接続を
+        #    切断することがあり、こちらのプールがそれを検知せず死んだ
+        #    接続を再利用しようとして失敗していた。check=
+        #    ConnectionPool.check_connectionで、借用前に軽い生存確認
+        #    （SELECT 1相当）を行い、死んでいれば自動的に新しい接続を
+        #    張り直すようにした。
+        def _configure(conn):
+            conn.autocommit = True
+
+        _pool = ConnectionPool(
+            db_url, min_size=1, max_size=10, timeout=10, open=True,
+            configure=_configure, check=ConnectionPool.check_connection,
+        )
     return _pool
 
 

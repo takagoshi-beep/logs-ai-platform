@@ -91,3 +91,39 @@ def test_get_connection_raises_clear_error_when_db_url_not_configured(monkeypatc
         assert False, "expected RuntimeError"
     except RuntimeError as e:
         assert "SUPABASE_DB_URL" in str(e)
+
+
+def test_pool_is_created_with_autocommit_and_connection_health_check(monkeypatch):
+    """2026-07-10（14.61、Noritsuguが実際にRenderのログから発見した
+    不具合の修正）: プール化直後、①psycopg3の接続は既定でautocommitが
+    オフのため、コミットせずにプールへ返却するたびに未確定の
+    トランザクションが残り"rolling back returned connection"が発生、
+    ②Supabase側のプーラーがアイドル接続を切断することがあり、こちらの
+    プールが死んだ接続を再利用しようとして"discarding closed
+    connection"/"server closed the connection unexpectedly"が発生、
+    という2つの問題が起きていた。configureでautocommit=Trueを設定し、
+    checkで借用前に生存確認するよう修正した。"""
+    from psycopg_pool import ConnectionPool
+
+    captured = {}
+
+    def _fake_init(self, db_url, **kwargs):
+        captured["db_url"] = db_url
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setenv("SUPABASE_DB_URL", "postgresql://fake")
+    monkeypatch.setattr(supabase_client, "_pool", None)
+    monkeypatch.setattr(ConnectionPool, "__init__", _fake_init)
+
+    supabase_client._get_pool()
+
+    assert captured["kwargs"]["check"] is ConnectionPool.check_connection
+    assert callable(captured["kwargs"]["configure"])
+
+    class _FakeConnForConfigure:
+        def __init__(self):
+            self.autocommit = False
+
+    fake_conn = _FakeConnForConfigure()
+    captured["kwargs"]["configure"](fake_conn)
+    assert fake_conn.autocommit is True
