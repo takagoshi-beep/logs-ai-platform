@@ -205,6 +205,19 @@ class LogsysProvider:
         # 営業担当者名は伝票レベル・明細レベルの両方に存在するため、
         # 明細を優先し、空欄の場合のみ伝票の値を採用する（14.30で確認した
         # purchasesテーブル特有の二重構造）。
+        #
+        # 2026-07-09（14.59修正、Noritsuguの指摘）: 以前は"経費率"列
+        # （既に確定済みの1.xxの比率。project_service.py/product_service.py
+        # で今日一日かけて定義・整理した値と同じ列）を渡していなかった
+        # ため、Claudeが"仕入金額円"と"諸掛込金額円"から自分で（誤った）
+        # パーセンテージ計算をしてしまっていた（実例: 25.5%という表記は
+        # 諸掛込原価÷商品原価=1.xxという定義とは異なる、独自のマークアップ
+        # 率計算になっていた）。"経費率"をそのまま渡し、Claudeが再計算
+        # しないよう明記する。
+        #
+        # また、参照データの信頼性確認のため、識別情報（POnum・LOGS_CODE）
+        # も明記する（Noritsuguの指摘: 実データであることを確認できるよう、
+        # 数量・仕入先だけでなくPO番号等も示すべき）。
         where = '"ステータス" IN (2, 3)'
         args: list[Any] = []
         if params.get("period_start"):
@@ -218,8 +231,8 @@ class LogsysProvider:
             args.append(f"%{params['sales_rep_keyword']}%")
 
         sql = (
-            'SELECT "伝票日", "仕入先名", "商品分類", "仕入数量pcs", '
-            '"仕入金額円", "諸掛込金額円", '
+            'SELECT "伝票日", "POnum", "LOGS_CODE", "仕入先名", "商品分類", "仕入数量pcs", '
+            '"仕入金額円", "諸掛込金額円", "経費率", '
             'COALESCE(NULLIF("明細営業担当者名", \'\'), "営業担当者名") AS "営業担当者名" '
             f'FROM purchases WHERE {where} ORDER BY "伝票日"'
         )
@@ -227,13 +240,19 @@ class LogsysProvider:
 
         # 2026-07-09: sales_linesと同じ理由で、正確な合計はSQL側で
         # 別途計算する（recordsの切り捨てとは無関係な値にするため）。
+        # 輸入経費率の集計値は、project_service.py/product_service.pyと
+        # 同じ計算方法（SUM(諸掛込金額円)/SUM(仕入金額円)の加重平均、
+        # 諸掛込金額円がNULLの行（国内仕入）は仕入金額円にフォールバック）
+        # で、1.xxの比率として返す。単純平均や独自のパーセンテージ計算を
+        # Claudeがしないよう、この値をそのまま使わせる。
         agg_sql = (
             'SELECT COUNT(*) AS "件数", COALESCE(SUM("仕入金額円"), 0) AS "仕入金額合計", '
-            'COALESCE(SUM("諸掛込金額円"), 0) AS "諸掛込金額合計" '
+            'COALESCE(SUM("諸掛込金額円"), 0) AS "諸掛込金額合計", '
+            'SUM(COALESCE("諸掛込金額円", "仕入金額円")) / NULLIF(SUM("仕入金額円"), 0) AS "輸入経費率" '
             f'FROM purchases WHERE {where}'
         )
         agg_rows = self._query(agg_sql, tuple(args))
-        aggregate = agg_rows[0] if agg_rows else {"件数": len(rows), "仕入金額合計": 0, "諸掛込金額合計": 0}
+        aggregate = agg_rows[0] if agg_rows else {"件数": len(rows), "仕入金額合計": 0, "諸掛込金額合計": 0, "輸入経費率": None}
 
         for row in rows:
             row["商品分類名"] = _product_category_label(row.get("商品分類"))
@@ -241,7 +260,14 @@ class LogsysProvider:
         evidence = _evidence(
             self.name, "purchase_lines", "ok",
             f"仕入明細 {len(rows)}件を取得（諸掛り込み金額、標準フィルタ適用済み）。"
-            f"合計金額・件数はaggregateフィールドの値を使うこと。",
+            f"合計金額・件数・輸入経費率はaggregateフィールドの値を使うこと。"
+            f"「経費率」列は既に確定済みの1.xxの比率（諸掛込原価÷商品原価）であり、"
+            f"仕入金額円・諸掛込金額円から独自に計算し直してはいけない（パーセンテージ"
+            f"表記にする場合は経費率をそのまま%表示するのではなく、「経費率1.xx」という"
+            f"元の定義のまま伝えること。1ドル=◯◯円のような仮定の為替レートを使った"
+            f"架空の計算例を作ってはいけない — 実データに無い数値は答えないこと）。"
+            f"POnum（PO番号）・LOGS_CODEは、この仕入明細が実データであることを示す"
+            f"識別情報として、回答内で具体的に示すこと。",
             rows,
         )
         evidence["aggregate"] = aggregate

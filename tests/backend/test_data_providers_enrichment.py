@@ -55,6 +55,49 @@ def test_purchase_lines_returns_exact_aggregate(monkeypatch):
     assert result["aggregate"]["仕入金額合計"] == 197875
 
 
+def test_purchase_lines_selects_precomputed_cost_ratio_and_identifying_fields(monkeypatch):
+    """2026-07-09（14.59、Noritsuguの指摘の修正）: 以前は"経費率"列（既に
+    確定済みの1.xxの比率）を渡していなかったため、Claudeが仕入金額円・
+    諸掛込金額円から独自に（誤った）パーセンテージを計算してしまって
+    いた。"経費率"・"POnum"・"LOGS_CODE"を選択するようにした（POnum・
+    LOGS_CODEは、参照データが実データであることを検証できるようにする
+    ための識別情報、Noritsuguの指摘）。"""
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured.setdefault("sqls", []).append(sql)
+        return []
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    LogsysProvider()._purchase_lines({})
+
+    main_sql = captured["sqls"][0]
+    assert '"経費率"' in main_sql
+    assert '"POnum"' in main_sql
+    assert '"LOGS_CODE"' in main_sql
+
+
+def test_purchase_lines_aggregate_includes_weighted_import_cost_ratio(monkeypatch):
+    """2026-07-09（14.59）: aggregateにも輸入経費率（SUM(諸掛込金額円)/
+    SUM(仕入金額円)の加重平均、project_service.py/product_service.pyと
+    同じ定義）を含める。Claudeが自分でrecordsから再計算しないように。"""
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured.setdefault("sqls", []).append(sql)
+        if len(captured["sqls"]) == 1:
+            return []
+        return [{"件数": 2, "仕入金額合計": 1000, "諸掛込金額合計": 1150, "輸入経費率": 1.15}]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._purchase_lines({})
+
+    assert "COALESCE" in captured["sqls"][1]
+    assert result["aggregate"]["輸入経費率"] == 1.15
+
+
 def test_purchase_lines_translates_category_code_to_label(monkeypatch):
     rows = [{"商品分類": 1}, {"商品分類": 6}]
     aggregate_row = [{"件数": 2, "仕入金額合計": 0, "諸掛込金額合計": 0}]
