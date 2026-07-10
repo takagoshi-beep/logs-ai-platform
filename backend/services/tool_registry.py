@@ -98,11 +98,27 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "get_projects",
-        "description": "案件（PO）情報を、案件名または顧客名のキーワードで検索する。",
+        "description": (
+            "案件（PO）情報を、案件名または顧客名のキーワードで検索する。"
+            "納品済みかどうかで絞り込みたい場合はdelivery_statusを使うこと"
+            "（POの「顧客納品日」列は入力予定日であり、実際に納品されたかどうかとは"
+            "無関係なので、納品判定に使ってはいけない。実際の納品有無はhas_sales"
+            "（同じLOGS_CODEでsalesに売上実データがあるか）またはproduction_closed"
+            "（生産管理『量産』シートの表示フラグ=0か）で判定済みで、各行にその"
+            "2つのフィールドが含まれる）。"
+            "【件数は必ず結果の`aggregate`フィールドを使うこと。`records`は件数が"
+            "多い場合に先頭200件だけに切り捨てられることがあるが、`aggregate`は"
+            "指定した条件（キーワード・納品状況）全体に対して正確な件数】"
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "keyword": {"type": "string", "description": "案件名または顧客名の部分一致キーワード"},
+                "delivery_status": {
+                    "type": "string",
+                    "enum": ["delivered", "undelivered"],
+                    "description": "納品状況で絞り込む。delivered=納品済み、undelivered=未納品（既定は絞り込みなし）",
+                },
             },
         },
     },

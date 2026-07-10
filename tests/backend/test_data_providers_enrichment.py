@@ -148,6 +148,76 @@ def test_sales_by_category_rejects_unknown_group_by():
     assert result["status"] == "unavailable"
 
 
+def test_projects_uses_has_sales_and_production_closed_not_customer_delivery_date(monkeypatch):
+    """2026-07-09（14.57修正）: 以前は納品済みかどうかを判定する手段が
+    無く、Claudeが信頼できない"顧客納品日"（入力予定日で実際の納品有無
+    とは無関係）から推測しようとして破綻していた（KBFの未納品案件を
+    尋ねられて200件の壁もあり正しく答えられなかった実例）。has_sales・
+    production_closedで判定するようにした。"""
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured.setdefault("sqls", []).append(sql)
+        return [{"ID": 1, "案件名": "KBF案件", "顧客名": "KBF", "has_sales": False, "production_closed": False}]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._projects({"keyword": "KBF", "delivery_status": "undelivered"})
+
+    assert '"has_sales"' in captured["sqls"][0]
+    assert '"production_closed"' in captured["sqls"][0]
+    assert "NOT" in captured["sqls"][0]
+    assert result["records"][0]["顧客名"] == "KBF"
+
+
+def test_projects_delivered_filter_uses_or_condition(monkeypatch):
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured.setdefault("sqls", []).append(sql)
+        return []
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    LogsysProvider()._projects({"delivery_status": "delivered"})
+
+    assert 'WHERE ("has_sales" OR "production_closed")' in captured["sqls"][0]
+
+
+def test_projects_returns_exact_aggregate_independent_of_200_row_cap(monkeypatch):
+    """2026-07-09（14.57修正）: 375件中200件しか見えない場合でも、
+    aggregateフィールドは正確な全件カウントを返す（14.31と同じ理由）。"""
+    rows = [{"ID": i} for i in range(200)]
+    aggregate_row = [{"件数": 375}]
+    calls = {"n": 0}
+
+    def _fake_query(self, sql, params=()):
+        idx = calls["n"]
+        calls["n"] += 1
+        return rows if idx == 0 else aggregate_row
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._projects({"keyword": "KBF"})
+
+    assert result["aggregate"]["件数"] == 375
+    assert len(result["records"]) == 200
+
+
+def test_projects_without_delivery_status_does_not_filter(monkeypatch):
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured.setdefault("sqls", []).append(sql)
+        return []
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    LogsysProvider()._projects({"keyword": "KBF"})
+
+    assert "WHERE" not in captured["sqls"][0].split(") sub", 1)[1]
+
+
 def test_sales_by_category_sales_rep_keyword_matches_any_of_four_roles(monkeypatch):
     captured = {}
 

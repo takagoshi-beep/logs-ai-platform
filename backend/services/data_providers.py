@@ -248,20 +248,62 @@ class LogsysProvider:
         return evidence
 
     def _projects(self, params: dict[str, Any]) -> dict[str, Any]:
-        # 「案件」に相当する実データは purchase_orders テーブル
-        # （PO発行〜納品・輸送・検品スケジュール管理、案件単位）。
-        sql = (
-            'SELECT "ID", "案件名", "顧客名", "ステータス", "顧客納品日" '
-            'FROM purchase_orders WHERE 1=1'
+        """「案件」に相当する実データは purchase_orders テーブル
+        （PO発行〜納品・輸送・検品スケジュール管理、案件単位）。
+
+        2026-07-09（14.57修正）: 以前は「納品済みか」を判定する手段が
+        無く、Claudeが信頼できない"顧客納品日"（POに入力される予定日
+        であり、実際に納品されたかどうかとは無関係）から推測しようと
+        して破綻していた実例があった（KBFの未納品案件を尋ねられ、
+        200件の壁もあって正しく答えられなかった）。docs/architecture.md
+        14.33で確立した「納品済みか＝sales（売上）に実データがあるか、
+        または生産管理『量産』シートの表示フラグ=0か」という判定を、
+        このチャットツールにも反映した。delivery_statusで絞り込める
+        ようにし、集計件数（aggregate）は200件の壁の影響を受けない
+        正確な値を返す（14.31と同じ理由）。
+        """
+        keyword = params.get("keyword")
+        delivery_status = params.get("delivery_status")  # "delivered" | "undelivered" | None
+
+        base_select = (
+            'SELECT po."ID", po."案件名", po."顧客名", po."ステータス", po."PO_No", po."顧客納品日", '
+            'EXISTS(SELECT 1 FROM sales s WHERE s."LOGS_CODE" = po."LOGS_CODE") AS "has_sales", '
+            'EXISTS('
+            '    SELECT 1 FROM production_mass pm '
+            '    WHERE pm."POnum" = po."PO_No" AND pm."表示"::text = \'0\''
+            ') AS "production_closed" '
+            'FROM purchase_orders po WHERE 1=1'
         )
         args: list[Any] = []
-        if params.get("keyword"):
-            sql += ' AND ("案件名" LIKE %s OR "顧客名" LIKE %s)'
-            args += [f"%{params['keyword']}%", f"%{params['keyword']}%"]
-        sql += ' ORDER BY "顧客納品日"'
+        if keyword:
+            base_select += ' AND (po."案件名" LIKE %s OR po."顧客名" LIKE %s)'
+            args += [f"%{keyword}%", f"%{keyword}%"]
+
+        delivery_clause = ""
+        if delivery_status == "undelivered":
+            delivery_clause = ' WHERE NOT ("has_sales" OR "production_closed")'
+        elif delivery_status == "delivered":
+            delivery_clause = ' WHERE ("has_sales" OR "production_closed")'
+
+        sql = f'SELECT * FROM ({base_select}) sub{delivery_clause} ORDER BY "顧客納品日"'
         rows = self._query(sql, tuple(args))
-        label = f"「{params['keyword']}」関連の" if params.get("keyword") else ""
-        return _evidence(self.name, "projects", "ok", f"{label}案件 {len(rows)}件を取得", rows)
+
+        agg_sql = f'SELECT COUNT(*) AS "件数" FROM ({base_select}) sub{delivery_clause}'
+        agg_rows = self._query(agg_sql, tuple(args))
+        aggregate = agg_rows[0] if agg_rows else {"件数": len(rows)}
+
+        label = f"「{keyword}」関連の" if keyword else ""
+        status_label = {"undelivered": "未納品の", "delivered": "納品済みの"}.get(delivery_status, "")
+        evidence = _evidence(
+            self.name, "projects", "ok",
+            f"{label}{status_label}案件 {len(rows)}件を取得（合計件数はaggregateフィールドを使うこと。"
+            f"納品判定はhas_sales（売上実データの有無）またはproduction_closed"
+            f"（生産管理『量産』シートの表示フラグ=0）に基づく。顧客納品日はPOへの"
+            f"入力予定日であり実際の納品有無とは無関係なので、納品判定には使わないこと）。",
+            rows,
+        )
+        evidence["aggregate"] = aggregate
+        return evidence
 
     def _customer_master(self, params: dict[str, Any]) -> dict[str, Any]:
         sql = 'SELECT "ID", "顧客名称", "営業担当者名" FROM customers WHERE 1=1'
