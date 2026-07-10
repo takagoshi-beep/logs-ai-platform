@@ -96,10 +96,12 @@ def test_purchase_lines_selects_shipping_method_and_currency_fields(monkeypatch)
     assert result["records"][0]["通貨名"] == "USD"
 
 
-def test_purchase_lines_aggregate_includes_weighted_import_cost_ratio(monkeypatch):
-    """2026-07-09（14.59）: aggregateにも輸入経費率（SUM(諸掛込金額円)/
-    SUM(仕入金額円)の加重平均、project_service.py/product_service.pyと
-    同じ定義）を含める。Claudeが自分でrecordsから再計算しないように。"""
+def test_purchase_lines_aggregate_excludes_domestic_purchases_from_import_cost_ratio(monkeypatch):
+    """2026-07-10（14.62修正）: knowledge/semantic/purchase.md「輸入経費率」
+    節の定義に統一。国内仕入（諸掛込金額円が仕入金額円以下、輸入諸掛が
+    実質発生していない行）は輸入経費率の統計から除外する。以前は
+    COALESCEで仕入金額円にフォールバックして含めていたが、含めると
+    輸入経費の実態を示す統計として薄まってしまうため除外に変更した。"""
     captured = {}
 
     def _fake_query(self, sql, params=()):
@@ -112,7 +114,8 @@ def test_purchase_lines_aggregate_includes_weighted_import_cost_ratio(monkeypatc
 
     result = LogsysProvider()._purchase_lines({})
 
-    assert "COALESCE" in captured["sqls"][1]
+    agg_sql = captured["sqls"][1]
+    assert 'FILTER (WHERE "諸掛込金額円" > "仕入金額円")' in agg_sql
     assert result["aggregate"]["輸入経費率"] == 1.15
 
 

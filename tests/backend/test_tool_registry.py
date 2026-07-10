@@ -21,6 +21,22 @@ def test_all_tool_schemas_have_required_fields():
         assert tool["input_schema"]["type"] == "object"
 
 
+def test_get_purchase_lines_description_is_sourced_from_knowledge_base():
+    """2026-07-10（14.62、Noritsuguの指定）: 用語・業務ルールの定義は
+    knowledge/配下のMarkdownを唯一の正とし、tool_registry.pyのツール
+    説明文はそこから動的に読み込んで組み込む（手で書き写して二重管理
+    にしない、「ナレッジがマスタとなってそこから情報が生成される」
+    仕組み）。knowledge/semantic/purchase.mdの内容が実際に
+    get_purchase_linesの説明文に含まれていることを確認する。"""
+    from services.knowledge_loader import load_section
+
+    expected_section = load_section("semantic/purchase.md", "## 輸入経費率")
+    assert expected_section, "knowledge/semantic/purchase.mdに輸入経費率の節が見つからない"
+
+    tool = next(t for t in tool_registry.TOOLS if t["name"] == "get_purchase_lines")
+    assert expected_section in tool["description"]
+
+
 def test_get_code_master_tool_is_registered():
     names = [t["name"] for t in tool_registry.TOOLS]
     assert "get_code_master" in names

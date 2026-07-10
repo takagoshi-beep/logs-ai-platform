@@ -263,15 +263,21 @@ class LogsysProvider:
 
         # 2026-07-09: sales_linesと同じ理由で、正確な合計はSQL側で
         # 別途計算する（recordsの切り捨てとは無関係な値にするため）。
-        # 輸入経費率の集計値は、project_service.py/product_service.pyと
-        # 同じ計算方法（SUM(諸掛込金額円)/SUM(仕入金額円)の加重平均、
-        # 諸掛込金額円がNULLの行（国内仕入）は仕入金額円にフォールバック）
-        # で、1.xxの比率として返す。単純平均や独自のパーセンテージ計算を
-        # Claudeがしないよう、この値をそのまま使わせる。
+        #
+        # 2026-07-10（14.62修正）: 輸入経費率の集計は、knowledge/semantic/
+        # purchase.md「輸入経費率」節の定義に統一した。国内仕入（諸掛込
+        # 金額円が仕入金額円以下、輸入諸掛が実質発生していない行）は
+        # 輸入経費率の統計からは除外する（含めると輸入経費の実態を示す
+        # 統計として薄まってしまうため。以前はCOALESCEで仕入金額円に
+        # フォールバックして含めていたが、knowledge/に一本化した定義に
+        # 合わせて除外に変更した）。仕入金額合計・諸掛込金額合計は
+        # 引き続き全行の合計（実績原価としての用途もあるため）。
         agg_sql = (
             'SELECT COUNT(*) AS "件数", COALESCE(SUM("仕入金額円"), 0) AS "仕入金額合計", '
             'COALESCE(SUM("諸掛込金額円"), 0) AS "諸掛込金額合計", '
-            'SUM(COALESCE("諸掛込金額円", "仕入金額円")) / NULLIF(SUM("仕入金額円"), 0) AS "輸入経費率" '
+            'SUM("諸掛込金額円") FILTER (WHERE "諸掛込金額円" > "仕入金額円") '
+            '  / NULLIF(SUM("仕入金額円") FILTER (WHERE "諸掛込金額円" > "仕入金額円"), 0) '
+            '  AS "輸入経費率" '
             f'FROM purchases WHERE {where}'
         )
         agg_rows = self._query(agg_sql, tuple(args))

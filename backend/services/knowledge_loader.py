@@ -58,3 +58,37 @@ def load_documents() -> list[dict[str, Any]]:
             }
         )
     return docs
+
+
+def load_section(relative_path: str, heading: str) -> str:
+    """指定したknowledgeファイル（KNOWLEDGE_DIRからの相対パス）から、
+    `heading`（例:"## 輸入経費率"）に一致する見出しのセクション本文
+    だけを抜き出して返す（2026-07-10、14.62。Noritsuguの指定: 用語・
+    業務ルールの定義をknowledge/に一本化し、tool_registry.pyのツール
+    説明文はそこから動的に読み込む、二重管理を避ける仕組みのため）。
+
+    見出しの直後から、同じ見出しレベル以上の次の見出しの直前までを
+    セクション本文として返す。見出しが見つからない場合は空文字列を
+    返す（呼び出し側で見つからなかった場合の扱いを決められるように、
+    例外は投げない）。
+    """
+    path = KNOWLEDGE_DIR / relative_path
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8")
+    _, body = _parse_frontmatter(text)
+
+    level = len(heading) - len(heading.lstrip("#"))
+    heading_text = heading.lstrip("#").strip()
+    heading_pattern = re.compile(
+        rf"^{'#' * level}\s+{re.escape(heading_text)}\s*$", re.MULTILINE
+    )
+    match = heading_pattern.search(body)
+    if not match:
+        return ""
+
+    start = match.end()
+    next_heading_pattern = re.compile(rf"^#{{1,{level}}}\s", re.MULTILINE)
+    next_match = next_heading_pattern.search(body, start)
+    end = next_match.start() if next_match else len(body)
+    return body[start:end].strip()
