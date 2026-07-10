@@ -638,10 +638,14 @@ class LogsysProvider:
             )
 
         table, column = ("customers", "顧客名称") if domain == "customer" else ("staff", "社員氏名")
+        # 2026-07-10（14.68修正、Renderのログで確認したエラー）: pg_trgmの
+        # 類似検索演算子"%"が、psycopgのプレースホルダ記法（%s）と衝突し、
+        # "incomplete placeholder"エラーになっていた。リテラルの"%"は
+        # "%%"にエスケープする必要がある。
         sql = (
             f'SELECT "{column}" AS "名称", similarity("{column}", %s) AS "類似度" '
             f'FROM {table} '
-            f'WHERE "{column}" % %s '
+            f'WHERE "{column}" %% %s '
             f'ORDER BY "類似度" DESC LIMIT 5'
         )
         rows = self._query(sql, (term, term))

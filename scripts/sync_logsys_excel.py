@@ -359,6 +359,49 @@ def create_views(engine):
                     END AS payment_method
             FROM customers
         """,
+        # 2026-07-10（14.68追加、Noritsuguが実際のエラーで発見）: このビュー
+        # はlogsys-chatのsync.pyには元々無く、logs-ai-platform側で14.32
+        # （docs/architecture.md）に追加したもの。salesテーブルはこの
+        # 関数の直前でDROP→再作成されるため、依存するこのビューも一緒に
+        # 消えてしまう。以前はこのcreate_views()にこのビューが含まれて
+        # いなかったため、同期を実行するたびにv_sales_enrichedが消失し、
+        # 「相談」機能のget_sales_lines等が"relation does not exist"エラー
+        # で失敗する不具合が起きていた。ここに追加することで、同期の
+        # たびに自動的に再作成されるようにした。
+        # 定義はdocs/migrations/2026-07-09_v_sales_enriched.sqlと完全に
+        # 一致させている（変更する際は両方直すこと）。
+        "v_sales_enriched": """
+            CREATE OR REPLACE VIEW v_sales_enriched AS
+            SELECT
+                s.*,
+                CASE p."商品分類"
+                    WHEN 1 THEN '帽子' WHEN 2 THEN 'バッグ' WHEN 3 THEN '財布/小物'
+                    WHEN 4 THEN 'サングラス/メガネ' WHEN 5 THEN '巻物' WHEN 6 THEN 'アパレル'
+                    WHEN 7 THEN 'ベルト' WHEN 8 THEN '履物' WHEN 9 THEN 'アクセサリー'
+                    ELSE 'その他'
+                    END AS "product_category",
+                CASE c."顧客分類"
+                    WHEN 1 THEN 'セレクトショップ' WHEN 2 THEN '量販店' WHEN 3 THEN 'D2C'
+                    WHEN 4 THEN 'その他小売店' WHEN 5 THEN 'メーカー業' WHEN 6 THEN '仲間卸'
+                    WHEN 7 THEN 'グッズ制作' WHEN 8 THEN 'その他業界企業' ELSE 'その他'
+                    END AS "customer_category",
+                c."事業規模" AS "customer_business_scale",
+                c."取引傾向分類" AS "customer_trade_tendency",
+                sup."生産管理担当者名" AS "supplier_production_staff",
+                sr."メールアドレス" AS "sales_rep_email",
+                sr."Slack ID" AS "sales_rep_slack_id",
+                adm."メールアドレス" AS "sales_admin_email",
+                adm."Slack ID" AS "sales_admin_slack_id",
+                acc."メールアドレス" AS "accounting_email",
+                acc."Slack ID" AS "accounting_slack_id"
+            FROM sales s
+            LEFT JOIN products p ON s."LOGS_CODE"::text = p."LOGS_CODE"::text
+            LEFT JOIN customers c ON s."得意先ID"::text = c."ID"::text
+            LEFT JOIN suppliers sup ON s."仕入先ID"::text = sup."ID"::text
+            LEFT JOIN staff sr ON s."営業担当者ID"::text = sr."ID（編集禁止）"::text
+            LEFT JOIN staff adm ON s."事務処理担当者ID"::text = adm."ID（編集禁止）"::text
+            LEFT JOIN staff acc ON s."経理担当者ID"::text = acc."ID（編集禁止）"::text
+        """,
     }
     with engine.begin() as conn:
         for view_name, ddl in views.items():
