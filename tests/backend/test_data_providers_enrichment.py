@@ -78,6 +78,24 @@ def test_purchase_lines_selects_precomputed_cost_ratio_and_identifying_fields(mo
     assert '"LOGS_CODE"' in main_sql
 
 
+def test_purchase_lines_selects_shipping_method_and_currency_fields(monkeypatch):
+    """2026-07-09（14.60、Noritsuguの指摘の修正）: Claudeが「輸入経費率
+    は輸送方法によって変動する」と、実際にはその列を見ずに述べてしまう
+    実例があった。"輸送方法"・"通貨"・"為替"は実在する列だが、以前は
+    このツールが選択していなかった。選択するようにし、通貨コードは
+    名称（USD/円/RMB）に変換して返す。"""
+    rows = [{"通貨": 1}]
+
+    def _fake_query(self, sql, params=()):
+        return rows if "輸送方法" in sql else []
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._purchase_lines({})
+
+    assert result["records"][0]["通貨名"] == "USD"
+
+
 def test_purchase_lines_aggregate_includes_weighted_import_cost_ratio(monkeypatch):
     """2026-07-09（14.59）: aggregateにも輸入経費率（SUM(諸掛込金額円)/
     SUM(仕入金額円)の加重平均、project_service.py/product_service.pyと

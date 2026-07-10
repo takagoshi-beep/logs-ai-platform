@@ -28,6 +28,21 @@ def _product_category_label(code: Any) -> str:
     return _PRODUCT_CATEGORY_LABELS.get(code, "その他")
 
 
+# 2026-07-09（14.60追加）: code_master CURRENCY の対応表。
+# services/product_service.py の同名の辞書・関数と完全に一致させている
+# （1=USD, 2=円, 3=RMB、Noritsuguが実際にcode_masterで確認して提示）。
+_CURRENCY_LABELS = {1: "USD", 2: "円", 3: "RMB"}
+
+
+def _currency_label(code: Any) -> str | None:
+    if code is None:
+        return None
+    try:
+        return _CURRENCY_LABELS.get(int(code), str(code))
+    except (TypeError, ValueError):
+        return str(code)
+
+
 def _evidence(
     provider: str,
     dataset: str,
@@ -218,6 +233,14 @@ class LogsysProvider:
         # また、参照データの信頼性確認のため、識別情報（POnum・LOGS_CODE）
         # も明記する（Noritsuguの指摘: 実データであることを確認できるよう、
         # 数量・仕入先だけでなくPO番号等も示すべき）。
+        #
+        # 2026-07-09（14.60追加、Noritsuguの指摘）: 「輸入経費率は輸送方法
+        # によって変動する」とClaudeが実データを見ずに述べてしまった
+        # 実例があった。実際には"輸送方法"（伝票レベル）・"通貨"・"為替"
+        # （明細レベル、輸入経費率の定義式=諸掛込原価÷商品原価(商品単価
+        # ×数量×為替)そのものに関わる列）はpurchasesに実在するが、以前は
+        # このツールが選択していなかった。実在する列を選択することで、
+        # 推測ではなく実データに基づいて要因を説明できるようにした。
         where = '"ステータス" IN (2, 3)'
         args: list[Any] = []
         if params.get("period_start"):
@@ -232,7 +255,7 @@ class LogsysProvider:
 
         sql = (
             'SELECT "伝票日", "POnum", "LOGS_CODE", "仕入先名", "商品分類", "仕入数量pcs", '
-            '"仕入金額円", "諸掛込金額円", "経費率", '
+            '"仕入金額円", "諸掛込金額円", "経費率", "輸送方法", "通貨", "為替", '
             'COALESCE(NULLIF("明細営業担当者名", \'\'), "営業担当者名") AS "営業担当者名" '
             f'FROM purchases WHERE {where} ORDER BY "伝票日"'
         )
@@ -256,6 +279,7 @@ class LogsysProvider:
 
         for row in rows:
             row["商品分類名"] = _product_category_label(row.get("商品分類"))
+            row["通貨名"] = _currency_label(row.get("通貨"))
 
         evidence = _evidence(
             self.name, "purchase_lines", "ok",
