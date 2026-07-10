@@ -153,6 +153,7 @@ class ProjectService:
                 planned_import_cost_ratio=float(po_dict["輸入経費率"]) if po_dict.get("輸入経費率") is not None else None,
                 actual_import_cost_ratio=float(po_dict["actual_import_cost_ratio"]) if po_dict.get("actual_import_cost_ratio") is not None else None,
                 po_status=int(po_dict["ステータス"]) if po_dict.get("ステータス") is not None else None,
+                actual_cost_total=float(po_dict["actual_cost_total"]) if po_dict.get("actual_cost_total") is not None else None,
             )
 
             if project_data.cost_amount and project_data.sale_amount:
@@ -211,6 +212,7 @@ class ProjectService:
         sales_dates: dict[str, Any] = {}
         purchase_dates_by_po: dict[str, Any] = {}
         actual_import_cost_ratios_by_po: dict[str, Any] = {}
+        actual_cost_totals_by_po: dict[str, Any] = {}
         closed_po_numbers: set[str] = set()
 
         try:
@@ -241,6 +243,20 @@ class ProjectService:
                         purchase_dates_by_po[po_no] = max_date
                         actual_import_cost_ratios_by_po[po_no] = cost_ratio
 
+                # 2026-07-09（14.49、Noritsuguの指定）: 予定(PO)vs確定
+                # (仕入)の粗利比較用に、実績原価（PO単位の合計）を追加。
+                # purchases."諸掛込金額（円）"（明細ごとの確定原価合計）
+                # を同じPO番号でSUM。1つのPOに複数回の仕入（部分納品等）
+                # があっても正しく合算される。
+                with conn.cursor() as cur:
+                    cur.execute(
+                        'SELECT "POnum", SUM("諸掛込金額（円）") FROM purchases '
+                        'WHERE "POnum" = ANY(%s) GROUP BY "POnum"',
+                        (po_numbers,),
+                    )
+                    for po_no, total_cost in cur.fetchall():
+                        actual_cost_totals_by_po[po_no] = total_cost
+
                 with conn.cursor() as cur:
                     cur.execute(
                         'SELECT DISTINCT "POnum" FROM production_mass '
@@ -257,6 +273,7 @@ class ProjectService:
             d["sales_date"] = sales_dates.get(logs_code)
             d["purchase_date"] = purchase_dates_by_po.get(d.get("PO_No"))
             d["actual_import_cost_ratio"] = actual_import_cost_ratios_by_po.get(d.get("PO_No"))
+            d["actual_cost_total"] = actual_cost_totals_by_po.get(d.get("PO_No"))
             d["production_closed"] = d.get("PO_No") in closed_po_numbers
 
     def _build_project_data(self, project_id: str) -> ProjectData | None:

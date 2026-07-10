@@ -70,6 +70,9 @@ interface ProjectDetail {
     sale_amount: number | null;
     gross_profit: number | null;
     gross_profit_margin: number | null;
+    actual_cost_total: number | null;
+    actual_gross_profit: number | null;
+    actual_gross_profit_margin: number | null;
     project_name: string | null;
     planned_import_cost_ratio: number | null;
     actual_import_cost_ratio: number | null;
@@ -162,12 +165,36 @@ export default function WorkspacePage({ params }: Params) {
           <p className="mt-2 text-xs text-sub">
             {project.data.days_until_delivery < 0 ? "納期経過" : `納期まで: ${project.data.days_until_delivery}日`}
           </p>
-          <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-            <div>売上金額: {fmtYen(project.data.sale_amount)}</div>
-            <div>原価: {fmtYen(project.data.cost_amount)}</div>
-            <div>粗利: {fmtYen(project.data.gross_profit)}</div>
-            <div>粗利率: {project.data.gross_profit_margin != null ? `${project.data.gross_profit_margin.toFixed(1)}%` : "—"}</div>
-          </div>
+          <div className="mt-3 text-xs">売上金額: {fmtYen(project.data.sale_amount)}</div>
+          <table className="mt-2 w-full text-xs">
+            <thead>
+              <tr className="text-sub">
+                <th className="text-left font-normal"></th>
+                <th className="text-right font-normal">予定（PO）</th>
+                <th className="text-right font-normal">実績（仕入確定）</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td className="py-0.5">原価</td>
+                <td className="py-0.5 text-right">{fmtYen(project.data.cost_amount)}</td>
+                <td className="py-0.5 text-right">{fmtYen(project.data.actual_cost_total)}</td>
+              </tr>
+              <tr>
+                <td className="py-0.5">粗利</td>
+                <td className="py-0.5 text-right">{fmtYen(project.data.gross_profit)}</td>
+                <td className="py-0.5 text-right">{fmtYen(project.data.actual_gross_profit)}</td>
+              </tr>
+              <tr>
+                <td className="py-0.5">粗利率</td>
+                <td className="py-0.5 text-right">{project.data.gross_profit_margin != null ? `${project.data.gross_profit_margin.toFixed(1)}%` : "—"}</td>
+                <td className="py-0.5 text-right">{project.data.actual_gross_profit_margin != null ? `${project.data.actual_gross_profit_margin.toFixed(1)}%` : "—"}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p className="mt-1 text-xs text-sub">
+            予定はPOの見積もり（合計売上原価）、実績は仕入確定後の諸掛込原価（PO単位の合計）を使用。売上金額はPOの値のまま比較しています。
+          </p>
           <div className="mt-3 grid grid-cols-2 gap-2 text-xs border-t border-slate-100 pt-3">
             <div>
               予定輸入経費率: {project.data.planned_import_cost_ratio != null ? project.data.planned_import_cost_ratio.toFixed(2) : "—"}

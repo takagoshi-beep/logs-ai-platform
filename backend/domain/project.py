@@ -212,6 +212,11 @@ class ProjectData:
     # 3=差戻,5=発注保留)は未発行。実データでは4が34,947件、他は合計22件
     # という圧倒的な分布（2026-07-09、実際にcode_masterで確認済み）。
     po_status: Optional[int] = None
+    # 2026-07-09（14.49、Noritsuguの指定）: 予定(PO)vs確定(仕入)の粗利
+    # 比較用。purchases."諸掛込金額（円）"（確定原価、明細ごとの合計値）
+    # を同じPO番号でSUMしたもの。sale_amount（PO単位の売上金額、既存）
+    # と組み合わせて実績粗利を導出する（actual_gross_profitプロパティ）。
+    actual_cost_total: Optional[float] = None
 
     @property
     def days_until_delivery(self) -> int:
@@ -249,6 +254,24 @@ class ProjectData:
     def profit_margin_pct(self) -> Optional[float]:
         if self.sale_amount and self.cost_amount:
             return ((self.sale_amount - self.cost_amount) / self.sale_amount) * 100
+        return None
+
+    @property
+    def actual_gross_profit(self) -> Optional[float]:
+        """実績粗利（確定）。2026-07-09（14.49）: 予定粗利
+        （sale_amount - cost_amount、PO入力時点の見積もり）と比較する
+        ための、purchases側の確定原価（actual_cost_total）を使った粗利。
+        売上金額はPO単位のsale_amountをそのまま使う（Noritsuguの指定:
+        「PO単位の金額を活用して」比較する）。
+        """
+        if self.sale_amount is not None and self.actual_cost_total is not None:
+            return self.sale_amount - self.actual_cost_total
+        return None
+
+    @property
+    def actual_gross_profit_margin(self) -> Optional[float]:
+        if self.sale_amount and self.actual_cost_total is not None:
+            return ((self.sale_amount - self.actual_cost_total) / self.sale_amount) * 100
         return None
 
 
@@ -378,6 +401,9 @@ class ProjectAggregate:
                 "sale_amount": self.data.sale_amount,
                 "gross_profit": self.data.gross_profit,
                 "gross_profit_margin": self.data.gross_profit_margin,
+                "actual_cost_total": self.data.actual_cost_total,
+                "actual_gross_profit": self.data.actual_gross_profit,
+                "actual_gross_profit_margin": self.data.actual_gross_profit_margin,
                 "project_name": self.data.project_name,
                 "planned_import_cost_ratio": self.data.planned_import_cost_ratio,
                 "actual_import_cost_ratio": self.data.actual_import_cost_ratio,

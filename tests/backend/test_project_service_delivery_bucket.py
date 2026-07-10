@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+import pytest
+
 from domain.project import ProjectData, ProjectEventType
 from services.project_service import ProjectService
 
@@ -118,6 +120,43 @@ def test_po_dict_to_project_data_uses_actual_import_cost_ratio_from_attach_exist
     data = service._po_dict_to_project_data("1", po_dict)
 
     assert data.actual_import_cost_ratio == 1.22
+
+
+def test_actual_gross_profit_uses_po_level_sale_amount_and_actual_cost_total():
+    """2026-07-09（14.49、Noritsuguの指定）: 実績粗利は、既存のPO単位の
+    sale_amountと、purchasesから集計したactual_cost_total（PO単位の
+    確定原価合計）を使って計算する（「PO単位の金額を活用して」予定と
+    比較できるようにという指定）。"""
+    service = ProjectService()
+    po_dict = {
+        "PO_No": "901-1", "仕入先ID": "s1", "仕入先名": "Supplier",
+        "顧客ID": "c1", "顧客名": "Customer",
+        "PO発行日": "2026-07-08", "顧客納品日": "2026-08-30",
+        "actual_cost_total": 5578172.0,
+        "合計発注金額": 8000000, "合計売上原価": 5800000, "合計売上金額": 7374800,
+    }
+    data = service._po_dict_to_project_data("1", po_dict)
+
+    assert data.actual_cost_total == 5578172.0
+    assert data.actual_gross_profit == 7374800 - 5578172.0
+    assert data.actual_gross_profit_margin == pytest.approx(
+        (7374800 - 5578172.0) / 7374800 * 100
+    )
+
+
+def test_actual_gross_profit_is_none_when_actual_cost_total_absent():
+    service = ProjectService()
+    po_dict = {
+        "PO_No": "901-1", "仕入先ID": "s1", "仕入先名": "Supplier",
+        "顧客ID": "c1", "顧客名": "Customer",
+        "PO発行日": "2026-07-08", "顧客納品日": "2026-08-30",
+        "合計発注金額": 8000000, "合計売上原価": 5800000, "合計売上金額": 7374800,
+    }
+    data = service._po_dict_to_project_data("1", po_dict)
+
+    assert data.actual_cost_total is None
+    assert data.actual_gross_profit is None
+    assert data.actual_gross_profit_margin is None
 
 
 def test_po_dict_to_project_data_leaves_cost_ratios_none_when_absent():
