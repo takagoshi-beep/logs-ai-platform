@@ -245,12 +245,17 @@ class ProjectService:
 
                 # 2026-07-09（14.49、Noritsuguの指定）: 予定(PO)vs確定
                 # (仕入)の粗利比較用に、実績原価（PO単位の合計）を追加。
-                # purchases."諸掛込金額（円）"（明細ごとの確定原価合計）
+                # purchases."諸掛込金額円"（明細ごとの確定原価合計。
+                # 実際のSupabase列名は括弧が除去されて"諸掛込金額円"に
+                # なっている — Excel原本の見出しは"諸掛込金額（円）"だが
+                # sync.pyのクレンジングで括弧が消える。staff."ID（編集
+                # 禁止）"の逆で、今回は括弧が消える側だった。実際に
+                # information_schema.columnsで確認して判明、14.50。）
                 # を同じPO番号でSUM。1つのPOに複数回の仕入（部分納品等）
                 # があっても正しく合算される。
                 with conn.cursor() as cur:
                     cur.execute(
-                        'SELECT "POnum", SUM("諸掛込金額（円）") FROM purchases '
+                        'SELECT "POnum", SUM("諸掛込金額円") FROM purchases '
                         'WHERE "POnum" = ANY(%s) GROUP BY "POnum"',
                         (po_numbers,),
                     )
