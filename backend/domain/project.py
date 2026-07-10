@@ -32,6 +32,13 @@ class ProjectState(str, Enum):
     # 完了/売上未確定/原価未確定とは別軸で、常にどちらか一方が付く。
     PO_ISSUED = "po_issued"
     PO_NOT_ISSUED = "po_not_issued"
+    # 2026-07-09（14.48、Noritsuguの指定）: 生産管理『量産』シートで
+    # 表示OFF（担当者が案件を終了済みとして扱った印）にされた案件に
+    # 付ける独立したバッジ。売上・仕入の入力状況とは無関係に、
+    # production_closed=Trueなら常に付く（14.33で一度実装したが14.39の
+    # 状態ロジック書き直しで判定から抜け落ちていたものを、独立バッジ
+    # として復活させた）。
+    DELIVERY_COMPLETED_BY_PRODUCTION = "delivery_completed_by_production"
 
 
 class ProjectGoal(str, Enum):

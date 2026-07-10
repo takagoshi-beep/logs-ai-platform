@@ -101,6 +101,33 @@ def test_status_badges_includes_po_issued_when_status_is_4():
     assert ProjectService()._determine_status_badges(data) == ["completed", "po_issued"]
 
 
+def test_status_badges_includes_delivery_completed_by_production_when_display_off():
+    """2026-07-09（14.48、Noritsuguの指定）: 生産管理『量産』シートで
+    表示OFFにされた案件には、売上・仕入の入力状況とは無関係に常に
+    「納品完了（生産管理）」バッジが付く。"""
+    data = _make_data(has_sales=False, has_purchase=False, production_closed=True)
+    badges = ProjectService()._determine_status_badges(data)
+    assert "delivery_completed_by_production" in badges
+    # 売上・仕入未入力のままなので、こちらのバッジも両方出る（独立軸）。
+    assert "sales_unconfirmed" in badges
+    assert "cost_unconfirmed" in badges
+
+
+def test_status_badges_omits_delivery_completed_by_production_when_not_closed():
+    data = _make_data(has_sales=True, has_purchase=True, production_closed=False)
+    badges = ProjectService()._determine_status_badges(data)
+    assert "delivery_completed_by_production" not in badges
+
+
+def test_status_badges_can_show_both_completed_and_production_closed():
+    """売上・仕入とも入力済みで、かつ生産管理でも表示OFFの場合、両方の
+    バッジが出る（互いに排他ではない）。"""
+    data = _make_data(has_sales=True, has_purchase=True, production_closed=True)
+    badges = ProjectService()._determine_status_badges(data)
+    assert "completed" in badges
+    assert "delivery_completed_by_production" in badges
+
+
 def test_goal_confirm_delivery_at_risk_when_purchase_without_sales():
     data = _make_data(has_purchase=True, has_sales=False)
     goals = ProjectService()._evaluate_goals(data, ProjectState.INITIATED)

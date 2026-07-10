@@ -413,15 +413,21 @@ class ProjectService:
 
     def _determine_status_badges(self, data: ProjectData) -> list[str]:
         """画面表示用の状態バッジ（複数可）。2026-07-09（14.39、14.42、
-        Noritsuguの指定）:
-          - 完了: 売上・仕入とも入力済み
+        14.48、Noritsuguの指定）:
+          - 売上・仕入計上済（旧「完了」）: 売上・仕入とも入力済み
           - 売上未確定: 売上未入力
           - 原価未確定: 仕入未入力
         売上未確定・原価未確定は同時に成立しうる（どちらも未入力の場合、
-        両方のバッジが返る）。完了はこの2つとは排他的。
+        両方のバッジが返る）。売上・仕入計上済はこの2つとは排他的。
 
         別軸として、PO発行済み／PO未発行（purchase_orders."ステータス"
         =4かどうか）を常にどちらか一方追加する（14.42）。
+
+        さらに別軸として、納品完了（生産管理）を追加する（14.48）。
+        生産管理『量産』シートで表示OFFにされた（担当者が案件を終了済み
+        として扱った印）案件には、売上・仕入の入力状況とは無関係に常に
+        このバッジが付く。売上・仕入未入力のまま生産管理側だけ終了済み
+        というケースも実際にありうるため、上の2軸とは独立させている。
         """
         if data.has_sales and data.has_purchase:
             badges = [ProjectState.COMPLETED.value]
@@ -431,6 +437,9 @@ class ProjectService:
                 badges.append(ProjectState.SALES_UNCONFIRMED.value)
             if not data.has_purchase:
                 badges.append(ProjectState.COST_UNCONFIRMED.value)
+
+        if data.production_closed:
+            badges.append(ProjectState.DELIVERY_COMPLETED_BY_PRODUCTION.value)
 
         badges.append(ProjectState.PO_ISSUED.value if data.is_po_issued else ProjectState.PO_NOT_ISSUED.value)
         return badges

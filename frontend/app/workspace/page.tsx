@@ -22,11 +22,12 @@ interface ApiProject {
 // 入力済み）以外は「売上未確定」「原価未確定」が同時に表示されうる。
 // 納期超過は廃止した。
 const STATE_LABEL: Record<string, string> = {
-  completed: "完了",
+  completed: "売上・仕入計上済",
   sales_unconfirmed: "売上未確定",
   cost_unconfirmed: "原価未確定",
   po_issued: "PO発行済み",
   po_not_issued: "PO未発行",
+  delivery_completed_by_production: "納品完了（生産管理）",
 };
 
 export default function WorkspaceListPage() {
