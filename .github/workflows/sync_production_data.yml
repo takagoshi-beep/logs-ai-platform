@@ -1,15 +1,13 @@
 name: 生産管理データ同期
 
-# 2通りの起動方法:
-# 1. workflow_dispatch: このリポジトリのActionsタブから手動で「Run workflow」
-# 2. repository_dispatch: logsys-chat の「ログシス DB同期」が完了した直後に、
-#    そちら側のワークフローから自動的にこちらを呼び出す（1クリックで両方
-#    完了させるための仕組み。logsys-chat 側の sync.yml に、この
-#    リポジトリを呼び出す追加ステップが必要 — 別途案内した手順を参照）。
+# 2026-07-10（14.66修正）: 以前はlogsys-chatリポジトリの「ログシス DB同期」
+# 完了後にrepository_dispatchでここを呼び出す2リポジトリ構成だったが、
+# logsys-chatを廃止して一本化したため、通常は sync_logsys_excel.yml の
+# 中で（このワークフローを経由せず）直接呼び出される。このワークフロー
+# 自体は、生産管理データだけを単独で再同期したい場合の手動実行用として
+# 残している。
 on:
   workflow_dispatch: {}
-  repository_dispatch:
-    types: [production-data-sync]
 
 jobs:
   sync:

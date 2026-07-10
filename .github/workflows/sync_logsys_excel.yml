@@ -1,0 +1,57 @@
+name: ログシス Excel 同期
+
+# 2026-07-10（14.66、Noritsuguの指定）: logsys-chatリポジトリを廃止して
+# logs-ai-platformに一本化するため、旧sync.yml（logsys-chat側）をここに
+# 移植した。以前はlogsys-chat側でこの同期を実行後、repository_dispatch
+# で別リポジトリ（このリポジトリ）の「生産管理データ同期」を呼び出す
+# という2リポジトリ構成だったが、一本化後は同じジョブの中で両方の
+# 同期を連続実行する（別リポジトリを経由しないため、PRODUCTION_SYNC_PAT
+# のような別リポジトリ呼び出し用のPATも不要になった）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      excel_filename:
+        description: 'Excelファイル名（空欄で最新ファイルを自動選択）'
+        required: false
+        default: ''
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python 3.12 セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 依存ライブラリをインストール
+        run: |
+          pip install \
+            pandas \
+            openpyxl \
+            psycopg2-binary \
+            sqlalchemy \
+            google-api-python-client \
+            google-auth \
+            gspread
+
+      - name: ログシス本体（Excel）を同期
+        env:
+          SUPABASE_DB_URL:    ${{ secrets.SUPABASE_DB_URL }}
+          GOOGLE_SA_KEY_JSON: ${{ secrets.GOOGLE_SA_KEY_JSON }}
+          GDRIVE_FOLDER_ID:   ${{ secrets.GDRIVE_FOLDER_ID }}
+          EXCEL_FILENAME:     ${{ github.event.inputs.excel_filename }}
+        run: python scripts/sync_logsys_excel.py
+
+      - name: 生産管理データ（Googleスプレッドシート）を同期
+        env:
+          SUPABASE_DB_URL:     ${{ secrets.SUPABASE_DB_URL }}
+          GOOGLE_SA_KEY_JSON:  ${{ secrets.GOOGLE_SA_KEY_JSON }}
+          PRODUCTION_SHEET_ID: ${{ secrets.PRODUCTION_SHEET_ID }}
+        run: python scripts/sync_production_data.py
