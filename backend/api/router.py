@@ -509,29 +509,48 @@ def get_product(product_id: str, user: dict = Depends(require_login)) -> dict:
     """1商品(products.ID)について、マスタ情報 + PO/売上/仕入/サンプルの
     横断履歴、および本人のGmail/Slackから見た関連メッセージを返す。
     """
-    from services.product_service import get_product_detail, get_related_communications_for_product
+    from services.product_service import get_logs_code_and_sample_code, get_product_detail, get_related_communications_for_product
     from services.timing import timed
 
-    try:
+    # 2026-07-10（14.73、Noritsuguの指定）: 商品詳細本体の取得（複数
+    # テーブルを横断する重い処理）とGmail/Slack検索（LOGS_CODE・
+    # Sample_CODEが必要）は、以前は直列に実行していた。LOGS_CODE・
+    # Sample_CODEだけなら軽量な1クエリで先に取得できるため、
+    # ThreadPoolExecutorで商品詳細本体の取得とGmail/Slack検索を並行
+    # 実行するように変更した（案件詳細・今日のタスクで採用したのと
+    # 同じ考え方、14.70・14.72）。
+    def _fetch_detail():
         with timed(f"product_detail.get_product_detail(id={product_id})"):
-            detail = get_product_detail(product_id)
+            return get_product_detail(product_id)
+
+    def _fetch_related_communications():
+        try:
+            codes = get_logs_code_and_sample_code(product_id)
+            with timed("product_detail.gmail_slack_related_communications"):
+                return get_related_communications_for_product(
+                    user_email=user.get("email"),
+                    logs_code=codes.get("LOGS_CODE"),
+                    sample_code=codes.get("Sample_CODE"),
+                )
+        except Exception as e:
+            return {
+                "gmail": {"status": "error", "summary": str(e), "records": []},
+                "slack": {"status": "error", "summary": str(e), "records": []},
+            }
+
+    try:
+        with timed("product_detail.detail_and_communications_parallel"):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                detail_future = executor.submit(_fetch_detail)
+                communications_future = executor.submit(_fetch_related_communications)
+                detail = detail_future.result()
+                related_communications = communications_future.result()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
     if not detail:
         raise HTTPException(status_code=404, detail=f"Product {product_id} not found")
 
-    try:
-        with timed("product_detail.gmail_slack_related_communications"):
-            detail["related_communications"] = get_related_communications_for_product(
-                user_email=user.get("email"),
-                logs_code=detail["master"].get("LOGS_CODE"),
-                sample_code=detail["master"].get("Sample_CODE"),
-            )
-    except Exception as e:
-        detail["related_communications"] = {
-            "gmail": {"status": "error", "summary": str(e), "records": []},
-            "slack": {"status": "error", "summary": str(e), "records": []},
-        }
+    detail["related_communications"] = related_communications
 
     return {"success": True, "product": detail}

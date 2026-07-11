@@ -456,6 +456,65 @@ def test_currency_label_falls_back_to_raw_value_for_unknown_code():
     assert product_service._currency_label(None) is None
 
 
+def test_get_logs_code_and_sample_code_returns_normalized_values(monkeypatch):
+    """2026-07-10（14.73、Noritsuguの指定）: 商品詳細本体の取得と
+    Gmail/Slack検索を並行実行できるようにするため、LOGS_CODE・
+    Sample_CODEだけを軽量に取得する関数を新設した。LOGS_CODEは
+    doubleprecision型のため13564.0のように返る場合があり、
+    get_product_detailの本流と同じ正規化（"13564"への変換）を適用する。"""
+    monkeypatch.setattr(
+        product_service, "get_connection",
+        lambda: _FakeConnection([(13564.0, "SLG-06120")], ["LOGS_CODE", "Sample_CODE"]),
+    )
+
+    result = product_service.get_logs_code_and_sample_code("101")
+
+    assert result == {"LOGS_CODE": "13564", "Sample_CODE": "SLG-06120"}
+
+
+def test_get_logs_code_and_sample_code_returns_none_when_product_not_found(monkeypatch):
+    class _EmptyResultConnection:
+        def cursor(self):
+            class _Cur:
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, *a):
+                    return False
+
+                def execute(self_inner, sql, params=None):
+                    pass
+
+                def fetchone(self_inner):
+                    return None
+
+            return _Cur()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(product_service, "get_connection", lambda: _EmptyResultConnection())
+
+    result = product_service.get_logs_code_and_sample_code("does-not-exist")
+
+    assert result == {"LOGS_CODE": None, "Sample_CODE": None}
+
+
+def test_get_logs_code_and_sample_code_returns_none_on_db_error(monkeypatch):
+    class _FailingConnection:
+        def cursor(self):
+            raise RuntimeError("DB接続エラー")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(product_service, "get_connection", lambda: _FailingConnection())
+
+    result = product_service.get_logs_code_and_sample_code("101")
+
+    assert result == {"LOGS_CODE": None, "Sample_CODE": None}
+
+
 def test_get_product_detail_cost_fields_are_none_when_no_po_or_purchase_history(monkeypatch):
     master_cols = ["ID", "LOGS_CODE", "Sample_CODE", "商品名"]
     master_rows = [(101, "5145", None, "Baseball Cap")]

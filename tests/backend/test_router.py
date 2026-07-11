@@ -539,19 +539,35 @@ def test_get_product_via_http(monkeypatch):
         "status": {"po_issued": False, "sales_recorded": False, "purchase_recorded": False, "sample_requested": False},
     }
     monkeypatch.setattr(product_service, "get_product_detail", lambda product_id: fake_detail if product_id == "101" else None)
+    # 2026-07-10（14.73）: 商品詳細本体の取得とGmail/Slack検索が並行
+    # 実行になったため、Gmail/Slack検索用のLOGS_CODE・Sample_CODEは
+    # get_logs_code_and_sample_code（軽量な専用ルックアップ）から渡る。
+    # 正しい値が実際に使われていることを検証するため、受け取った引数を
+    # 記録するモックにする（固定値を返すだけの以前のモックだと、
+    # 引数が壊れていても気づけないため）。
     monkeypatch.setattr(
-        product_service, "get_related_communications_for_product",
-        lambda user_email, logs_code, sample_code: {
+        product_service, "get_logs_code_and_sample_code",
+        lambda product_id: {"LOGS_CODE": "13564", "Sample_CODE": "S1"} if product_id == "101" else {"LOGS_CODE": None, "Sample_CODE": None},
+    )
+    captured_args = {}
+
+    def _fake_related_communications(user_email, logs_code, sample_code):
+        captured_args["logs_code"] = logs_code
+        captured_args["sample_code"] = sample_code
+        return {
             "gmail": {"status": "ok", "summary": "1件", "records": [{"subject": "test"}]},
             "slack": {"status": "unavailable", "summary": "Slack未連携です。", "records": []},
-        },
-    )
+        }
+
+    monkeypatch.setattr(product_service, "get_related_communications_for_product", _fake_related_communications)
 
     response = _client().get("/api/products/101")
     assert response.status_code == 200
     body = response.json()
     assert body["product"]["master"]["商品名"] == "Baseball Cap"
     assert body["product"]["related_communications"]["gmail"]["records"] == [{"subject": "test"}]
+    assert captured_args["logs_code"] == "13564"
+    assert captured_args["sample_code"] == "S1"
 
     missing = _client().get("/api/products/does-not-exist")
     assert missing.status_code == 404

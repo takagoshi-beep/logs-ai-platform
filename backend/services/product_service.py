@@ -321,6 +321,39 @@ def get_related_communications_for_product(
     return {"gmail": gmail_result, "slack": slack_result}
 
 
+def get_logs_code_and_sample_code(product_id: str) -> dict[str, Any]:
+    """指定した商品ID(products."ID")のLOGS_CODE・Sample_CODEだけを軽量に
+    取得する（2026-07-10、14.73、Noritsuguの指定）。
+
+    商品詳細（get_product_detail、複数テーブルを横断する重い処理）と
+    Gmail/Slack検索（get_related_communications_for_product、LOGS_CODE・
+    Sample_CODEが必要）は、以前は直列に実行していた（Gmail/Slackの
+    完了を待つため、商品詳細本体の重さ+Gmail/Slackの重さが積み上がって
+    いた）。LOGS_CODE・Sample_CODEだけなら軽量な1クエリで先に取得できる
+    ため、これを使ってGmail/Slack検索を商品詳細本体の取得と並行に開始
+    できるようにした（案件詳細・今日のタスクで採用したのと同じ考え方、
+    14.70・14.72）。
+    """
+    try:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    'SELECT "LOGS_CODE", "Sample_CODE" FROM products WHERE "ID" = %s',
+                    (product_id,),
+                )
+                row = cur.fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"Error fetching logs_code/sample_code: {e}")
+        return {"LOGS_CODE": None, "Sample_CODE": None}
+
+    if not row:
+        return {"LOGS_CODE": None, "Sample_CODE": None}
+    return {"LOGS_CODE": _format_logs_code(row[0]), "Sample_CODE": row[1]}
+
+
 def get_product_detail(product_id: str) -> dict[str, Any] | None:
     """1商品(products.ID)について、マスタ情報 + PO/売上/仕入/サンプルの
     横断履歴をまとめて返す。商品マスタに存在しない場合はNone。
