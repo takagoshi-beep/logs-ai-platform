@@ -60,6 +60,14 @@ def _mock_project_service(monkeypatch, aggregates: dict[str, ProjectAggregate]):
         ProjectService, "build_project_aggregates_bulk",
         lambda self, project_ids: [aggregates[pid] for pid in project_ids if pid in aggregates],
     )
+    # 2026-07-10（14.72）: today_actionsがGmail/Slack検索とbuild_
+    # aggregatesを並行実行するようになり、PO番号の取得を専用の軽量
+    # メソッドで先に行うようになった。既存のaggregatesと矛盾しない
+    # PO番号を返すようにモックする。
+    monkeypatch.setattr(
+        ProjectService, "_query_po_numbers_for_ids",
+        lambda self, ids: [aggregates[pid].po_number for pid in ids if pid in aggregates],
+    )
 
 
 # ---------------------------------------------------------------------------
