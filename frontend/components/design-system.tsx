@@ -103,19 +103,13 @@ type TaskCardProps = {
   title: string;
   project: string;
   due: string;
-  priority: string;
-  status: string;
   reason: string;
   actions?: ReactNode;
 };
 
-export function TaskCard({ title, project, due, priority, status, reason, actions }: TaskCardProps) {
+export function TaskCard({ title, project, due, reason, actions }: TaskCardProps) {
   return (
     <Card>
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        <Badge label={priority} tone={priority.toLowerCase() === "high" ? "high" : priority.toLowerCase() === "medium" ? "medium" : "low"} />
-        <StatusBadge status={status} />
-      </div>
       <h3 className="text-sm font-semibold text-ink">{title}</h3>
       <p className="mt-1 text-xs text-sub">案件: {project}</p>
       <p className="text-xs text-sub">期限: {due}</p>

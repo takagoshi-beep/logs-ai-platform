@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Badge, Button, Card, SectionHeader, StatusBadge, TaskCard, Timeline } from "@/components/design-system";
+import { Badge, Card, SectionHeader, StatusBadge, TaskCard, Timeline } from "@/components/design-system";
 import { getProject } from "@/lib/api-client";
 
 type Params = { params: { projectId: string } };
@@ -227,10 +227,7 @@ export default function WorkspacePage({ params }: Params) {
                   title={action.title}
                   project={project.po_number}
                   due={action.due_date ? new Date(action.due_date).toLocaleDateString("ja-JP") : "—"}
-                  priority={action.priority}
-                  status="未着手"
                   reason={action.condition || action.description}
-                  actions={<Button tone="ghost" size="sm">タスクを開く</Button>}
                 />
               ))
             ) : (
@@ -291,7 +288,7 @@ export default function WorkspacePage({ params }: Params) {
         <Card>
           <SectionHeader
             title="関連するメール・Slack"
-            subtitle="PO番号・顧客担当者のメールアドレスで、あなた自身のGmail/Slackから検索した結果です。"
+            subtitle="PO番号で、あなた自身のGmail/Slackから検索した結果です。"
           />
           <div className="mt-3 grid gap-4 sm:grid-cols-2">
             <div>
