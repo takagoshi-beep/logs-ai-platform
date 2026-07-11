@@ -358,6 +358,31 @@ def test_get_project_via_http(monkeypatch):
     related = response.json()["related_communications"]
     assert related["gmail"]["status"] == "unavailable"
     assert related["slack"]["status"] == "unavailable"
+    # 14.77: DB未接続時はrelated_productsも空リストに落ちる（クラッシュしない）
+    assert response.json()["related_products"] == []
+
+
+def test_get_project_via_http_includes_related_products(monkeypatch):
+    """2026-07-10（14.77、Noritsuguの指定）: 案件詳細に、同じPOに含まれる
+    他の商品を一覧表示できるようにするための項目。"""
+    from services.project_service import ProjectService
+
+    def _fake_build(self, project_id):
+        return _fake_aggregate(project_id) if project_id == "7722" else None
+
+    monkeypatch.setattr(ProjectService, "build_project_aggregate", _fake_build)
+    monkeypatch.setattr(
+        ProjectService, "get_products_for_po",
+        lambda self, po_number: [
+            {"logs_code": "13564", "product_id": "101", "product_name": "Baseball Cap", "sample_code": "S1"},
+        ],
+    )
+
+    response = _client().get("/api/projects/7722")
+    assert response.status_code == 200
+    assert response.json()["related_products"] == [
+        {"logs_code": "13564", "product_id": "101", "product_name": "Baseball Cap", "sample_code": "S1"},
+    ]
 
     missing = _client().get("/api/projects/does-not-exist")
     assert missing.status_code == 404

@@ -865,6 +865,50 @@ class ProjectService:
 
         return aggregate
 
+    def get_products_for_po(self, po_number: str) -> list[dict[str, Any]]:
+        """指定したPO番号(purchase_orders."PO_No")に含まれる商品一覧を返す
+        （2026-07-10、14.77、Noritsuguの指定）。
+
+        1つのPOに複数商品の明細行が含まれる場合、purchase_orders には
+        同じ"PO_No"を持つ複数の行（それぞれ別のLOGS_CODE・別の
+        purchase_orders."ID"）が存在する（14.41で確認済みの構造）。
+        「案件」はこの1行＝1商品明細を指すため、案件詳細に「この案件と
+        同じPOに含まれる他の商品」を一覧表示できるようにする
+        （案件→PO→商品→商品ごとの関連情報検索、という一連の流れを
+        つなげるため）。
+
+        products."LOGS_CODE"は表示用の商品名・Sample_CODEを補うために
+        JOINする（無ければLOGS_CODEのみ表示）。
+        """
+        if not po_number:
+            return []
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    'SELECT DISTINCT po."LOGS_CODE", p."ID", p."商品名", p."Sample_CODE" '
+                    'FROM purchase_orders po '
+                    'LEFT JOIN products p ON po."LOGS_CODE" = p."LOGS_CODE" '
+                    'WHERE po."PO_No" = %s AND po."LOGS_CODE" IS NOT NULL',
+                    (po_number,),
+                )
+                rows = cur.fetchall()
+        except Exception as e:
+            print(f"Error fetching products for PO: {e}")
+            return []
+        finally:
+            conn.close()
+
+        return [
+            {
+                "logs_code": self._format_logs_code_for_project(logs_code),
+                "product_id": str(product_id) if product_id is not None else None,
+                "product_name": product_name,
+                "sample_code": sample_code,
+            }
+            for logs_code, product_id, product_name, sample_code in rows
+        ]
+
     def _query_po_numbers_for_ids(self, ids: list[str]) -> list[str]:
         """指定した案件IDのPO番号だけを軽量に取得する（2026-07-10、14.72、
         Noritsuguの指定）。今日のタスクのGmail/Slack連携検索

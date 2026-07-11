@@ -99,6 +99,51 @@ def test_query_po_numbers_for_ids_returns_empty_list_for_empty_input(monkeypatch
     assert call_count["n"] == 0
 
 
+def test_get_products_for_po_returns_empty_list_for_empty_po_number():
+    service = ProjectService()
+    assert service.get_products_for_po("") == []
+    assert service.get_products_for_po(None) == []
+
+
+def test_get_products_for_po_returns_products_with_normalized_logs_code(monkeypatch):
+    """2026-07-10（14.77、Noritsuguの指定）: 案件詳細に、同じPOに含まれる
+    他の商品を一覧表示できるようにするための取得メソッド。LOGS_CODEは
+    doubleprecision型のため13564.0のように返る場合があり、他の箇所と
+    同じ正規化（_format_logs_code_for_project）を適用する。"""
+    rows = [
+        (13564.0, 101, "Baseball Cap", "S1"),
+        (13565.0, 102, "Tote Bag", "S2"),
+    ]
+    monkeypatch.setattr(
+        "services.project_service.get_connection",
+        lambda: _FakeConnection(rows, ["LOGS_CODE", "ID", "商品名", "Sample_CODE"]),
+    )
+
+    service = ProjectService()
+    result = service.get_products_for_po("PO-1")
+
+    assert result == [
+        {"logs_code": "13564", "product_id": "101", "product_name": "Baseball Cap", "sample_code": "S1"},
+        {"logs_code": "13565", "product_id": "102", "product_name": "Tote Bag", "sample_code": "S2"},
+    ]
+
+
+def test_get_products_for_po_returns_empty_list_on_db_error(monkeypatch):
+    class _FailingConnection:
+        def cursor(self):
+            raise RuntimeError("DB接続エラー")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("services.project_service.get_connection", lambda: _FailingConnection())
+
+    service = ProjectService()
+    result = service.get_products_for_po("PO-1")
+
+    assert result == []
+
+
 def test_query_po_numbers_for_ids_returns_distinct_po_numbers(monkeypatch):
     rows = [("PO-1",), ("PO-2",), (None,)]
     monkeypatch.setattr(

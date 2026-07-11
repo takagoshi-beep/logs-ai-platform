@@ -54,6 +54,13 @@ interface RelatedCommunications {
   slack: RelatedMessage;
 }
 
+interface RelatedProduct {
+  logs_code: string | null;
+  product_id: string | null;
+  product_name: string | null;
+  sample_code: string | null;
+}
+
 interface ProjectDetail {
   project_id: string;
   po_number: string;
@@ -113,6 +120,7 @@ export default function WorkspacePage({ params }: Params) {
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [production, setProduction] = useState<ProductionStatus[]>([]);
   const [related, setRelated] = useState<RelatedCommunications | null>(null);
+  const [relatedProducts, setRelatedProducts] = useState<RelatedProduct[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -126,6 +134,7 @@ export default function WorkspacePage({ params }: Params) {
       setProject(data?.project ?? null);
       setProduction(data?.production ?? []);
       setRelated(data?.related_communications ?? null);
+      setRelatedProducts(data?.related_products ?? []);
     });
   }, [params.projectId]);
 
@@ -215,6 +224,25 @@ export default function WorkspacePage({ params }: Params) {
           )}
         </Card>
       </div>
+
+      {relatedProducts.length > 0 && (
+        <Card>
+          <SectionHeader title="含まれる商品" subtitle="このPOに含まれる商品です。商品ごとの関連メール・Slackはリンク先で確認できます。" />
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {relatedProducts.map((p, idx) => (
+              <a
+                key={p.product_id ?? idx}
+                href={p.product_id ? `/products/${p.product_id}` : undefined}
+                className={`rounded-lg border border-slate-200 p-3 text-xs ${p.product_id ? "hover:border-accent hover:bg-accent/5" : "opacity-60"}`}
+              >
+                <p className="font-medium text-ink">{p.product_name || `LOGS_CODE: ${p.logs_code}`}</p>
+                <p className="mt-1 text-sub">LOGS_CODE: {p.logs_code ?? "—"}</p>
+                {p.sample_code && <p className="text-sub">Sample_CODE: {p.sample_code}</p>}
+              </a>
+            ))}
+          </div>
+        </Card>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>

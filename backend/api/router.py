@@ -234,12 +234,25 @@ def get_project(project_id: str, user: dict = Depends(require_login)) -> dict:
                     "slack": {"status": "error", "summary": str(e), "records": []},
                 }
 
+        def _fetch_related_products():
+            # 2026-07-10（14.77、Noritsuguの指定）: 案件詳細に、同じPOに
+            # 含まれる他の商品を一覧表示し、商品詳細へ遷移できるように
+            # する（案件→PO→商品→商品ごとの関連情報検索、という流れを
+            # つなげるため）。他の2つと同様、独立した処理なので並行実行する。
+            try:
+                with timed("project_detail.related_products"):
+                    return service.get_products_for_po(agg.po_number)
+            except Exception:
+                return []
+
         with timed("project_detail.production_and_communications_parallel"):
-            with ThreadPoolExecutor(max_workers=2) as executor:
+            with ThreadPoolExecutor(max_workers=3) as executor:
                 production_future = executor.submit(_fetch_production)
                 communications_future = executor.submit(_fetch_related_communications)
+                products_future = executor.submit(_fetch_related_products)
                 result["production"] = production_future.result()
                 result["related_communications"] = communications_future.result()
+                result["related_products"] = products_future.result()
 
         return result
     except HTTPException:
