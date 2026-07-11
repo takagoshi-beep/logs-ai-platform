@@ -31,6 +31,7 @@
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from services.supabase_client import get_connection
@@ -300,23 +301,36 @@ def get_related_communications_for_product(
         unavailable = {"status": "unavailable", "summary": "検索に使えるキー（LOGS_CODE・Sample_CODE）がありませんでした。", "records": []}
         return {"gmail": unavailable, "slack": unavailable}
 
-    if gmail_query:
+    # 2026-07-10（14.74、Noritsuguが実際の[TIMING]ログの疑問から発見）:
+    # 「単一のLOGS_CODE/Sample_CODEだけの検索なのに重い」の原因は、
+    # ここでGmail検索・Slack検索を直列に呼んでいたこと。並行実行に変更。
+    from services.timing import timed
+
+    def _fetch_gmail():
+        if not gmail_query:
+            return {"status": "unavailable", "summary": "検索に使えるキーがありませんでした。", "records": []}
         try:
             from services import gmail_service
-            gmail_result = gmail_service.search_messages(user_email, gmail_query, max_results)
+            with timed("get_related_communications_for_product.gmail"):
+                return gmail_service.search_messages(user_email, gmail_query, max_results)
         except Exception as e:
-            gmail_result = {"status": "error", "summary": f"Gmail検索中にエラーが発生しました: {e}", "records": []}
-    else:
-        gmail_result = {"status": "unavailable", "summary": "検索に使えるキーがありませんでした。", "records": []}
+            return {"status": "error", "summary": f"Gmail検索中にエラーが発生しました: {e}", "records": []}
 
-    if slack_query:
+    def _fetch_slack():
+        if not slack_query:
+            return {"status": "unavailable", "summary": "Sample_CODEが無いため、Slack検索はできません。", "records": []}
         try:
             from services import slack_service
-            slack_result = slack_service.search_messages(user_email, slack_query, max_results)
+            with timed("get_related_communications_for_product.slack"):
+                return slack_service.search_messages(user_email, slack_query, max_results)
         except Exception as e:
-            slack_result = {"status": "error", "summary": f"Slack検索中にエラーが発生しました: {e}", "records": []}
-    else:
-        slack_result = {"status": "unavailable", "summary": "Sample_CODEが無いため、Slack検索はできません。", "records": []}
+            return {"status": "error", "summary": f"Slack検索中にエラーが発生しました: {e}", "records": []}
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        gmail_future = executor.submit(_fetch_gmail)
+        slack_future = executor.submit(_fetch_slack)
+        gmail_result = gmail_future.result()
+        slack_result = slack_future.result()
 
     return {"gmail": gmail_result, "slack": slack_result}
 

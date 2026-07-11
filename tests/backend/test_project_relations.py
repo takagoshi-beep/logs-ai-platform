@@ -63,6 +63,35 @@ def test_get_related_communications_returns_unavailable_without_user_email():
     assert result["slack"]["status"] == "unavailable"
 
 
+def test_get_related_communications_runs_gmail_and_slack_in_parallel(monkeypatch):
+    """2026-07-10（14.74、Noritsuguが「単一のPO番号だけの検索なのに
+    重い」と気づいたことから発見）: 以前はGmail検索・Slack検索を直列に
+    呼んでおり、それぞれ1〜3秒かかる外部API呼び出しが単純に積み上がって
+    いた。ThreadPoolExecutorで並行実行するよう修正。Slack側の呼び出しを
+    わざと遅くして、Gmail側がSlackの完了を待たされていないことを
+    タイミングで検証する。"""
+    import time
+
+    from services import gmail_service, slack_service
+
+    def _slow_slack_search(user_email, query, max_results):
+        time.sleep(0.2)
+        return {"status": "ok", "summary": "0件", "records": []}
+
+    monkeypatch.setattr(gmail_service, "search_messages", lambda email, query, max_results: {"status": "ok", "summary": "1件", "records": [{"subject": "test"}]})
+    monkeypatch.setattr(slack_service, "search_messages", _slow_slack_search)
+    monkeypatch.setattr(project_relations, "get_customer_contact_emails", lambda customer_id: [])
+
+    start = time.perf_counter()
+    result = project_relations.get_related_communications("user@logs.co.jp", "PO-1", "c1", "Supplier")
+    elapsed = time.perf_counter() - start
+
+    assert result["gmail"]["records"] == [{"subject": "test"}]
+    # 直列なら合計で0.2秒以上かかるはずのところ、並行実行なら
+    # Slackの0.2秒がほぼそのまま合計時間になる（Gmail分が上乗せされない）。
+    assert elapsed < 0.35
+
+
 def test_gmail_search_prefers_po_number_match_and_does_not_fall_back_when_found(monkeypatch):
     """14.29の回帰テスト: PO番号でヒットした場合、顧客担当者メールでの
     フォールバック検索は一切呼ばれない（=別件のメールが混ざらない）。"""
@@ -176,6 +205,28 @@ def test_get_task_signals_returns_empty_without_po_numbers():
     result = project_relations.get_task_signals("user@logs.co.jp", [])
     assert result["gmail_unread_total"] == 0
     assert result["by_task"] == {}
+
+
+def test_get_task_signals_runs_gmail_and_slack_in_parallel(monkeypatch):
+    """2026-07-10（14.74）: get_related_communicationsと同じ理由で
+    こちらも並行実行に修正した。"""
+    import time
+
+    from services import gmail_service, slack_service
+
+    def _slow_slack_search(user_email, query, max_results):
+        time.sleep(0.2)
+        return {"status": "ok", "summary": "0件", "records": []}
+
+    monkeypatch.setattr(gmail_service, "search_messages", lambda email, query, max_results: {"status": "ok", "summary": "1件", "records": [{"subject": "PO-1"}]})
+    monkeypatch.setattr(slack_service, "search_messages", _slow_slack_search)
+
+    start = time.perf_counter()
+    result = project_relations.get_task_signals("user@logs.co.jp", ["PO-1"])
+    elapsed = time.perf_counter() - start
+
+    assert result["gmail_unread_total"] == 1
+    assert elapsed < 0.35
 
 
 def test_get_task_signals_reports_real_connection_status_when_no_tasks(monkeypatch):

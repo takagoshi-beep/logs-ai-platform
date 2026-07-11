@@ -456,6 +456,29 @@ def test_currency_label_falls_back_to_raw_value_for_unknown_code():
     assert product_service._currency_label(None) is None
 
 
+def test_get_related_communications_for_product_runs_gmail_and_slack_in_parallel(monkeypatch):
+    """2026-07-10（14.74、Noritsuguが「単一のLOGS_CODE/Sample_CODEだけの
+    検索なのに重い」と気づいたことから発見）: 以前はGmail検索・Slack
+    検索を直列に呼んでいた。ThreadPoolExecutorで並行実行するよう修正。"""
+    import time
+
+    from services import gmail_service, slack_service
+
+    def _slow_slack_search(user_email, query, max_results):
+        time.sleep(0.2)
+        return {"status": "ok", "summary": "0件", "records": []}
+
+    monkeypatch.setattr(gmail_service, "search_messages", lambda email, query, max_results: {"status": "ok", "summary": "1件", "records": [{"subject": "test"}]})
+    monkeypatch.setattr(slack_service, "search_messages", _slow_slack_search)
+
+    start = time.perf_counter()
+    result = product_service.get_related_communications_for_product("user@logs.co.jp", "13564", "SLG-06120")
+    elapsed = time.perf_counter() - start
+
+    assert result["gmail"]["records"] == [{"subject": "test"}]
+    assert elapsed < 0.35
+
+
 def test_get_logs_code_and_sample_code_returns_normalized_values(monkeypatch):
     """2026-07-10（14.73、Noritsuguの指定）: 商品詳細本体の取得と
     Gmail/Slack検索を並行実行できるようにするため、LOGS_CODE・
