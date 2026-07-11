@@ -36,27 +36,6 @@ class _FakeConnection:
         self.closed = True
 
 
-def test_get_customer_contact_emails_returns_emails(monkeypatch):
-    rows = [("tanaka@customer.example",), ("suzuki@customer.example",)]
-    monkeypatch.setattr(project_relations, "get_connection", lambda: _FakeConnection(rows))
-
-    emails = project_relations.get_customer_contact_emails("c1")
-    assert emails == ["tanaka@customer.example", "suzuki@customer.example"]
-
-
-def test_get_customer_contact_emails_returns_empty_for_unknown_customer():
-    assert project_relations.get_customer_contact_emails("unknown") == []
-    assert project_relations.get_customer_contact_emails("") == []
-
-
-def test_get_customer_contact_emails_returns_empty_on_query_failure(monkeypatch):
-    def _raise():
-        raise RuntimeError("SUPABASE_DB_URL is not configured")
-
-    monkeypatch.setattr(project_relations, "get_connection", _raise)
-    assert project_relations.get_customer_contact_emails("c1") == []
-
-
 def test_get_related_communications_returns_unavailable_without_user_email():
     result = project_relations.get_related_communications(None, "PO-1", "c1", "Supplier")
     assert result["gmail"]["status"] == "unavailable"
@@ -80,7 +59,6 @@ def test_get_related_communications_runs_gmail_and_slack_in_parallel(monkeypatch
 
     monkeypatch.setattr(gmail_service, "search_messages", lambda email, query, max_results: {"status": "ok", "summary": "1件", "records": [{"subject": "test"}]})
     monkeypatch.setattr(slack_service, "search_messages", _slow_slack_search)
-    monkeypatch.setattr(project_relations, "get_customer_contact_emails", lambda customer_id: [])
 
     start = time.perf_counter()
     result = project_relations.get_related_communications("user@logs.co.jp", "PO-1", "c1", "Supplier")
@@ -92,21 +70,21 @@ def test_get_related_communications_runs_gmail_and_slack_in_parallel(monkeypatch
     assert elapsed < 0.35
 
 
-def test_gmail_search_prefers_po_number_match_and_does_not_fall_back_when_found(monkeypatch):
-    """14.29の回帰テスト: PO番号でヒットした場合、顧客担当者メールでの
-    フォールバック検索は一切呼ばれない（=別件のメールが混ざらない）。"""
+def test_gmail_search_uses_po_number_only(monkeypatch):
+    """2026-07-10（14.75、Noritsuguの指定）: 以前はPO番号検索が0件の
+    場合、顧客担当者メールへのフォールバック検索を行っていたが、
+    ①Gmail検索が直列に2回走るため応答が3〜4.5秒かかっていた、
+    ②フォールバックの結果は「同じPOとは限らない」精度の低い参考情報
+    だった、という2つの理由から機能ごと削除した。PO番号のみで検索する。"""
     from services import gmail_service
 
     calls = []
 
     def _fake_search(email, query, max_results):
         calls.append(query)
-        if query == '"2091-20250602_2"':
-            return {"status": "ok", "summary": "1件", "records": [{"subject": "見積書 2091-20250602_2"}]}
-        raise AssertionError(f"fallback search should not have been called, got query={query!r}")
+        return {"status": "ok", "summary": "1件", "records": [{"subject": "見積書 2091-20250602_2"}]}
 
     monkeypatch.setattr(gmail_service, "search_messages", _fake_search)
-    monkeypatch.setattr(project_relations, "get_customer_contact_emails", lambda customer_id: ["tanaka@customer.example"])
 
     result = project_relations.get_related_communications("user@logs.co.jp", "2091-20250602_2", "c1", "1064STUDIO")
 
@@ -115,44 +93,34 @@ def test_gmail_search_prefers_po_number_match_and_does_not_fall_back_when_found(
     assert result["gmail"]["records"] == [{"subject": "見積書 2091-20250602_2"}]
 
 
-def test_gmail_search_falls_back_to_contact_email_only_when_po_number_finds_nothing(monkeypatch):
-    """PO番号一致が0件の場合に限り、顧客担当者メールでの検索を行う。
-    その結果はmatch_type='customer_contact'で区別できる。"""
-    from services import gmail_service
-
-    def _fake_search(email, query, max_results):
-        if query == '"2091-20250602_2"':
-            return {"status": "ok", "summary": "0件", "records": []}
-        return {"status": "ok", "summary": "1件", "records": [{"subject": "別件のメール"}]}
-
-    monkeypatch.setattr(gmail_service, "search_messages", _fake_search)
-    monkeypatch.setattr(project_relations, "get_customer_contact_emails", lambda customer_id: ["tanaka@customer.example"])
-
-    result = project_relations.get_related_communications("user@logs.co.jp", "2091-20250602_2", "c1", "1064STUDIO")
-
-    assert result["gmail"]["match_type"] == "customer_contact"
-    assert result["gmail"]["records"] == [{"subject": "別件のメール"}]
-    assert "同じPOとは限りません" in result["gmail"]["summary"]
-
-
-def test_gmail_search_does_not_fall_back_when_gmail_is_unavailable(monkeypatch):
-    """未連携の場合はそのまま'unavailable'を返し、フォールバック検索も
-    行わない（連携していないのに結果が出るという矛盾を避ける）。"""
+def test_gmail_search_returns_zero_records_without_extra_fallback_call(monkeypatch):
+    """PO番号一致が0件でも、フォールバック検索は一切行われない
+    （14.75で機能自体を削除したため）。"""
     from services import gmail_service
 
     calls = []
 
     def _fake_search(email, query, max_results):
         calls.append(query)
-        return {"status": "unavailable", "summary": "Gmail未連携です。", "records": []}
+        return {"status": "ok", "summary": "0件", "records": []}
 
     monkeypatch.setattr(gmail_service, "search_messages", _fake_search)
-    monkeypatch.setattr(project_relations, "get_customer_contact_emails", lambda customer_id: ["tanaka@customer.example"])
+
+    result = project_relations.get_related_communications("user@logs.co.jp", "2091-20250602_2", "c1", "1064STUDIO")
+
+    assert result["gmail"]["records"] == []
+    assert calls == ['"2091-20250602_2"']  # 1回だけ
+
+
+def test_gmail_search_returns_unavailable_status_as_is(monkeypatch):
+    """未連携の場合はそのまま'unavailable'を返す。"""
+    from services import gmail_service
+
+    monkeypatch.setattr(gmail_service, "search_messages", lambda email, query, max_results: {"status": "unavailable", "summary": "Gmail未連携です。", "records": []})
 
     result = project_relations.get_related_communications("user@logs.co.jp", "2091-20250602_2", "c1", "1064STUDIO")
 
     assert result["gmail"]["status"] == "unavailable"
-    assert calls == ['"2091-20250602_2"']  # フォールバックは呼ばれていない
 
 
 def test_slack_search_uses_po_number_only_no_supplier_name_fallback(monkeypatch):

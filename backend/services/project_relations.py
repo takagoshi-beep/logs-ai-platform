@@ -35,70 +35,26 @@ from typing import Any
 from services.supabase_client import get_connection
 
 
-def get_customer_contact_emails(customer_id: str) -> list[str]:
-    """指定した顧客IDに紐づく、顧客担当者の実在するメールアドレス一覧を返す。"""
-    if not customer_id or customer_id == "unknown":
-        return []
+def _search_gmail_related(user_email: str, po_number: str, max_results: int) -> dict[str, Any]:
+    """PO番号でGmailを検索する。
 
-    try:
-        conn = get_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    'SELECT DISTINCT "メールアドレス" FROM customer_contacts '
-                    'WHERE "顧客ID" = %s AND "メールアドレス" IS NOT NULL AND "メールアドレス" != \'\'',
-                    (customer_id,),
-                )
-                rows = cur.fetchall()
-        finally:
-            conn.close()
-    except Exception as e:
-        print(f"Error looking up customer contact emails: {e}")
-        return []
-
-    return [row[0] for row in rows if row[0]]
-
-
-def _contact_emails_query(contact_emails: list[str]) -> str:
-    parts = []
-    for email in contact_emails:
-        parts.append(f"from:{email}")
-        parts.append(f"to:{email}")
-    return " OR ".join(parts)
-
-
-def _search_gmail_related(
-    user_email: str, po_number: str, contact_emails: list[str], max_results: int
-) -> dict[str, Any]:
+    2026-07-10（14.75、Noritsuguの指定）: 以前はPO番号検索が0件の場合、
+    顧客担当者メールアドレス（from:/to:）へのフォールバック検索を行って
+    いたが、①Gmail検索が直列に2回走るため案件詳細・商品詳細の応答が
+    3〜4.5秒かかっていた、②フォールバックは「同じPOとは限らない」参考
+    情報に過ぎず精度が低かった、という2つの理由から機能ごと削除した。
+    顧客とのメール全般を検索したい場合は「相談」機能（またはその他の
+    今後追加する機能）で行う方針とし、この関数はPO番号での検索に専念
+    させる。
+    """
     from services import gmail_service
 
-    if po_number:
-        po_result = gmail_service.search_messages(user_email, f'"{po_number}"', max_results)
-        if po_result.get("status") != "ok":
-            # Gmail未連携・APIエラー等 — フォールバックしても意味がないので
-            # そのまま呼び出し側に伝える（連携未完了なのに「担当者名で
-            # 検索したら見つかりました」という矛盾した表示を避ける）。
-            return po_result
-        if po_result.get("records"):
-            po_result["match_type"] = "po_number"
-            return po_result
-    else:
-        po_result = {"status": "ok", "summary": "PO番号がありません。", "records": []}
+    if not po_number:
+        return {"status": "ok", "summary": "PO番号がありません。", "records": []}
 
-    if contact_emails:
-        fallback_query = _contact_emails_query(contact_emails)
-        fallback_result = gmail_service.search_messages(user_email, fallback_query, max_results)
-        if fallback_result.get("status") == "ok" and fallback_result.get("records"):
-            fallback_result["match_type"] = "customer_contact"
-            fallback_result["summary"] = (
-                f"PO番号「{po_number}」に一致するメールは見つかりませんでしたが、"
-                f"この顧客の担当者とのメールが{len(fallback_result['records'])}件見つかりました"
-                "（同じPOとは限りません）。"
-            )
-            return fallback_result
-
-    po_result["match_type"] = "po_number"
-    return po_result
+    result = gmail_service.search_messages(user_email, f'"{po_number}"', max_results)
+    result["match_type"] = "po_number"
+    return result
 
 
 def _search_slack_related(
@@ -233,19 +189,22 @@ def get_related_communications(
     supplier_name: str,
     max_results: int = 5,
 ) -> dict[str, Any]:
-    """ログイン中の本人のGmail/Slackを、この案件に関連しそうなキーワード
-    （PO番号を優先し、0件ならフォールバックとして顧客担当者メールアドレス・
-    仕入先名）で検索する。
+    """ログイン中の本人のGmail/Slackを、この案件のPO番号で検索する。
 
     Gmail/Slackどちらも未連携の場合や、user_emailが無い場合は、それぞれ
     'unavailable'をそのまま返す（呼び出し側はこれを見て「連携してくだ
     さい」と案内できる）。
+
+    customer_idは以前、顧客担当者メールへのフォールバック検索に使って
+    いたが、14.75でその機能自体を削除した（PO番号検索が0件の場合に
+    Gmail検索が直列に2回走ることで応答が3〜4.5秒かかっていた上、
+    フォールバックの結果は「同じPOとは限らない」精度の低い参考情報
+    だったため）。呼び出し元との互換性のため引数自体は残しているが、
+    現在は使用していない。
     """
     if not user_email:
         unavailable = {"status": "unavailable", "summary": "ログインユーザーが特定できません。", "records": []}
         return {"gmail": unavailable, "slack": unavailable}
-
-    contact_emails = get_customer_contact_emails(customer_id)
 
     # 2026-07-10（14.74、Noritsuguが実際の[TIMING]ログの疑問から発見）:
     # 「単一のPO番号だけの検索なのに重い」という指摘の実際の原因は、
@@ -260,7 +219,7 @@ def get_related_communications(
     def _fetch_gmail():
         try:
             with timed("get_related_communications.gmail"):
-                return _search_gmail_related(user_email, po_number, contact_emails, max_results)
+                return _search_gmail_related(user_email, po_number, max_results)
         except Exception as e:
             return {"status": "error", "summary": f"Gmail検索中にエラーが発生しました: {e}", "records": []}
 
