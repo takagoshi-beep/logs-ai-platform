@@ -909,38 +909,6 @@ class ProjectService:
             for logs_code, product_id, product_name, sample_code in rows
         ]
 
-    def _query_po_numbers_for_ids(self, ids: list[str]) -> list[str]:
-        """指定した案件IDのPO番号だけを軽量に取得する（2026-07-10、14.72、
-        Noritsuguの指定）。今日のタスクのGmail/Slack連携検索
-        （get_task_signals）は、以前は「アクションが実際に生成された
-        案件」のPO番号が確定するのを待ってから（=build_project_
-        aggregates_bulk完了後に）実行していたため、Gmail/Slackの応答の
-        重さ（1.7〜3秒程度）がそのまま直列に積み上がっていた。
-
-        PO番号だけならbuild_project_aggregates_bulk（複数クエリの集計
-        処理）を待たずに軽量なクエリ1本で取得できるため、これを使って
-        Gmail/Slack検索を集計処理と並行に開始できるようにした。この
-        場合、検索対象は「アクションがある案件」ではなく「このページに
-        表示している全案件」に広がる（アクションの有無が確定する前に
-        検索を始めるため）が、Gmail/Slackの結果は案件ごとの補足情報
-        であり、多少広めに検索しても実害は無い。
-        """
-        if not ids:
-            return []
-        conn = get_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    'SELECT DISTINCT "PO_No" FROM purchase_orders WHERE "ID" = ANY(%s)',
-                    (list(ids),),
-                )
-                return [row[0] for row in cur.fetchall() if row[0]]
-        except Exception as e:
-            print(f"Error querying PO numbers: {e}")
-            return []
-        finally:
-            conn.close()
-
     def build_project_aggregates_bulk(self, project_ids: list[str]) -> list[ProjectAggregate]:
         """Build ProjectAggregates for many projects at once, using exactly
         one DB connection/query total (via `_build_project_data_batch`)

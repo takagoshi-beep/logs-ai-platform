@@ -362,34 +362,14 @@ def get_today_actions(limit: int = 20, scope: str = "mine", user: dict = Depends
             project_ids = service._query_projects_from_db(limit=50, owner_name=owner_name)
             ids = [r["id"] for r in project_ids if r.get("id")]
 
-        # 2026-07-10（14.72、Noritsuguの指定）: build_aggregates（DBの
-        # 集計処理）とGmail/Slack検索は、以前は「アクションが確定した
-        # 案件のPO番号」を使うため直列に実行していた（Gmail/Slackの応答
-        # の重さ、1.7〜3秒程度がそのまま積み上がっていた）。PO番号だけ
-        # なら集計処理を待たずに軽量なクエリで先に取得できるため、
-        # ThreadPoolExecutorで集計処理とGmail/Slack検索を並行実行する
-        # ように変更した。検索対象がアクションのある案件だけでなく
-        # 「このページの全案件」に広がるが、Gmail/Slackは補足情報の
-        # ため実害は無い（project_detailで既に採用したのと同じ考え方）。
-        def _build_aggregates():
-            with timed(f"today_actions.build_aggregates(n={len(ids)})"):
-                return list(service.build_project_aggregates_bulk(ids))
-
-        def _fetch_signals():
-            try:
-                from services.project_relations import get_task_signals
-                po_numbers = service._query_po_numbers_for_ids(ids)
-                with timed(f"today_actions.gmail_slack_signals(n_pos={len(po_numbers)})"):
-                    return get_task_signals(user.get("email"), po_numbers)
-            except Exception:
-                return {"gmail_unread_total": 0, "slack_recent_total": 0, "gmail_status": "unavailable", "slack_status": "unavailable", "by_task": {}}
-
-        with timed("today_actions.aggregates_and_signals_parallel"):
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                aggregates_future = executor.submit(_build_aggregates)
-                signals_future = executor.submit(_fetch_signals)
-                aggregates = aggregates_future.result()
-                signals = signals_future.result()
+        # 2026-07-10（14.78、Noritsuguの指定）: 今日のタスクのGmail/Slack
+        # 未読・関連件数表示は「件数だけで実用性が薄い」との判断で削除
+        # した（14.72で並行実行にしていたが、そもそも表示自体を無くす
+        # ため、Gmail/Slack検索（get_task_signals）自体を呼ばなくなった。
+        # 700ms〜1秒程度かかっていたこの検索が無くなる分、応答速度も
+        # 改善する）。
+        with timed(f"today_actions.build_aggregates(n={len(ids)})"):
+            aggregates = list(service.build_project_aggregates_bulk(ids))
 
         all_actions = []
         for agg in aggregates:
@@ -421,28 +401,12 @@ def get_today_actions(limit: int = 20, scope: str = "mine", user: dict = Depends
         # Take top N
         actions = all_actions[:limit]
 
-        # 案件データだけでなく、関連しそうな未読Gmail・直近Slackメッセージ
-        # 件数も一緒に返す（docs/architecture.md 14.34）。signalsは上の
-        # 並行実行で既に取得済み（14.72）なので、ここでは各actionに
-        # 割り当てるだけでよい。
-        by_task = signals.get("by_task", {}) if isinstance(signals, dict) else {}
-        for action in actions:
-            task_signal = by_task.get(action.get("project_name"), {})
-            action["gmail_unread"] = task_signal.get("gmail_unread", 0)
-            action["slack_recent"] = task_signal.get("slack_recent", 0)
-
         return {
             "success": True,
             "actions": actions,
             "count": len(actions),
             "total": len(all_actions),
             "scope": "mine" if owner_name else "all",
-            "signals": {
-                "gmail_unread_total": signals.get("gmail_unread_total", 0),
-                "slack_recent_total": signals.get("slack_recent_total", 0),
-                "gmail_status": signals.get("gmail_status", "unavailable"),
-                "slack_status": signals.get("slack_status", "unavailable"),
-            },
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

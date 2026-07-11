@@ -60,14 +60,6 @@ def _mock_project_service(monkeypatch, aggregates: dict[str, ProjectAggregate]):
         ProjectService, "build_project_aggregates_bulk",
         lambda self, project_ids: [aggregates[pid] for pid in project_ids if pid in aggregates],
     )
-    # 2026-07-10（14.72）: today_actionsがGmail/Slack検索とbuild_
-    # aggregatesを並行実行するようになり、PO番号の取得を専用の軽量
-    # メソッドで先に行うようになった。既存のaggregatesと矛盾しない
-    # PO番号を返すようにモックする。
-    monkeypatch.setattr(
-        ProjectService, "_query_po_numbers_for_ids",
-        lambda self, ids: [aggregates[pid].po_number for pid in ids if pid in aggregates],
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -424,47 +416,24 @@ def test_today_actions_via_http_sorted_by_priority(monkeypatch):
     assert body["actions"][0]["reason"] == "納期超過"
 
 
-def test_today_actions_includes_gmail_slack_signals(monkeypatch):
-    """docs/architecture.md 14.34: 今日のタスクに関連する未読Gmail・
-    直近Slackメッセージ件数が、タスクごととサマリの両方に含まれる。"""
-    from services import project_relations
-
-    _mock_project_service(monkeypatch, {"7722": _fake_aggregate("7722")})
-    monkeypatch.setattr(
-        project_relations, "get_task_signals",
-        lambda user_email, po_numbers: {
-            "gmail_unread_total": 2, "slack_recent_total": 1,
-            "gmail_status": "ok", "slack_status": "ok",
-            "by_task": {po: {"gmail_unread": 2, "slack_recent": 1} for po in po_numbers},
-        },
-    )
-
-    response = _client().get("/api/today-actions")
-    assert response.status_code == 200
-    body = response.json()
-    assert body["signals"]["gmail_unread_total"] == 2
-    assert body["signals"]["slack_recent_total"] == 1
-    assert body["actions"][0]["gmail_unread"] == 2
-    assert body["actions"][0]["slack_recent"] == 1
-
-
-def test_today_actions_signals_degrade_gracefully_on_error(monkeypatch):
-    """get_task_signals自体が例外を出しても、案件データ本体は正常に返る。"""
+def test_today_actions_no_longer_calls_gmail_slack_signals(monkeypatch):
+    """2026-07-10（14.78、Noritsuguの指定）: 今日のタスクのGmail/Slack
+    未読・関連件数表示は「件数だけで実用性が薄い」との判断で削除した。
+    get_task_signals自体も不要になったため削除済み。レスポンスにも
+    signalsフィールドやgmail_unread/slack_recentが含まれないことを
+    確認する。"""
     from services import project_relations
 
     _mock_project_service(monkeypatch, {"7722": _fake_aggregate("7722")})
 
-    def _raise(user_email, po_numbers):
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr(project_relations, "get_task_signals", _raise)
+    assert not hasattr(project_relations, "get_task_signals")
 
     response = _client().get("/api/today-actions")
     assert response.status_code == 200
     body = response.json()
-    assert body["count"] == 1
-    assert body["actions"][0]["gmail_unread"] == 0
-    assert body["signals"]["gmail_unread_total"] == 0
+    assert "signals" not in body
+    assert "gmail_unread" not in body["actions"][0]
+    assert "slack_recent" not in body["actions"][0]
 
 
 # ---------------------------------------------------------------------------

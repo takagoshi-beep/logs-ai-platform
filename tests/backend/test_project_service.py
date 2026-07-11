@@ -80,25 +80,6 @@ def test_build_project_data_batch_opens_exactly_one_connection(monkeypatch):
     assert result["0"].po_number == "PO-0"
 
 
-def test_query_po_numbers_for_ids_returns_empty_list_for_empty_input(monkeypatch):
-    """2026-07-10（14.72、Noritsuguの指定）: 今日のタスクのGmail/Slack
-    検索とbuild_aggregatesを並行実行できるようにするため、PO番号だけを
-    軽量に取得するメソッドを新設した。空リストで呼んでもDBに接続しない。"""
-    call_count = {"n": 0}
-
-    def _fake_get_connection():
-        call_count["n"] += 1
-        return _FakeConnection([], ["PO_No"])
-
-    monkeypatch.setattr("services.project_service.get_connection", _fake_get_connection)
-
-    service = ProjectService()
-    result = service._query_po_numbers_for_ids([])
-
-    assert result == []
-    assert call_count["n"] == 0
-
-
 def test_get_products_for_po_returns_empty_list_for_empty_po_number():
     service = ProjectService()
     assert service.get_products_for_po("") == []
@@ -140,35 +121,6 @@ def test_get_products_for_po_returns_empty_list_on_db_error(monkeypatch):
 
     service = ProjectService()
     result = service.get_products_for_po("PO-1")
-
-    assert result == []
-
-
-def test_query_po_numbers_for_ids_returns_distinct_po_numbers(monkeypatch):
-    rows = [("PO-1",), ("PO-2",), (None,)]
-    monkeypatch.setattr(
-        "services.project_service.get_connection",
-        lambda: _FakeConnection(rows, ["PO_No"]),
-    )
-
-    service = ProjectService()
-    result = service._query_po_numbers_for_ids(["1", "2", "3"])
-
-    assert result == ["PO-1", "PO-2"]  # Noneは除外される
-
-
-def test_query_po_numbers_for_ids_returns_empty_list_on_error(monkeypatch):
-    class _FailingConnection:
-        def cursor(self):
-            raise RuntimeError("DB接続エラー")
-
-        def close(self):
-            pass
-
-    monkeypatch.setattr("services.project_service.get_connection", lambda: _FailingConnection())
-
-    service = ProjectService()
-    result = service._query_po_numbers_for_ids(["1"])
 
     assert result == []
 
