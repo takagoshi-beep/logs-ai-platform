@@ -290,6 +290,87 @@ def test_po_dict_to_project_data_uses_delivery_column_not_customer_delivery_date
     assert data.po_required_delivery_date == datetime(2026, 8, 30)
 
 
+def test_attach_existence_data_filters_sales_query_by_earliest_delivery_date_in_batch(monkeypatch):
+    """2026-07-10（14.71、Noritsuguが実際の[TIMING]ログで発見）: 14.69の
+    「各POの納期以降の売上だけを対象にする」ロジックが、案件数ではなく
+    該当商品の売上行数に比例して重くなっていた（全ての個別売上行を
+    無条件に取得していたため）。このバッチ内の全POのうち最も古い納期
+    より前の売上は、どのPOの判定にも使われないため、SQL側のWHERE句で
+    あらかじめ除外し、転送・保持するデータ量を減らす。"""
+    from services.project_service import ProjectService
+
+    captured = {}
+
+    class _RoutingConn:
+        def cursor(self):
+            class _Cur:
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, *a):
+                    return False
+
+                def execute(self_inner, sql, params=None):
+                    if "FROM sales" in sql:
+                        captured["sales_sql"] = sql
+                        captured["sales_params"] = params
+
+                def fetchall(self_inner):
+                    return []
+
+            return _Cur()
+
+        def close(self):
+            pass
+
+    service = ProjectService()
+    po_dicts = [
+        {"LOGS_CODE": 5145.0, "PO_No": "PO-1", "Delivery_納品日": datetime(2026, 8, 30)},
+        {"LOGS_CODE": 5145.0, "PO_No": "PO-2", "Delivery_納品日": datetime(2026, 6, 1)},  # より古い納期
+    ]
+    service._attach_existence_data(_RoutingConn(), po_dicts)
+
+    assert 'AND "売上入力日" >= %s' in captured["sales_sql"]
+    # 2つのPOのうち、より古い方（2026-06-01）が下限として使われる。
+    assert captured["sales_params"][1] == datetime(2026, 6, 1)
+
+
+def test_attach_existence_data_sales_query_has_no_date_filter_when_no_delivery_dates(monkeypatch):
+    """Delivery_納品日が1件も無い場合は、以前と同じ無条件のクエリの
+    ままにする（フォールバック、納期不明の案件を過度に厳しく扱わない
+    ため）。"""
+    from services.project_service import ProjectService
+
+    captured = {}
+
+    class _RoutingConn:
+        def cursor(self):
+            class _Cur:
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, *a):
+                    return False
+
+                def execute(self_inner, sql, params=None):
+                    if "FROM sales" in sql:
+                        captured["sales_sql"] = sql
+
+                def fetchall(self_inner):
+                    return []
+
+            return _Cur()
+
+        def close(self):
+            pass
+
+    service = ProjectService()
+    po_dicts = [{"LOGS_CODE": 5145.0, "PO_No": "PO-1"}]
+    service._attach_existence_data(_RoutingConn(), po_dicts)
+
+    assert "売上入力日" not in captured["sales_sql"] or "AND" not in captured["sales_sql"]
+
+
 def test_attach_existence_data_ignores_sales_before_this_pos_delivery_date(monkeypatch):
     """2026-07-10（14.69、Noritsuguの指定）: リピート商品（同じLOGS_CODE
     を複数のPOで繰り返し発注している商品）で、過去の別POの売上入力が

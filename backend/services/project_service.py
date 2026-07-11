@@ -236,15 +236,39 @@ class ProjectService:
 
         from services.timing import timed
 
+        # 2026-07-10（14.71修正、Noritsuguが実際の[TIMING]ログで発見）:
+        # 14.69で「各POの納期以降の売上だけを対象にする」ためにLOGS_CODE
+        # ごとの全ての個別売上行を取得する方式に変えたところ、これが
+        # 案件数（50件）ではなく該当商品の**売上行数**（例: n=1302件）に
+        # 比例して重くなり、[TIMING]で1.5〜1.8秒という突出したボトル
+        # ネックになっていた（他のクエリは70〜90ms程度）。
+        # このバッチ内の全POのうち最も古い納期より前の売上は、どのPOの
+        # 判定にも絶対に使われない（14.69のロジックは常に「そのPOの納期
+        # 以降」しか見ないため）ので、SQL側のWHERE句に追加してあらかじめ
+        # 除外する。これにより、リピート販売されている商品でも、この
+        # バッチに無関係な古い販売履歴まで転送・保持せずに済む。
+        earliest_relevant_delivery_date = None
+        for d in po_dicts:
+            parsed = self._parse_date(d.get("Delivery_納品日"))
+            if parsed and (earliest_relevant_delivery_date is None or parsed < earliest_relevant_delivery_date):
+                earliest_relevant_delivery_date = parsed
+
         try:
             if raw_logs_codes:
                 with timed(f"attach_existence_data.sales_query(n={len(raw_logs_codes)})"):
                     with conn.cursor() as cur:
-                        cur.execute(
-                            'SELECT "LOGS_CODE", "売上入力日" FROM sales '
-                            'WHERE "LOGS_CODE" = ANY(%s)',
-                            (raw_logs_codes,),
-                        )
+                        if earliest_relevant_delivery_date:
+                            cur.execute(
+                                'SELECT "LOGS_CODE", "売上入力日" FROM sales '
+                                'WHERE "LOGS_CODE" = ANY(%s) AND "売上入力日" >= %s',
+                                (raw_logs_codes, earliest_relevant_delivery_date),
+                            )
+                        else:
+                            cur.execute(
+                                'SELECT "LOGS_CODE", "売上入力日" FROM sales '
+                                'WHERE "LOGS_CODE" = ANY(%s)',
+                                (raw_logs_codes,),
+                            )
                         for logs_code, sale_date in cur.fetchall():
                             key = self._format_logs_code_for_project(logs_code)
                             sales_dates_by_logs_code.setdefault(key, []).append(sale_date)
