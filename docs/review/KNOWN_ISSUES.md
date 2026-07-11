@@ -1,14 +1,63 @@
 # Known Issues & Limitations
 
-**Date:** 2026-07-01 (originally); reviewed 2026-07-04
-**Scope:** Walking Skeleton Implementation (MVP for verification only)
-**Latest Update:** Build errors fixed, Browser Verification in progress
+**Date:** 2026-07-01 (originally); reviewed 2026-07-04; reviewed again 2026-07-11
+
+> **2026-07-11 review note:** This file was written for the "Walking
+> Skeleton" MVP (2026-07-01) and has not been kept in step with the
+> codebase since — nearly everything below this note describes pages,
+> stores, and limitations that no longer exist (`/debug` and
+> `/walking-skeleton` were deleted in 14.9/14.11; all seven in-memory
+> JSONL stores were migrated to Supabase in 14.23/14.24; a Governance
+> approval UI exists, embedded in `/proposals`, contrary to "no UI to
+> approve/reject" below). **For the current state of any feature,
+> `docs/architecture.md`'s phase-numbered entries (13 onward) are the
+> reliable source — this file is being kept only as a historical record
+> of the original MVP review, not as a live issue tracker.** Only one
+> item below was re-confirmed as still real and current (see directly
+> below); everything else is archived, unmodified, beneath the
+> `## Historical (Walking Skeleton era, mostly superseded)` heading.
+
+## Currently Active Known Issues (re-confirmed 2026-07-11)
+
+### Delivery Completion Signal Relies Solely on Logsys Sales Entry
+
+**Limitation:** `ProjectService` determines delivery/overdue status purely
+from whether a purchase order's delivery-date field has passed without a
+corresponding sales entry in Logsys (refined in 14.69 to use
+`Delivery_納品日` rather than `顧客納品日`, which turned out to be
+unreliable for repeat orders — see 14.69). It still has no way to know
+whether an item was actually delivered in reality.
+
+**Impact:** Older POs completed in practice but never entered as sales in
+Logsys are flagged as overdue, and `今日のタスク` can be dominated by
+"仕入先へ納期急ぎ連絡" actions that aren't actually actionable.
+
+**Workaround:** Manually cross-check against the production management
+team's separate tracking spreadsheet before acting on these alerts.
+
+**Fix:** Integrate the production management spreadsheet
+(`production_mass`, already synced and partially wired — see 14.16/14.18)
+as an additional signal, so `ProjectService` can distinguish "truly
+overdue" from "Logsys entry pending." Tracked as an open item in
+Noritsugu's handoff notes as of 2026-07-11.
+
+---
+
+## Historical (Walking Skeleton era, mostly superseded)
+
+> Everything from here to the end of this file describes the 2026-07-01
+> MVP review and its 2026-07-04 follow-up. It is kept unmodified below as
+> a record of what was true at the time — not current status. See the
+> 2026-07-11 note above.
 
 > **2026-07-04 review note:** `ProjectService` (`backend/services/project_service.py`)
 > has since been migrated to query the real Supabase `purchase_orders` table
 > directly, replacing the in-memory `_projects_store` described below. See
 > the "Project Storage" and "Project Persistence" sections for details on
 > what changed and what is still not implemented.
+
+**Scope (as originally written):** Walking Skeleton Implementation (MVP for verification only)
+**Latest Update (as originally written):** Build errors fixed, Browser Verification in progress
 
 ---
 

@@ -79,3 +79,49 @@ def test_answer_passes_the_system_prompt_and_tools(monkeypatch):
     chat_agent.answer("質問")
     assert "今日の日付" in captured["system"]
     assert captured["tools"] == chat_agent.TOOLS
+
+
+def test_answer_attaches_trace_id_and_registers_capability_execution(monkeypatch):
+    """14.79: `/api/chat`が`reason()`から`chat_agent.answer()`へ切り替わった際、
+    Blueprint Principle 2/6/10（Capability Driven / Transparent AI / Trace
+    Everything）が失われていた分の回帰テスト。"""
+    monkeypatch.setattr(chat_agent, "generate_with_tools", lambda **kwargs: ("回答です", []))
+
+    result = chat_agent.answer("質問です", session_id="trace-test-session")
+
+    assert result["trace_id"].startswith("chat-")
+
+    from services.capability_instance import registry
+    executions = [
+        ex for ex in registry._execution_history
+        if ex.capability_id == "chat_conversation"
+    ]
+    assert len(executions) == 1
+    assert executions[0].inputs["question"] == "質問です"
+    assert executions[0].inputs["session_id"] == "trace-test-session"
+    assert executions[0].status.value == "completed"
+    assert executions[0].trace_id == result["trace_id"]
+
+    from services.trace_store import get_trace
+    saved = get_trace(result["trace_id"])
+    assert saved["answer"] == "回答です"
+
+
+def test_answer_registers_failed_capability_execution_on_error(monkeypatch):
+    def _boom(**kwargs):
+        raise RuntimeError("LLM呼び出し失敗")
+
+    monkeypatch.setattr(chat_agent, "generate_with_tools", _boom)
+
+    import pytest
+    with pytest.raises(RuntimeError):
+        chat_agent.answer("質問です", session_id="error-test-session")
+
+    from services.capability_instance import registry
+    executions = [
+        ex for ex in registry._execution_history
+        if ex.capability_id == "chat_conversation"
+    ]
+    assert len(executions) == 1
+    assert executions[0].status.value == "failed"
+    assert executions[0].error_message == "LLM呼び出し失敗"
