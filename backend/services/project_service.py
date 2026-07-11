@@ -234,28 +234,32 @@ class ProjectService:
         actual_cost_totals_by_po: dict[str, Any] = {}
         closed_po_numbers: set[str] = set()
 
+        from services.timing import timed
+
         try:
             if raw_logs_codes:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        'SELECT "LOGS_CODE", "売上入力日" FROM sales '
-                        'WHERE "LOGS_CODE" = ANY(%s)',
-                        (raw_logs_codes,),
-                    )
-                    for logs_code, sale_date in cur.fetchall():
-                        key = self._format_logs_code_for_project(logs_code)
-                        sales_dates_by_logs_code.setdefault(key, []).append(sale_date)
+                with timed(f"attach_existence_data.sales_query(n={len(raw_logs_codes)})"):
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            'SELECT "LOGS_CODE", "売上入力日" FROM sales '
+                            'WHERE "LOGS_CODE" = ANY(%s)',
+                            (raw_logs_codes,),
+                        )
+                        for logs_code, sale_date in cur.fetchall():
+                            key = self._format_logs_code_for_project(logs_code)
+                            sales_dates_by_logs_code.setdefault(key, []).append(sale_date)
 
             if po_numbers:
                 # 仕入登録（活動履歴・状態バッジ用）はPO単位（14.41）。
-                with conn.cursor() as cur:
-                    cur.execute(
-                        'SELECT "POnum", MAX("伝票日") FROM purchases '
-                        'WHERE "POnum" = ANY(%s) GROUP BY "POnum"',
-                        (po_numbers,),
-                    )
-                    for po_no, max_date in cur.fetchall():
-                        purchase_dates_by_po[po_no] = max_date
+                with timed(f"attach_existence_data.purchase_date_query(n={len(po_numbers)})"):
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            'SELECT "POnum", MAX("伝票日") FROM purchases '
+                            'WHERE "POnum" = ANY(%s) GROUP BY "POnum"',
+                            (po_numbers,),
+                        )
+                        for po_no, max_date in cur.fetchall():
+                            purchase_dates_by_po[po_no] = max_date
 
                 # 2026-07-09（14.49・14.52修正、Noritsuguの指定）: 実績原価
                 # （予定vs確定の粗利比較用）・実績輸入経費率は、同じPO
@@ -272,24 +276,26 @@ class ProjectService:
                 # "諸掛込金額円"が無ければ「諸掛が無い（輸入品ではない）」
                 # という意味なので、COALESCEで"仕入金額円"にフォールバック
                 # する（経費率は1.0相当になる）。
-                with conn.cursor() as cur:
-                    cur.execute(
-                        'SELECT "POnum", SUM(COALESCE("諸掛込金額円", "仕入金額円")), SUM("仕入金額円") '
-                        'FROM purchases WHERE "POnum" = ANY(%s) GROUP BY "POnum"',
-                        (po_numbers,),
-                    )
-                    for po_no, total_with_fees, total_base in cur.fetchall():
-                        actual_cost_totals_by_po[po_no] = total_with_fees
-                        if total_base:
-                            actual_import_cost_ratios_by_po[po_no] = total_with_fees / total_base
+                with timed(f"attach_existence_data.cost_ratio_query(n={len(po_numbers)})"):
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            'SELECT "POnum", SUM(COALESCE("諸掛込金額円", "仕入金額円")), SUM("仕入金額円") '
+                            'FROM purchases WHERE "POnum" = ANY(%s) GROUP BY "POnum"',
+                            (po_numbers,),
+                        )
+                        for po_no, total_with_fees, total_base in cur.fetchall():
+                            actual_cost_totals_by_po[po_no] = total_with_fees
+                            if total_base:
+                                actual_import_cost_ratios_by_po[po_no] = total_with_fees / total_base
 
-                with conn.cursor() as cur:
-                    cur.execute(
-                        'SELECT DISTINCT "POnum" FROM production_mass '
-                        'WHERE "POnum" = ANY(%s) AND "表示"::text = \'0\'',
-                        (po_numbers,),
-                    )
-                    closed_po_numbers = {row[0] for row in cur.fetchall()}
+                with timed(f"attach_existence_data.production_mass_query(n={len(po_numbers)})"):
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            'SELECT DISTINCT "POnum" FROM production_mass '
+                            'WHERE "POnum" = ANY(%s) AND "表示"::text = \'0\'',
+                            (po_numbers,),
+                        )
+                        closed_po_numbers = {row[0] for row in cur.fetchall()}
         except Exception as e:
             print(f"Error attaching existence data: {e}")
             # 取得に失敗しても、案件一覧本体の表示は止めない（空のまま進める）。
@@ -353,17 +359,21 @@ class ProjectService:
         if not project_ids:
             return {}
 
+        from services.timing import timed
+
         conn = get_connection()
         try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    f'SELECT {self._PO_SELECT_COLUMNS} FROM purchase_orders WHERE "ID" = ANY(%s)',
-                    (list(project_ids),),
-                )
-                rows = cur.fetchall()
-                columns = [desc[0] for desc in cur.description]
+            with timed(f"build_project_data_batch.po_query(n={len(project_ids)})"):
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f'SELECT {self._PO_SELECT_COLUMNS} FROM purchase_orders WHERE "ID" = ANY(%s)',
+                        (list(project_ids),),
+                    )
+                    rows = cur.fetchall()
+                    columns = [desc[0] for desc in cur.description]
             po_dicts = [dict(zip(columns, row)) for row in rows]
-            self._attach_existence_data(conn, po_dicts)
+            with timed(f"build_project_data_batch.attach_existence_data(n={len(po_dicts)})"):
+                self._attach_existence_data(conn, po_dicts)
         except Exception as e:
             print(f"Error batch-building project data: {e}")
             return {}

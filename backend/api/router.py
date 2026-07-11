@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
@@ -200,35 +202,44 @@ def get_project(project_id: str, user: dict = Depends(require_login)) -> dict:
             "project": agg.to_dict(),
         }
 
-        # 生産管理チームの量産進捗（PP/TOP/Ex-F/ETD等）をPO番号で突合して
-        # 付加する（14.16/14.18）。取得できなくても案件詳細本体の表示は
-        # ブロックしない — production_mass はこの案件の理解に必須ではなく、
-        # 補足情報という位置づけのため。
-        try:
-            from services.production_data import get_production_mass_status
-            with timed("project_detail.production_mass"):
-                result["production"] = get_production_mass_status(agg.po_number)
-        except Exception:
-            result["production"] = []
+        # 2026-07-10（14.70、Noritsuguの指定）: 生産管理の量産進捗取得と
+        # Gmail/Slack連携は、互いに独立した処理（どちらもagg確定後の
+        # 情報を使うだけで、お互いの結果には依存しない）にもかかわらず
+        # 直列に実行しており、合計時間が「production_mass + Gmail/Slack」
+        # になっていた（Gmail/Slackだけで1.7〜3秒程度かかる）。
+        # ThreadPoolExecutorで並行実行し、合計時間を「遅い方だけ」に
+        # 縮める（DBクエリ・HTTPリクエストはいずれもI/O待ちの間はGILが
+        # 解放されるため、スレッドでの並行化が有効）。
+        def _fetch_production():
+            try:
+                from services.production_data import get_production_mass_status
+                with timed("project_detail.production_mass"):
+                    return get_production_mass_status(agg.po_number)
+            except Exception:
+                return []
 
-        # ログイン中の本人のGmail/Slackから、この案件に関連しそうな
-        # メッセージを検索する（PO番号・顧客担当者メールアドレス・
-        # 仕入先名で突合、docs/architecture.md 14.29）。未連携時は
-        # gmail_service/slack_serviceが返す'unavailable'をそのまま返す。
-        try:
-            from services.project_relations import get_related_communications
-            with timed("project_detail.gmail_slack_related_communications"):
-                result["related_communications"] = get_related_communications(
-                    user_email=user.get("email"),
-                    po_number=agg.po_number,
-                    customer_id=agg.data.customer_id,
-                    supplier_name=agg.data.supplier_name,
-                )
-        except Exception as e:
-            result["related_communications"] = {
-                "gmail": {"status": "error", "summary": str(e), "records": []},
-                "slack": {"status": "error", "summary": str(e), "records": []},
-            }
+        def _fetch_related_communications():
+            try:
+                from services.project_relations import get_related_communications
+                with timed("project_detail.gmail_slack_related_communications"):
+                    return get_related_communications(
+                        user_email=user.get("email"),
+                        po_number=agg.po_number,
+                        customer_id=agg.data.customer_id,
+                        supplier_name=agg.data.supplier_name,
+                    )
+            except Exception as e:
+                return {
+                    "gmail": {"status": "error", "summary": str(e), "records": []},
+                    "slack": {"status": "error", "summary": str(e), "records": []},
+                }
+
+        with timed("project_detail.production_and_communications_parallel"):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                production_future = executor.submit(_fetch_production)
+                communications_future = executor.submit(_fetch_related_communications)
+                result["production"] = production_future.result()
+                result["related_communications"] = communications_future.result()
 
         return result
     except HTTPException:
