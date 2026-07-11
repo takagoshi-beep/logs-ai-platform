@@ -15,6 +15,7 @@ from __future__ import annotations
 import base64
 import os
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import requests
@@ -172,8 +173,13 @@ def search_messages(email: str, query: str, max_results: int = 10) -> dict[str, 
     except Exception as e:
         return {"status": "error", "summary": f"Gmail検索中にエラーが発生しました: {e}", "records": []}
 
-    records = []
-    for mid in message_ids:
+    # 2026-07-10（14.76、Noritsuguが実際の[TIMING]ログの商品ごとの差から
+    # 発見）: 以前はヒットしたメール1件ごとに個別のGET（メタデータ取得）
+    # を直列に実行していた。ヒット件数に比例して所要時間が増える
+    # （実例: ヒットが少ない商品は772ms、ヒットが多い商品は3〜4秒）
+    # N+1的な作りだった。ThreadPoolExecutorで各メールのメタデータ取得を
+    # 並行実行するよう修正し、所要時間を「一番遅い1件分」に近づけた。
+    def _fetch_one(mid: str) -> dict[str, Any] | None:
         try:
             msg_resp = requests.get(
                 f"{GMAIL_API_BASE}/messages/{mid}",
@@ -184,15 +190,22 @@ def search_messages(email: str, query: str, max_results: int = 10) -> dict[str, 
             msg_resp.raise_for_status()
             msg = msg_resp.json()
             headers = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
-            records.append({
+            return {
                 "message_id": mid,
                 "subject": headers.get("Subject", "(件名なし)"),
                 "from": headers.get("From", ""),
                 "date": headers.get("Date", ""),
                 "snippet": msg.get("snippet", ""),
-            })
+            }
         except Exception:
-            continue
+            return None
+
+    records = []
+    if message_ids:
+        with ThreadPoolExecutor(max_workers=min(len(message_ids), 10)) as executor:
+            for result in executor.map(_fetch_one, message_ids):
+                if result is not None:
+                    records.append(result)
 
     return {
         "status": "ok",
