@@ -661,6 +661,56 @@ def test_get_product_detail_aggregates_all_sources(monkeypatch):
     }
 
 
+def test_get_product_detail_groups_purchase_orders_by_po_no(monkeypatch):
+    """14.83: 商品詳細ページのPO(発注)履歴カードが明細レベルのまま表示
+    されており分かりにくいという指摘（Noritsugu、2026-07-13）の修正。
+    同一PO_No内の複数明細行（カラー/サイズ違い等）を、数量・金額を
+    合算した1件のPO単位カードにまとめる。"""
+    master_cols = ["ID", "LOGS_CODE", "Sample_CODE", "商品名", "商品分類", "supplier_production_staff"]
+    master_rows = [(101, "5145", "S1", "Baseball Cap", 1, "木村美菜")]
+
+    po_cols = ["ID", "PO_No", "顧客名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "企画担当者名", "発注数量", "発注金額", "PO発行日"]
+    # 同じPO_No「914-1」に2明細行（カラー違い）+ 別PO「914-2」に1行。
+    # po_dictsはPO発行日の降順で渡される想定なので、914-1の2行を先に置く。
+    po_rows = [
+        (1, "914-1", "US_LOGS Inc.", "山田太郎", None, None, None, 10, 1000, "2026-02-01"),
+        (2, "914-1", "US_LOGS Inc.", "山田太郎", None, None, None, 5, 500, "2026-02-01"),
+        (3, "914-2", "US_LOGS Inc.", "山田太郎", None, None, None, 20, 2000, "2026-01-01"),
+    ]
+
+    sales_cols = ["得意先名", "営業担当者名", "事務処理担当者名", "経理担当者名", "数量pcs", "売上金額", "売上入力日"]
+    purchase_cols = ["仕入先名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "仕入数量pcs", "仕入金額円", "伝票日"]
+    sample_cols = ["見積No", "仕入先名", "依頼内容", "カラー", "サイズ", "数量", "回答者", "依頼元", "回答日", "通知状況"]
+
+    monkeypatch.setattr(
+        product_service, "get_connection",
+        lambda: _SequentialFakeConnection([
+            (master_rows, master_cols),
+            (po_rows, po_cols),
+            ([], sales_cols),
+            ([], purchase_cols),
+            ([], sample_cols),
+        ]),
+    )
+
+    detail = product_service.get_product_detail("101")
+    pos = detail["purchase_orders"]
+
+    assert len(pos) == 2  # 914-1と914-2の2グループにまとまる
+
+    po_914_1 = next(p for p in pos if p["PO_No"] == "914-1")
+    assert po_914_1["発注数量"] == 15  # 10 + 5
+    assert po_914_1["発注金額"] == 1500  # 1000 + 500
+    assert po_914_1["line_count"] == 2
+    assert po_914_1["project_id"] == "1"  # グループ内で最初の行（=最新の明細行）のIDを代表とする
+
+    po_914_2 = next(p for p in pos if p["PO_No"] == "914-2")
+    assert po_914_2["発注数量"] == 20
+    assert po_914_2["発注金額"] == 2000
+    assert po_914_2["line_count"] == 1
+    assert po_914_2["project_id"] == "3"
+
+
 def test_get_product_detail_skips_po_sales_purchase_lookup_when_no_logs_code(monkeypatch):
     """LOGS_CODEがNULL（未発注）の商品は、PO/売上/仕入クエリ自体を
     発行せず、空リストとして正常に返す（クラッシュしない）。"""

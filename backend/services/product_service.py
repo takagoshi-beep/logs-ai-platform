@@ -148,6 +148,47 @@ def _rows_to_dicts(rows: list[tuple], columns: list[str]) -> list[dict[str, Any]
     return [dict(zip(columns, row)) for row in rows]
 
 
+def _group_po_dicts_by_po_no(po_dicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """商品詳細ページのPO(発注)履歴カード表示用に、同一PO_No内の複数明細行
+    （カラー/サイズ違いやリピートオーダー等、この商品が同じPOに複数行で
+    含まれるケース）をPO単位に集約する（2026-07-13、Noritsuguの指定 —
+    商品詳細ページのPO履歴が明細レベルのまま表示され分かりにくいという
+    指摘の修正）。
+
+    集約後の各グループには、案件詳細ページ（`/workspace/{project_id}`）
+    への遷移用に代表`project_id`を1つ持たせる。project_service.pyの
+    `project_id = str(po_dict.get("ID"))`と全く同じ対応（purchase_orders
+    の1行 = 1つの"案件"）なので、ここでは各PO_Noグループの最初の行
+    （呼び出し元のpo_dictsは既に"PO発行日"降順のため、そのPO_No内で
+    最新の明細行）のIDを代表project_idとして使う。
+
+    get_product_detail()の`master`側の集計（発注単価等）は、この関数を
+    通す前の生のpo_dicts（明細レベル）をそのまま使い続ける — ここで
+    集約するのはレスポンスの`purchase_orders`フィールド（カード表示用）
+    のみ。
+    """
+    grouped: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for row in po_dicts:
+        po_no = row.get("PO_No") or ""
+        if po_no not in grouped:
+            grouped[po_no] = {
+                "PO_No": po_no,
+                "project_id": str(row.get("ID")),
+                "顧客名": row.get("顧客名"),
+                "営業担当者名": row.get("営業担当者名"),
+                "PO発行日": row.get("PO発行日"),
+                "発注数量": 0,
+                "発注金額": 0,
+                "line_count": 0,
+            }
+            order.append(po_no)
+        grouped[po_no]["発注数量"] += row.get("発注数量") or 0
+        grouped[po_no]["発注金額"] += row.get("発注金額") or 0
+        grouped[po_no]["line_count"] += 1
+    return [grouped[po_no] for po_no in order]
+
+
 def get_all_products(limit: int = 50, offset: int = 0, search: str | None = None) -> list[dict[str, Any]]:
     """商品マスタ全件から、Sample_CODE降順でlimit件・offsetオフセットで
     取得する（scope=all、2026-07-09・14.54、Noritsuguの指定：サーバー
@@ -502,7 +543,7 @@ def get_product_detail(product_id: str) -> dict[str, Any] | None:
 
     return {
         "master": master,
-        "purchase_orders": po_dicts,
+        "purchase_orders": _group_po_dicts_by_po_no(po_dicts),
         "sales": _rows_to_dicts(sales_rows, sales_cols),
         "purchases": purchase_dicts,
         "samples": sample_rows,

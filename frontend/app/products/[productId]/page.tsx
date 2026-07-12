@@ -1,22 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Badge, Card, SectionHeader } from "@/components/design-system";
 import { getProduct } from "@/lib/api-client";
 
 type Params = { params: { productId: string } };
 
-interface PurchaseOrderLine {
-  ID: number;
+interface PurchaseOrderGroup {
   PO_No: string;
+  project_id: string;
   顧客名: string | null;
   営業担当者名: string | null;
-  営業事務担当者名: string | null;
-  生産管理担当者名: string | null;
-  企画担当者名: string | null;
+  PO発行日: string | null;
   発注数量: number | null;
   発注金額: number | null;
-  PO発行日: string | null;
+  line_count: number;
 }
 
 interface SalesLine {
@@ -65,7 +64,7 @@ interface RelatedCommunications {
 
 interface ProductDetail {
   master: Record<string, any>;
-  purchase_orders: PurchaseOrderLine[];
+  purchase_orders: PurchaseOrderGroup[];
   sales: SalesLine[];
   purchases: PurchaseLine[];
   samples: SampleLine[];
@@ -151,19 +150,24 @@ export default function ProductDetailPage({ params }: Params) {
       </Card>
 
       <Card>
-        <SectionHeader title="PO(発注)履歴" subtitle="この商品が含まれるPurchase Orderの一覧です。" />
+        <SectionHeader title="PO(発注)履歴" subtitle="この商品が含まれるPurchase Orderの一覧です。PO単位でまとめて表示しています（クリックで案件詳細へ）。" />
         <div className="mt-3 space-y-2">
           {product.purchase_orders.length > 0 ? (
-            product.purchase_orders.map((po, idx) => (
-              <div key={idx} className="rounded-lg border border-slate-200 p-3 text-xs">
+            product.purchase_orders.map((po) => (
+              <Link
+                key={po.PO_No}
+                href={`/workspace/${po.project_id}`}
+                className="block rounded-lg border border-slate-200 p-3 text-xs transition hover:border-slate-300 hover:bg-slate-50"
+              >
                 <div className="flex items-center justify-between">
                   <span className="font-medium text-ink">{po.PO_No}</span>
                   <span className="text-sub">{po.PO発行日 ?? "—"}</span>
                 </div>
                 <p className="mt-1 text-sub">
                   顧客: {po.顧客名 ?? "—"} ・ 営業: {po.営業担当者名 ?? "—"} ・ 数量: {po.発注数量 ?? "—"} ・ 金額: {fmtYen(po.発注金額)}
+                  {po.line_count > 1 && ` （明細${po.line_count}件を合算）`}
                 </p>
-              </div>
+              </Link>
             ))
           ) : (
             <p className="text-sm text-sub">PO発行の記録はありません</p>

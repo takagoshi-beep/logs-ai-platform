@@ -3219,6 +3219,44 @@ Claude側でget_code_masterを別途呼ぶ必要もない。
 
 合計447件全てパス。
 
+## 14.83 商品詳細ページのPO(発注)履歴カードをPO単位に集約し、案件詳細へリンク (2026-07-13)
+
+Noritsuguの指定: 商品詳細ページの「PO(発注)履歴」カードが明細レベル
+（`purchase_orders`テーブルの生の行、カラー/サイズ違いやリピート
+オーダーで同一PO_Noが複数行に分かれる）のまま表示されており分かり
+にくいため、PO単位にまとめ、かつクリックで案件詳細ページ
+（`/workspace/{project_id}`）へ遷移できるようにした。
+
+`project_id = str(purchase_orders."ID")`という対応（project_service.py
+の`build_project_data_batch`と全く同じ）は変えていない — 1つの
+`purchase_orders`行 = 1つの"案件"というこのシステムの既存モデルは
+そのまま。あくまで商品詳細ページの**カード表示**だけをPO単位に集約し、
+各グループの代表project_id（グループ内で最初の行＝そのPO_No内で最新の
+明細行のID）へリンクする。
+
+`backend/services/product_service.py`に`_group_po_dicts_by_po_no`を追加。
+`get_product_detail`が返す`purchase_orders`フィールドを、この関数を
+通した集約後の形（PO_No、project_id、顧客名、営業担当者名、PO発行日、
+発注数量合計、発注金額合計、line_count）に変更。`master`側の集計
+（発注単価等、14.44/14.46/14.52で実装済み）は集約前の生のpo_dictsを
+引き続き使うため影響なし。
+
+フロントエンド（`frontend/app/products/[productId]/page.tsx`）は
+`PurchaseOrderGroup`型に更新し、各カードを`next/link`の`Link`で
+`/workspace/{project_id}`へのクリック可能なカードに変更。明細が
+複数合算された場合は「（明細◯件を合算）」と表示。
+
+ついでに発見: `frontend/app/tasks/page.tsx`に、以前のセッション
+（今日のタスクのGmail/Slack未読件数表示削除）で消したはずの
+`setSignals`呼び出しが1箇所だけ残っており、`next build`の型チェックで
+実際に失敗する状態になっていた（本番ビルドが壊れていた）。ついでに
+削除し、`npm run build`が通ることを確認した。
+
+`tests/backend/test_product_service.py`に1件追加（同一PO_No内の複数
+明細行が数量・金額を合算した1件のグループにまとまること、代表
+project_idの選び方の確認）。448件全てパス。フロントエンドは
+`npx tsc --noEmit`・`npm run build`の両方で確認済み。
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.

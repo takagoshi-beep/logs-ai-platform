@@ -97,7 +97,6 @@ export default function TaskCenterPage() {
           reason: task.reason,
         }));
         setTasks(mockTasks);
-        setSignals(null);
       } finally {
         setIsLoading(false);
       }
