@@ -244,6 +244,30 @@ def test_sales_by_category_business_type_labels_unknown_code_as_other(monkeypatc
     assert result["records"][0]["事業分類名"] == "その他"
 
 
+def test_sales_by_category_supports_customer_group_by_for_ranking(monkeypatch):
+    """14.87: 「〇〇さんの顧客ランキング」で、get_sales_linesの200件切り捨て
+    られたデータからランキングを作ってしまった実例（Noritsugu、2026-07-13）
+    の修正。得意先名でのGROUP BYを追加し、売上金額の大きい順に正確な
+    ランキングを返せるようにした。"""
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured["sql"] = sql
+        return [
+            {"得意先名": "株式会社マルチニスタ", "件数": 1, "売上金額合計": 462000, "粗利合計": 100000},
+            {"得意先名": "株式会社レイバックス", "件数": 3, "売上金額合計": 57720, "粗利合計": 10000},
+        ]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._sales_by_category({"group_by": "customer", "sales_rep_keyword": "石川"})
+
+    assert '"得意先名"' in captured["sql"]
+    assert "GROUP BY" in captured["sql"]
+    assert "ORDER BY \"売上金額合計\" DESC" in captured["sql"]
+    assert result["records"][0]["得意先名"] == "株式会社マルチニスタ"  # 大きい順の先頭が正しい
+
+
 def test_find_similar_name_requires_term_and_valid_domain():
     result = LogsysProvider()._find_similar_name({"term": "石川"})
     assert result["status"] == "unavailable"

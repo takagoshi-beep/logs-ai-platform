@@ -209,13 +209,14 @@ class LogsysProvider:
         "product_category": "product_category",
         "customer_category": "customer_category",
         "business_type": "事業分類",
+        "customer": "得意先名",
     }
 
     def _sales_by_category(self, params: dict[str, Any]) -> dict[str, Any]:
-        """商品分類・顧客分類・事業分類ごとの売上をSQL側でGROUP BY集計する
-        (docs/architecture.md 14.32、事業分類は14.81で追加)。sales_lines/
-        aggregateと違い、分類は数種類程度しかないため200件の壁に一切
-        引っかからず、正確な内訳が返せる（「商品分類がバッグの売上は？」
+        """商品分類・顧客分類・事業分類・顧客(個別)ごとの売上をSQL側で
+        GROUP BY集計する(docs/architecture.md 14.32、事業分類は14.81、
+        顧客個別は14.87で追加)。sales_lines/aggregateと違い、SQL側の
+        GROUP BYで正確な内訳が返せる（「商品分類がバッグの売上は？」
         のような質問で、salesとproductsを手動で照合しようとして破綻して
         いた実例の修正）。
 
@@ -224,6 +225,16 @@ class LogsysProvider:
         実例（2026-07-12、Noritsuguが実チャットで発見）の修正。
         reasoning_pipeline.py のQ1固定パターンが`事業分類=1`で既に使っている
         のと同じcode_master確認済みの対応表を使う。
+
+        顧客個別（customer、"得意先名"でGROUP BY）は「石川さんの顧客
+        ランキングを教えて」という質問で、chatがget_sales_linesの200件
+        切り捨てを自覚しつつも切り捨てられた一部データだけでランキングを
+        作ってしまった実例（2026-07-13、Noritsuguが実チャットで発見）の
+        修正。product_category/customer_category/business_typeは分類数が
+        数種類しかなく常に全件返せるが、customerは顧客数次第で200件の壁に
+        引っかかる可能性がある点が異なる — ただしORDER BY "売上金額合計"
+        DESCで並べているため、仮に切り捨てられても上位（＝ランキングで
+        意味のある部分）は正確なまま返る。
         """
         group_by = self._SALES_GROUP_BY_COLUMNS.get(params.get("group_by", "product_category"))
         if not group_by:
@@ -259,11 +270,17 @@ class LogsysProvider:
         if group_by == "事業分類":
             for row in rows:
                 row["事業分類名"] = _BUSINESS_TYPE_LABELS.get(row.get("事業分類"), "その他")
-        return _evidence(
-            self.name, "sales_by_category", "ok",
-            f"{group_by}別の売上を{len(rows)}分類分集計しました（分類数が少ないため全件、切り捨てなし）。",
-            rows,
-        )
+
+        if group_by == "得意先名":
+            summary = (
+                f"顧客別の売上を{len(rows)}件集計しました（売上金額の大きい順）。"
+                "顧客数が多い場合は200件で切り捨てられることがあるが、"
+                "大きい順に並んでいるためランキング上位は正確。"
+            )
+        else:
+            summary = f"{group_by}別の売上を{len(rows)}分類分集計しました（分類数が少ないため全件、切り捨てなし）。"
+
+        return _evidence(self.name, "sales_by_category", "ok", summary, rows)
 
     def _import_cost_estimate(self, params: dict[str, Any]) -> dict[str, Any]:
         """輸入経費の推定を、輸送方法別の実データ集計表として返す

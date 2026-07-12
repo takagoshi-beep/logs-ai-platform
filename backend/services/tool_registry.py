@@ -68,24 +68,31 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "get_sales_by_category",
         "description": (
-            "商品分類、顧客分類、または事業分類ごとの売上（件数・合計金額・粗利）を、"
-            "SQL側でGROUP BY集計して返す。「商品分類がバッグの売上は？」"
-            "「顧客分類（D2C/量販店等）ごとの売上を教えて」「今月のOEMの売上は？」"
-            "のような質問に使う。事業分類（business_type）は「OEM」「商品仕入れ"
-            "（海外）」「商品仕入れ（国内）」の3区分（各行の`事業分類名`フィールドが"
-            "既にラベル変換済みなので、get_code_masterで確認する必要はない）。"
-            "分類は数種類しかないため200件の壁に一切引っかからず、常に正確な"
-            "全件集計が返る（get_sales_linesでrecordsを自分で商品マスタと"
-            "手動照合しようとすると、件数が多い場合に必ず不正確になるため、"
-            "この専用ツールを使うこと）。"
+            "商品分類、顧客分類、事業分類、または顧客(個別)ごとの売上"
+            "（件数・合計金額・粗利）を、SQL側でGROUP BY集計して返す。"
+            "「商品分類がバッグの売上は？」「顧客分類（D2C/量販店等）ごとの"
+            "売上を教えて」「今月のOEMの売上は？」「〇〇さんの顧客ランキングを"
+            "教えて」のような質問に使う。事業分類（business_type）は「OEM」"
+            "「商品仕入れ（海外）」「商品仕入れ（国内）」の3区分（各行の"
+            "`事業分類名`フィールドが既にラベル変換済みなので、get_code_master"
+            "で確認する必要はない）。"
+            "顧客ランキング・顧客ごとの売上比較が必要な場合は、必ず"
+            "group_by=\"customer\"を使うこと — get_sales_linesは200件で"
+            "records が切り捨てられるため、それだけで顧客ごとの合計を"
+            "手計算すると、実際の順位や金額と異なる不正確な結果になる"
+            "（2026-07-13、実際にこの誤りが発生した実例あり）。"
+            "product_category/customer_category/business_typeは分類数が"
+            "少ないため常に全件が返るが、customerは顧客数が多い場合200件で"
+            "切り捨てられることがある（ただし売上金額の大きい順に返るため、"
+            "上位の順位・金額自体は正確）。"
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "group_by": {
                     "type": "string",
-                    "enum": ["product_category", "customer_category", "business_type"],
-                    "description": "集計軸。product_category=商品分類別、customer_category=顧客分類別、business_type=事業分類別（OEM/商品仕入れ海外/商品仕入れ国内）。既定はproduct_category。",
+                    "enum": ["product_category", "customer_category", "business_type", "customer"],
+                    "description": "集計軸。product_category=商品分類別、customer_category=顧客分類別、business_type=事業分類別（OEM/商品仕入れ海外/商品仕入れ国内）、customer=顧客(個別)別。既定はproduct_category。",
                 },
                 "period_start": {"type": "string", "description": "期間開始日（YYYY-MM-DD形式）"},
                 "period_end": {"type": "string", "description": "期間終了日（YYYY-MM-DD形式）"},

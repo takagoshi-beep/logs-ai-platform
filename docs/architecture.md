@@ -3370,6 +3370,35 @@ Noritsuguがcode_masterの実データを確認して確定してくれた:
 `tests/backend/test_data_providers_enrichment.py`を更新（ラベル変換の
 確認）、未知コードのフォールバックテストを1件追加。458件全てパス。
 
+## 14.87 `get_sales_by_category`に顧客(個別)ごとの集計を追加 (2026-07-13)
+
+実チャットで発見された実例(Noritsugu、2026-07-13): 「石川さんの顧客
+ランキングを教えて」という質問に対し、chatが`get_sales_lines`の1442件
+中200件しか取得できていないことを自覚しつつも、「今回は取得できた
+200件のデータから主要な顧客を確認してみます」と、切り捨てられた
+一部データだけで顧客ランキングを作ってしまった。これは14.81(事業分類)
+と全く同じ構造の問題（GROUP BY集計手段が無いため、records ベースの
+ツールを自分で集計しようとして不正確になる）だが、今回は
+`report_capability_gap`が呼ばれず、Learningにも記録されなかった。
+
+`get_sales_by_category`の`_SALES_GROUP_BY_COLUMNS`に`"customer":
+"得意先名"`を追加。product_category/customer_category/business_type
+とは異なり、顧客数は数百社規模になりうるため、集計結果自体が200件の
+壁に引っかかる可能性がある点は変わらない。ただし`ORDER BY "売上金額
+合計" DESC`で常に売上の大きい順に返しているため、`_cap_records`で
+切り捨てられても上位（＝ランキングとして意味のある部分）は正確な
+まま残る。ツール説明文・システムプロンプト双方に「顧客ランキング等の
+複数エンティティ横断の集計にはget_sales_linesを自分で集計せず、
+必ずGROUP BY系ツールを使うこと」という指示を追加した。
+
+`report_capability_gap`が今回呼ばれなかった件は、根本原因（集計手段の
+不足）を直接解消したため、同じ質問が再発しても今後は正しいツールで
+解決されるはずだが、「ツールの限界に自分で気づいたが報告しなかった」
+という信号自体をどう拾うかは別途の検討課題として残る。
+
+`tests/backend/test_data_providers_enrichment.py`に1件追加。459件全て
+パス。
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.
