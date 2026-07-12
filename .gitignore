@@ -59,3 +59,6 @@ backend/data/generated_proposal_images/
 backend/data/learning/
 backend/data/conversations.jsonl
 frontend/.env.local
+
+# パッチファイル(Claude作業用、リポジトリに含めない — 2026-07-14、14.94で誤って混入した6件を除去)
+*.patch

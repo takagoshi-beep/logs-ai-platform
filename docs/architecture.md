@@ -3625,6 +3625,21 @@ test_gmail_service.pyで回帰無しを確認）。
 
 465件全てパス（ドキュメント整理のみのため回帰無し）。
 
+## 14.94 誤ってコミットされたパッチファイルを除去 (2026-07-14)
+
+14.93のコミット時、`git add -A`がリポジトリのローカル作業ディレクトリに
+ダウンロードされていたパッチファイル6つ（`capability-gap-truncation-
+safety-net.patch`等、Claudeとのやり取りで生成した一連のパッチ）を
+巻き込んでコミット・pushしてしまっていた。パッチファイルは一時的な
+作業成果物でありリポジトリに含めるべきではないため、`git rm --cached`
+で除去し、`.gitignore`に`*.patch`を追加して再発を防止した（ローカル
+ディスク上のファイル自体は削除していない — 既に適用済みのため実害は
+無いが参照用に残る）。
+
+今後は、パッチ適用の指示を`git add -A`ではなく、変更されたディレクトリ
+を明示した`git add backend docs frontend tests`のような形にし、意図せず
+無関係なファイルを巻き込まないよう注意する。
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.
