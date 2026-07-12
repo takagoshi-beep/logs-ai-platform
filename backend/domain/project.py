@@ -217,6 +217,15 @@ class ProjectData:
     # を同じPO番号でSUMしたもの。sale_amount（PO単位の売上金額、既存）
     # と組み合わせて実績粗利を導出する（actual_gross_profitプロパティ）。
     actual_cost_total: Optional[float] = None
+    # 2026-07-14（14.97追加、Noritsuguの指定）: 案件に営業担当者・営業事務
+    # 担当者・生産管理担当者・企画担当者が紐づいていなかったため、chatが
+    # 「木村さんの案件」のような担当者ベースの質問を正確に絞り込めなかった
+    # （案件詳細ページ自体にも表示されていなかった）。商品詳細ページと
+    # 同様に、案件側にも4つの担当者名を持たせる。
+    sales_rep_name: Optional[str] = None
+    sales_admin_name: Optional[str] = None
+    production_staff_name: Optional[str] = None
+    planning_staff_name: Optional[str] = None
 
     @property
     def days_until_delivery(self) -> int:
@@ -407,6 +416,10 @@ class ProjectAggregate:
                 "project_name": self.data.project_name,
                 "planned_import_cost_ratio": self.data.planned_import_cost_ratio,
                 "actual_import_cost_ratio": self.data.actual_import_cost_ratio,
+                "sales_rep_name": self.data.sales_rep_name,
+                "sales_admin_name": self.data.sales_admin_name,
+                "production_staff_name": self.data.production_staff_name,
+                "planning_staff_name": self.data.planning_staff_name,
             },
             "goals": {
                 goal.value: {

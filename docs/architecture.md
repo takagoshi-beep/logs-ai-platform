@@ -3715,6 +3715,49 @@ delivery_status等との組み合わせ確認）。468件全てパス。
 フィルタの不足）は直接解消したが、「自己申告の設計が実際にはあまり
 機能していない」というメタな課題は依然として未解決のまま残っている。
 
+## 14.97 案件に営業・営業事務・生産管理・企画の4担当者を紐づけ (2026-07-14)
+
+前段（14.96）の対応後、Noritsuguから根本的な指摘: 「案件に営業担当・
+生産担当・営業事務担当が紐づいていないことも、検索機能がうまく
+活用できなかった理由なのでは」という問いかけ。実際に確認すると、
+その通りだった。
+
+`purchase_orders`テーブル自体には"営業担当者名"・"営業事務担当者名"・
+"生産管理担当者名"・"企画担当者名"の4列が存在するが、`ProjectService`
+の`_PO_SELECT_COLUMNS`（案件データの読み込み元）にはこれらが一切
+含まれておらず、`ProjectData`（案件の事実データを持つドメインモデル）
+にも対応するフィールドが無かった。そのため、14.96で`get_projects`に
+`sales_rep_keyword`フィルタを追加しても、絞り込みはできても各案件の
+担当者名そのものは結果に含まれておらず、案件詳細ページ
+（`/workspace/{projectId}`）にも一切表示されていなかった。商品詳細
+ページには既に営業事務担当者名が表示されている（14.44）のと非対称
+だった。
+
+**対応:**
+- `domain/project.py`の`ProjectData`に`sales_rep_name`・
+  `sales_admin_name`・`production_staff_name`・`planning_staff_name`
+  を追加。`ProjectAggregate.to_dict()`にも含めた。
+- `project_service.py`の`_PO_SELECT_COLUMNS`に4列を追加し、
+  `_po_dict_to_project_data`で各フィールドに設定するようにした。
+- `frontend/app/workspace/[projectId]/page.tsx`に4担当者を表示する行を
+  追加（商品詳細ページと同様の見せ方）。
+- `data_providers.py`の`_projects`（`get_projects`チャットツール）の
+  SELECT文にも4列を追加し、`sales_rep_keyword`で絞り込むだけでなく、
+  各案件の担当者名そのものも結果に含まれるようにした。
+  `get_my_projects`（`tool_registry.py`）の返り値にも同様に追加。
+
+これで、14.96で追加した担当者フィルタと組み合わせて、chatが「木村さん
+の案件」を検索する際に、絞り込みだけでなく実際に誰が担当かを提示・
+確認できるようになった。案件詳細ページ自体でも、これまで見えなかった
+担当者情報を人間が直接確認できる。
+
+`tests/backend/test_domain_project.py`・`test_project_service_delivery
+_bucket.py`・`test_data_providers_enrichment.py`に計5件追加。既存の
+`test_get_my_projects_surfaces_status_badges_and_delivery_month_bucket`
+（手組みの`_FakeData`モック）が新フィールドへのアクセスで落ちたため、
+モックに4フィールドを追加して修正。473件全てパス。フロントエンドは
+`npx tsc --noEmit`で確認済み。
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.

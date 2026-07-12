@@ -46,6 +46,52 @@ def _minimal_aggregate(actions: list[ProjectAction]) -> ProjectAggregate:
     )
 
 
+def test_to_dict_includes_staff_names():
+    """14.97: 商品詳細ページと同様、案件にも営業・営業事務・生産管理・
+    企画の4担当者を紐づけたい、というNoritsuguの指定の修正。
+    ProjectDataに担当者フィールドを追加し、to_dict()にも含めた。"""
+    data = ProjectData(
+        project_id="7722",
+        po_number="914-20260626_1",
+        supplier_id="s1",
+        supplier_name="NEWHATTAN INC.",
+        customer_id="c1",
+        customer_name="US_LOGS Inc.",
+        po_created_date=datetime(2026, 6, 26),
+        po_required_delivery_date=datetime(2026, 7, 6),
+        sales_rep_name="木村美菜",
+        sales_admin_name="高橋",
+        production_staff_name="田中",
+        planning_staff_name="佐藤",
+    )
+    agg = ProjectAggregate(
+        project_id="7722",
+        po_number="914-20260626_1",
+        events=ProjectEvents(project_id="7722"),
+        data=data,
+        state=ProjectState.DELIVERY_OVERDUE,
+        goal_evaluations=GoalEvaluations(project_id="7722"),
+        decisions=[],
+        actions=[],
+    )
+
+    result = agg.to_dict()
+
+    assert result["data"]["sales_rep_name"] == "木村美菜"
+    assert result["data"]["sales_admin_name"] == "高橋"
+    assert result["data"]["production_staff_name"] == "田中"
+    assert result["data"]["planning_staff_name"] == "佐藤"
+
+
+def test_to_dict_staff_names_default_to_none_when_absent():
+    agg = _minimal_aggregate([])
+    result = agg.to_dict()
+    assert result["data"]["sales_rep_name"] is None
+    assert result["data"]["sales_admin_name"] is None
+    assert result["data"]["production_staff_name"] is None
+    assert result["data"]["planning_staff_name"] is None
+
+
 def test_to_dict_includes_description_condition_and_due_date_on_actions():
     action = ProjectAction(
         action_id="a1",

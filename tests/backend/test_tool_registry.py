@@ -118,6 +118,10 @@ def test_get_my_projects_surfaces_status_badges_and_delivery_month_bucket(monkey
     class _FakeData:
         project_name = "SLOBE IENA_ハーフオーバルベルト"
         customer_name = "US_LOGS Inc."
+        sales_rep_name = "木村美菜"
+        sales_admin_name = "高橋"
+        production_staff_name = "田中"
+        planning_staff_name = "佐藤"
 
     class _FakeAgg:
         project_id = "1"

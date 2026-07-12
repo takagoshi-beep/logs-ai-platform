@@ -536,6 +536,7 @@ class LogsysProvider:
 
         base_select = (
             'SELECT po."ID", po."案件名", po."顧客名", po."ステータス", po."PO_No", po."顧客納品日", '
+            'po."営業担当者名", po."営業事務担当者名", po."生産管理担当者名", po."企画担当者名", '
             'EXISTS(SELECT 1 FROM sales s WHERE s."LOGS_CODE" = po."LOGS_CODE") AS "has_sales", '
             'EXISTS('
             '    SELECT 1 FROM production_mass pm '

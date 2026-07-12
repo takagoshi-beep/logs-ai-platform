@@ -76,7 +76,8 @@ class ProjectService:
     _PO_SELECT_COLUMNS = (
         '"ID", "PO_No", "仕入先ID", "仕入先名", "顧客ID", "顧客名", '
         '"PO発行日", "顧客納品日", "納品日", "Delivery_納品日", "LOGS_CODE", "案件名", "輸入経費率", "ステータス", '
-        '"合計発注金額", "合計売上原価", "合計売上金額"'
+        '"合計発注金額", "合計売上原価", "合計売上金額", '
+        '"営業担当者名", "営業事務担当者名", "生産管理担当者名", "企画担当者名"'
     )
 
     @staticmethod
@@ -163,6 +164,10 @@ class ProjectService:
                 actual_import_cost_ratio=float(po_dict["actual_import_cost_ratio"]) if po_dict.get("actual_import_cost_ratio") is not None else None,
                 po_status=int(po_dict["ステータス"]) if po_dict.get("ステータス") is not None else None,
                 actual_cost_total=float(po_dict["actual_cost_total"]) if po_dict.get("actual_cost_total") is not None else None,
+                sales_rep_name=po_dict.get("営業担当者名") or None,
+                sales_admin_name=po_dict.get("営業事務担当者名") or None,
+                production_staff_name=po_dict.get("生産管理担当者名") or None,
+                planning_staff_name=po_dict.get("企画担当者名") or None,
             )
 
             if project_data.cost_amount and project_data.sale_amount:

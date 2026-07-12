@@ -105,6 +105,42 @@ def test_po_dict_to_project_data_parses_project_name_and_planned_cost_ratio():
     assert data.planned_import_cost_ratio == 1.18
 
 
+def test_po_dict_to_project_data_parses_staff_names():
+    """14.97、Noritsuguの指定: 商品詳細ページと同様、案件にも営業・
+    営業事務・生産管理・企画の4担当者を紐づける。"""
+    service = ProjectService()
+    po_dict = {
+        "PO_No": "901-20260708_2", "仕入先ID": "s1", "仕入先名": "Supplier",
+        "顧客ID": "c1", "顧客名": "Customer",
+        "PO発行日": "2026-07-08", "顧客納品日": "2026-08-30",
+        "合計発注金額": 100, "合計売上原価": 60, "合計売上金額": 90,
+        "営業担当者名": "木村美菜", "営業事務担当者名": "高橋",
+        "生産管理担当者名": "田中", "企画担当者名": "佐藤",
+    }
+    data = service._po_dict_to_project_data("1", po_dict)
+
+    assert data.sales_rep_name == "木村美菜"
+    assert data.sales_admin_name == "高橋"
+    assert data.production_staff_name == "田中"
+    assert data.planning_staff_name == "佐藤"
+
+
+def test_po_dict_to_project_data_staff_names_default_to_none_when_absent():
+    service = ProjectService()
+    po_dict = {
+        "PO_No": "901-20260708_2", "仕入先ID": "s1", "仕入先名": "Supplier",
+        "顧客ID": "c1", "顧客名": "Customer",
+        "PO発行日": "2026-07-08", "顧客納品日": "2026-08-30",
+        "合計発注金額": 100, "合計売上原価": 60, "合計売上金額": 90,
+    }
+    data = service._po_dict_to_project_data("1", po_dict)
+
+    assert data.sales_rep_name is None
+    assert data.sales_admin_name is None
+    assert data.production_staff_name is None
+    assert data.planning_staff_name is None
+
+
 def test_po_dict_to_project_data_uses_actual_import_cost_ratio_from_attach_existence_data():
     """実績輸入経費率はpurchases."経費率"から。_attach_existence_dataが
     po_dictに"actual_import_cost_ratio"として書き込んだ値を、そのまま

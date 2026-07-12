@@ -172,7 +172,10 @@ TOOLS: list[dict[str, Any]] = [
         "description": (
             "案件（PO）情報を、案件名・顧客名のキーワード、担当者名、"
             "納品予定期間で検索する（2026-07-14、14.96でsales_rep_keyword/"
-            "period_start/period_endを追加）。「〇〇さんの今月納品予定の"
+            "period_start/period_endを追加、14.97で担当者名を結果にも含める"
+            "ように拡張）。各行に営業担当者名・営業事務担当者名・生産管理"
+            "担当者名・企画担当者名が含まれるので、案件ごとの担当者を"
+            "そのまま確認・提示できる。「〇〇さんの今月納品予定の"
             "案件」のように特定の担当者×期間で絞り込みたい場合は、"
             "get_sales_linesのLOGS_CODEやkeywordでの代用検索（案件名の"
             "部分一致に頼った不安定な特定）をせず、必ずsales_rep_keyword/"
@@ -684,6 +687,10 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
                             "status_badges": agg.status_badges,
                             "delivery_month_bucket": agg.delivery_month_bucket,
                             "actions_count": len(agg.actions),
+                            "sales_rep_name": agg.data.sales_rep_name,
+                            "sales_admin_name": agg.data.sales_admin_name,
+                            "production_staff_name": agg.data.production_staff_name,
+                            "planning_staff_name": agg.data.planning_staff_name,
                         })
                     result = {
                         "status": "ok" if records else "unavailable",

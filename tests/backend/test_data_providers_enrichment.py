@@ -559,6 +559,33 @@ def test_projects_combines_sales_rep_and_period_and_delivery_status(monkeypatch)
     assert "NOT" in sql
 
 
+def test_projects_select_includes_staff_names(monkeypatch):
+    """14.97、Noritsuguの指定: 商品詳細ページと同様、案件一覧・詳細でも
+    営業・営業事務・生産管理・企画担当者を確認できるようにする。
+    sales_rep_keywordでの絞り込みだけでなく、結果の各行にも
+    担当者名そのものが含まれている必要がある。"""
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured["sql"] = sql
+        return [{
+            "ID": 1, "案件名": "テスト案件", "顧客名": "US_LOGS Inc.",
+            "営業担当者名": "木村美菜", "営業事務担当者名": "高橋",
+            "生産管理担当者名": "田中", "企画担当者名": "佐藤",
+            "has_sales": False, "production_closed": False,
+        }]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._projects({})
+
+    assert 'po."営業担当者名"' in captured["sql"]
+    assert 'po."営業事務担当者名"' in captured["sql"]
+    assert 'po."生産管理担当者名"' in captured["sql"]
+    assert 'po."企画担当者名"' in captured["sql"]
+    assert result["records"][0]["営業担当者名"] == "木村美菜"
+
+
 def test_sales_by_category_sales_rep_keyword_matches_any_of_four_roles(monkeypatch):
     captured = {}
 

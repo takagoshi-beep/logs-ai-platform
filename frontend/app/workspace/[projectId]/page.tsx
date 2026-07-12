@@ -83,6 +83,10 @@ interface ProjectDetail {
     project_name: string | null;
     planned_import_cost_ratio: number | null;
     actual_import_cost_ratio: number | null;
+    sales_rep_name: string | null;
+    sales_admin_name: string | null;
+    production_staff_name: string | null;
+    planning_staff_name: string | null;
   };
   actions: ProjectAction[];
   events: { count: number; items: ProjectEvent[] };
@@ -171,6 +175,9 @@ export default function WorkspacePage({ params }: Params) {
             </div>
           </div>
           <p className="text-sm text-sub">仕入先: {project.data.supplier_name}</p>
+          <p className="mt-1 text-xs text-sub">
+            営業: {project.data.sales_rep_name ?? "データなし"} ・ 営業事務: {project.data.sales_admin_name ?? "データなし"} ・ 生産管理: {project.data.production_staff_name ?? "データなし"} ・ 企画: {project.data.planning_staff_name ?? "データなし"}
+          </p>
           <p className="mt-2 text-xs text-sub">
             {project.data.days_until_delivery < 0 ? "納期経過" : `納期まで: ${project.data.days_until_delivery}日`}
           </p>
