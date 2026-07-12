@@ -3399,6 +3399,35 @@ Noritsuguがcode_masterの実データを確認して確定してくれた:
 `tests/backend/test_data_providers_enrichment.py`に1件追加。459件全て
 パス。
 
+## 14.88 `get_budget_forecast`の呼び出しトリガーを強化 (2026-07-14)
+
+実チャットで発見された実例(Noritsugu、2026-07-14): 「木村さんの今月の
+顧客売上ランキングとその顧客ごとの今後の売上予定を教えてください」
+という質問に対し、chatは`get_projects`の「未納品PO」の有無だけを見て
+「今後の確定的な売上予定案件はありません」と結論づけ、14.85で追加した
+`get_budget_forecast`を一度も呼ばなかった。
+
+原因は「予定」という言葉の二重の意味（(1)確定済みPOでまだ納品して
+いないもの＝get_projects、(2)budget_forecastテーブルのcategory=
+forecast(02_予定)＝営業担当者の見込み数値）のうち、chatが(1)だけで
+「予定」を解釈し切ってしまい、(2)の存在を考慮しなかったこと。
+
+`get_budget_forecast`のツール説明文とsystem promptの両方に、以下を
+明記して強化した:
+- 質問に「予算」「予定」「見込み」「費用」「経費」「達成率」の
+  いずれかが含まれる場合は必ずこのツールも呼び出すこと
+- 「予定」の二重の意味を明示し、曖昧な場合は両方（get_projectsと
+  get_budget_forecast）を呼んだ上で、それぞれの意味の違いを説明して
+  から提示すること
+- 顧客・担当者単位の見込みを聞かれた場合は、get_projectsの未納品PO
+  だけで「予定はありません」と結論づけないこと
+
+プロンプトの文言強化のみのため、既存テストへの影響は無く（回帰無し）、
+LLMの実際の呼び出し判断自体はユニットテストでは検証できない領域
+（実際のAnthropic APIコールが必要）。459件全てパス。Noritsuguに、
+デプロイ後に同じ質問を再度試してget_budget_forecastが呼ばれるように
+なったか確認を依頼。
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.
