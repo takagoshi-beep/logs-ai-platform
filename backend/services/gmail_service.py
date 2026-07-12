@@ -158,15 +158,26 @@ def search_messages(email: str, query: str, max_results: int = 10) -> dict[str, 
             "records": [],
         }
 
+    # 2026-07-14（14.90、Noritsuguが実データで発見）: 商品詳細ページの
+    # Gmail検索が、以前想定していた1.1〜1.2秒ではなく実際には2.0〜2.6秒
+    # かかっていることが判明。14.76でメール1件ごとの個別取得（メタデータ
+    # 取得）は並行化済みだが、それでも遅い場合、「一覧取得(list)」と
+    # 「メタデータ取得バッチ」のどちらが支配的かをこれまで区別して計測
+    # していなかった（親のtimed()ブロックはsearch_messages全体をまとめて
+    # 計測するのみ）。原因を推測せず特定するため、2つのフェーズを個別に
+    # 計測するよう分割した。
+    from services.timing import timed
+
     try:
-        list_resp = requests.get(
-            f"{GMAIL_API_BASE}/messages",
-            headers={"Authorization": f"Bearer {access_token}"},
-            params={"q": query, "maxResults": max(1, min(max_results, 25))},
-            timeout=10,
-        )
-        list_resp.raise_for_status()
-        message_ids = [m["id"] for m in list_resp.json().get("messages", [])]
+        with timed("gmail_service.search_messages.list"):
+            list_resp = requests.get(
+                f"{GMAIL_API_BASE}/messages",
+                headers={"Authorization": f"Bearer {access_token}"},
+                params={"q": query, "maxResults": max(1, min(max_results, 25))},
+                timeout=10,
+            )
+            list_resp.raise_for_status()
+            message_ids = [m["id"] for m in list_resp.json().get("messages", [])]
     except requests.exceptions.HTTPError as e:
         body = e.response.text if e.response is not None else ""
         return {"status": "error", "summary": f"Gmail検索中にエラーが発生しました: {e} / {body}", "records": []}
@@ -202,10 +213,11 @@ def search_messages(email: str, query: str, max_results: int = 10) -> dict[str, 
 
     records = []
     if message_ids:
-        with ThreadPoolExecutor(max_workers=min(len(message_ids), 10)) as executor:
-            for result in executor.map(_fetch_one, message_ids):
-                if result is not None:
-                    records.append(result)
+        with timed(f"gmail_service.search_messages.metadata_batch(n={len(message_ids)})"):
+            with ThreadPoolExecutor(max_workers=min(len(message_ids), 10)) as executor:
+                for result in executor.map(_fetch_one, message_ids):
+                    if result is not None:
+                        records.append(result)
 
     return {
         "status": "ok",
