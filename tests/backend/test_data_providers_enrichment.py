@@ -212,6 +212,38 @@ def test_sales_by_category_rejects_unknown_group_by():
     assert result["status"] == "unavailable"
 
 
+def test_sales_by_category_supports_business_type_group_by(monkeypatch):
+    """14.81: 「今月のOEMの売上は？」に正確に答えられなかった実例
+    （2026-07-12、実チャットで発見）の修正。事業分類でのGROUP BYを追加。"""
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured["sql"] = sql
+        return [
+            {"事業分類": 1, "件数": 300, "売上金額合計": 30000000, "粗利合計": 6000000},
+            {"事業分類": 2, "件数": 100, "売上金額合計": 20000000, "粗利合計": 3000000},
+        ]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._sales_by_category({"group_by": "business_type"})
+
+    assert '"事業分類"' in captured["sql"]
+    assert "GROUP BY" in captured["sql"]
+    assert result["records"][0]["事業分類名"] == "OEM"
+    assert result["records"][1]["事業分類名"] == "商品仕入れ（海外）"
+
+
+def test_sales_by_category_business_type_labels_unknown_code_as_other(monkeypatch):
+    monkeypatch.setattr(
+        LogsysProvider, "_query",
+        lambda self, sql, params=(): [{"事業分類": 99, "件数": 1, "売上金額合計": 100, "粗利合計": 10}],
+    )
+
+    result = LogsysProvider()._sales_by_category({"group_by": "business_type"})
+    assert result["records"][0]["事業分類名"] == "その他"
+
+
 def test_find_similar_name_requires_term_and_valid_domain():
     result = LogsysProvider()._find_similar_name({"term": "石川"})
     assert result["status"] == "unavailable"

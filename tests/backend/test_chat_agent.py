@@ -6,6 +6,8 @@ real, billed Anthropic API call.
 """
 from __future__ import annotations
 
+import json
+
 from services import chat_agent, conversation_store
 
 
@@ -219,3 +221,55 @@ def test_learning_recording_failure_never_blocks_the_actual_chat_answer(monkeypa
 
     result = chat_agent.answer("納期を教えて")
     assert "回答" in result["answer"]  # 回答自体は正常に返る
+
+
+def test_report_capability_gap_call_creates_a_learning_candidate(monkeypatch):
+    """14.82: ツールがstatus='ok'を返していても（＝データ自体は取得できて
+    いても）、Claudeが「絞り込み・集計の手段自体が無い」とreport_capability_gap
+    経由で明示的に申告した場合はLearning候補として記録する。"""
+    from learning.repository import get_candidate_repository
+
+    monkeypatch.setattr(
+        chat_agent, "generate_with_tools",
+        _fake_generate_with_tools_calling_one_tool(
+            "report_capability_gap",
+            {"description": "事業分類での絞り込みができない", "requested_capability": "business_type集計を追加"},
+        ),
+    )
+    monkeypatch.setattr(
+        chat_agent, "execute_tool",
+        lambda tool_name, tool_input, user_email=None: json.dumps({
+            "status": "capability_gap_reported",
+            "summary": "機能不足として記録しました。",
+            "description": tool_input.get("description", ""),
+            "requested_capability": tool_input.get("requested_capability", ""),
+        }, ensure_ascii=False),
+    )
+
+    chat_agent.answer("今月のOEMの売上は？")
+
+    candidates = get_candidate_repository().list()
+    assert len(candidates) == 1
+    assert candidates[0].source_type.value == "ai_observation"
+    assert candidates[0].learning_type.value == "operational"
+    assert "business_type集計を追加" in candidates[0].description
+
+
+def test_report_capability_gap_is_not_triggered_by_ordinary_ok_status(monkeypatch):
+    """通常のツール（report_capability_gap以外）がstatus='ok'を返しただけでは
+    記録されないことの確認（既存のtest_tool_returning_ok_does_not_create_a_learning_candidate
+    と補完関係）。"""
+    from learning.repository import get_candidate_repository
+
+    monkeypatch.setattr(
+        chat_agent, "generate_with_tools",
+        _fake_generate_with_tools_calling_one_tool("get_sales_by_category", {"group_by": "business_type"}),
+    )
+    monkeypatch.setattr(
+        chat_agent, "execute_tool",
+        lambda tool_name, tool_input, user_email=None: '{"status": "ok", "records": []}',
+    )
+
+    chat_agent.answer("今月のOEMの売上は？")
+
+    assert get_candidate_repository().list() == []

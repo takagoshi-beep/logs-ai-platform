@@ -148,6 +148,21 @@ def test_execute_tool_returns_graceful_error_for_unknown_tool_name():
     assert "未知のツール" in result["summary"]
 
 
+def test_report_capability_gap_is_registered_and_dispatches_directly():
+    """14.82: report_capability_gapはProviderを経由せず、
+    execute_tool内で直接応答を組み立てる専用分岐を持つ。"""
+    tool = next(t for t in tool_registry.TOOLS if t["name"] == "report_capability_gap")
+    assert "description" in tool["input_schema"]["required"]
+
+    result = json.loads(tool_registry.execute_tool("report_capability_gap", {
+        "description": "事業分類での絞り込みができない",
+        "requested_capability": "business_type集計を追加",
+    }))
+    assert result["status"] == "capability_gap_reported"
+    assert result["description"] == "事業分類での絞り込みができない"
+    assert result["requested_capability"] == "business_type集計を追加"
+
+
 def test_execute_tool_catches_provider_exceptions_without_raising(monkeypatch):
     """LogsysProvider.fetch() は既に自身の内部で例外を捕捉し
     "unavailable" として返す設計（今日より前から存在する挙動）。

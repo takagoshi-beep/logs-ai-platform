@@ -19,6 +19,13 @@ _PRODUCT_CATEGORY_LABELS = {
     5: "巻物", 6: "アパレル", 7: "ベルト", 8: "履物", 9: "アクセサリー",
 }
 
+# 2026-07-13（14.81追加）: 事業分類（salesテーブルの"事業分類"列）コード。
+# code_masterのBUSINESS_TYPEで確認済みの対応表（reasoning_pipeline.py
+# のQ1「OEM粗利」固定パターンが`事業分類=1`のSQLフィルタとして既に
+# 使っている値と同じ）。chatの`get_sales_by_category`にbusiness_type
+# 集計を追加する際、この対応表で人間可読なラベルに変換する。
+_BUSINESS_TYPE_LABELS = {1: "OEM", 2: "商品仕入れ（海外）", 3: "商品仕入れ（国内）"}
+
 # 2026-07-10（14.63追加）: 輸送方法コード（purchasesテーブルの"輸送方法"
 # 列）。別チャット（app.py）で確立済みの対応表と一致させている。
 _TRANSPORT_LABELS = {
@@ -191,14 +198,22 @@ class LogsysProvider:
     _SALES_GROUP_BY_COLUMNS = {
         "product_category": "product_category",
         "customer_category": "customer_category",
+        "business_type": "事業分類",
     }
 
     def _sales_by_category(self, params: dict[str, Any]) -> dict[str, Any]:
-        """商品分類・顧客分類ごとの売上をSQL側でGROUP BY集計する
-        (docs/architecture.md 14.32)。sales_lines/aggregateと違い、分類は
-        9種類程度しかないため200件の壁に一切引っかからず、正確な内訳が
-        返せる（「商品分類がバッグの売上は？」のような質問で、salesと
-        productsを手動で照合しようとして破綻していた実例の修正）。
+        """商品分類・顧客分類・事業分類ごとの売上をSQL側でGROUP BY集計する
+        (docs/architecture.md 14.32、事業分類は14.81で追加)。sales_lines/
+        aggregateと違い、分類は数種類程度しかないため200件の壁に一切
+        引っかからず、正確な内訳が返せる（「商品分類がバッグの売上は？」
+        のような質問で、salesとproductsを手動で照合しようとして破綻して
+        いた実例の修正）。
+
+        事業分類（business_type）は「今月のOEMの売上は？」のような質問で、
+        chatが正確な集計手段を持たず「ツールの限界です」としか答えられなかった
+        実例（2026-07-12、Noritsuguが実チャットで発見）の修正。
+        reasoning_pipeline.py のQ1固定パターンが`事業分類=1`で既に使っている
+        のと同じcode_master確認済みの対応表を使う。
         """
         group_by = self._SALES_GROUP_BY_COLUMNS.get(params.get("group_by", "product_category"))
         if not group_by:
@@ -231,6 +246,9 @@ class LogsysProvider:
             f'GROUP BY "{group_by}" ORDER BY "売上金額合計" DESC'
         )
         rows = self._query(sql, tuple(args))
+        if group_by == "事業分類":
+            for row in rows:
+                row["事業分類名"] = _BUSINESS_TYPE_LABELS.get(row.get("事業分類"), "その他")
         return _evidence(
             self.name, "sales_by_category", "ok",
             f"{group_by}別の売上を{len(rows)}分類分集計しました（分類数が少ないため全件、切り捨てなし）。",

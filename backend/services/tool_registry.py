@@ -68,9 +68,12 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "get_sales_by_category",
         "description": (
-            "商品分類、または顧客分類ごとの売上（件数・合計金額・粗利）を、"
+            "商品分類、顧客分類、または事業分類ごとの売上（件数・合計金額・粗利）を、"
             "SQL側でGROUP BY集計して返す。「商品分類がバッグの売上は？」"
-            "「顧客分類（D2C/量販店等）ごとの売上を教えて」のような質問に使う。"
+            "「顧客分類（D2C/量販店等）ごとの売上を教えて」「今月のOEMの売上は？」"
+            "のような質問に使う。事業分類（business_type）は「OEM」「商品仕入れ"
+            "（海外）」「商品仕入れ（国内）」の3区分（各行の`事業分類名`フィールドが"
+            "既にラベル変換済みなので、get_code_masterで確認する必要はない）。"
             "分類は数種類しかないため200件の壁に一切引っかからず、常に正確な"
             "全件集計が返る（get_sales_linesでrecordsを自分で商品マスタと"
             "手動照合しようとすると、件数が多い場合に必ず不正確になるため、"
@@ -81,8 +84,8 @@ TOOLS: list[dict[str, Any]] = [
             "properties": {
                 "group_by": {
                     "type": "string",
-                    "enum": ["product_category", "customer_category"],
-                    "description": "集計軸。product_category=商品分類別、customer_category=顧客分類別（既定はproduct_category）",
+                    "enum": ["product_category", "customer_category", "business_type"],
+                    "description": "集計軸。product_category=商品分類別、customer_category=顧客分類別、business_type=事業分類別（OEM/商品仕入れ海外/商品仕入れ国内）。既定はproduct_category。",
                 },
                 "period_start": {"type": "string", "description": "期間開始日（YYYY-MM-DD形式）"},
                 "period_end": {"type": "string", "description": "期間終了日（YYYY-MM-DD形式）"},
@@ -384,6 +387,36 @@ TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "name": "report_capability_gap",
+        "description": (
+            "現在のツール群では正確に答えられない「機能そのものの不足」に"
+            "気づいた場合に呼び出す（2026-07-13、14.82）。「データが存在しない/"
+            "見つからない」（＝そのケースはget_XXXツールが返すstatus:"
+            "\"unavailable\"で十分）とは異なり、こちらは「絞り込み・集計の"
+            "手段自体がツールに用意されていない」ケース専用（例:"
+            "「今月のOEMの売上は？」で、事業分類による絞り込み手段が"
+            "get_sales_linesにもget_sales_by_categoryにも無かった実例）。"
+            "呼び出しても回答自体は変わらない — 正直に「現状のツールでは"
+            "できません」と説明した上で、この不足を記録するために呼ぶ。"
+            "本当に機能不足の場合のみ呼ぶこと（データが単に無い/0件だった"
+            "だけの場合には呼ばない）。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "何が正確に答えられなかったか（質問の内容と、どこで詰まったか）",
+                },
+                "requested_capability": {
+                    "type": "string",
+                    "description": "あれば解決できたであろう機能（例: 「get_sales_by_categoryのgroup_byにbusiness_typeを追加」）",
+                },
+            },
+            "required": ["description"],
+        },
+    },
 ]
 
 
@@ -575,6 +608,16 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
                         "summary": f"{owner_name}さんに関連する商品を{len(records)}件取得しました。" if records else f"{owner_name}さんに関連する商品は見つかりませんでした。",
                         "records": records,
                     }
+        elif tool_name == "report_capability_gap":
+            # データ取得ではなく、chat_agent._record_tool_gaps_as_learningが
+            # Learning候補として拾うための「機能不足の申告」専用ツール
+            # （14.82）。Providerを経由せず、ここで直接応答を作る。
+            result = {
+                "status": "capability_gap_reported",
+                "summary": "機能不足として記録しました。",
+                "description": tool_input.get("description", ""),
+                "requested_capability": tool_input.get("requested_capability", ""),
+            }
         else:
             result = {"status": "unavailable", "summary": f"未知のツール: {tool_name}", "records": []}
     except Exception as e:
