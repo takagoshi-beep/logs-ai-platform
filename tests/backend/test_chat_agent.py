@@ -125,3 +125,97 @@ def test_answer_registers_failed_capability_execution_on_error(monkeypatch):
     assert len(executions) == 1
     assert executions[0].status.value == "failed"
     assert executions[0].error_message == "LLM呼び出し失敗"
+
+
+def _fake_generate_with_tools_calling_one_tool(tool_name, tool_input):
+    """`tool_executor`を実際に1回呼び出す`generate_with_tools`の偽物。
+    Learningフィードバックループ（tool_executor経由でのstatus観測）を
+    検証するテスト専用のヘルパー。"""
+    def _inner(**kwargs):
+        output = kwargs["tool_executor"](tool_name, tool_input)
+        return f"({output}を踏まえた回答)", [{"tool": tool_name, "input": tool_input}]
+    return _inner
+
+
+def test_tool_returning_unavailable_creates_an_operational_learning_candidate(monkeypatch):
+    """14.80: chatでもツールがstatus='unavailable'/'error'を返したことを
+    Learning Domainの観測（AI_OBSERVATION）として記録する。"""
+    from learning.repository import get_candidate_repository
+
+    monkeypatch.setattr(
+        chat_agent, "generate_with_tools",
+        _fake_generate_with_tools_calling_one_tool("search_gmail", {"query": "納期"}),
+    )
+    monkeypatch.setattr(
+        chat_agent, "execute_tool",
+        lambda tool_name, tool_input, user_email=None: (
+            '{"status": "unavailable", "summary": "ユーザーが特定できないため、Gmail検索はできません。", "records": []}'
+        ),
+    )
+
+    chat_agent.answer("納期を教えて")
+
+    candidates = get_candidate_repository().list()
+    assert len(candidates) == 1
+    assert candidates[0].source_type.value == "ai_observation"
+    assert candidates[0].learning_type.value == "operational"
+    assert candidates[0].status.value == "applied"  # 承認不要で自動適用される
+
+
+def test_tool_returning_ok_does_not_create_a_learning_candidate(monkeypatch):
+    from learning.repository import get_candidate_repository
+
+    monkeypatch.setattr(
+        chat_agent, "generate_with_tools",
+        _fake_generate_with_tools_calling_one_tool("get_sales_lines", {}),
+    )
+    monkeypatch.setattr(
+        chat_agent, "execute_tool",
+        lambda tool_name, tool_input, user_email=None: '{"status": "ok", "records": []}',
+    )
+
+    chat_agent.answer("今月の売上は？")
+
+    assert get_candidate_repository().list() == []
+
+
+def test_repeated_identical_tool_gap_does_not_create_duplicate_candidates(monkeypatch):
+    from learning.repository import get_candidate_repository
+
+    monkeypatch.setattr(
+        chat_agent, "generate_with_tools",
+        _fake_generate_with_tools_calling_one_tool("search_gmail", {"query": "納期"}),
+    )
+    monkeypatch.setattr(
+        chat_agent, "execute_tool",
+        lambda tool_name, tool_input, user_email=None: (
+            '{"status": "unavailable", "summary": "ユーザーが特定できないため、Gmail検索はできません。", "records": []}'
+        ),
+    )
+
+    chat_agent.answer("納期を教えて", session_id="s1")
+    chat_agent.answer("別の質問だけど同じ制約", session_id="s2")
+
+    assert len(get_candidate_repository().list()) == 1
+
+
+def test_learning_recording_failure_never_blocks_the_actual_chat_answer(monkeypatch):
+    """Learning記録処理自体が壊れていても、chatの回答は必ず返る
+    （ベストエフォート設計、reasoning_pipelineと同じ方針）。"""
+    import learning.service as learning_service
+
+    monkeypatch.setattr(
+        chat_agent, "generate_with_tools",
+        _fake_generate_with_tools_calling_one_tool("search_gmail", {"query": "納期"}),
+    )
+    monkeypatch.setattr(
+        chat_agent, "execute_tool",
+        lambda tool_name, tool_input, user_email=None: '{"status": "unavailable", "summary": "取得不可"}',
+    )
+    monkeypatch.setattr(
+        learning_service, "create_candidate",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    result = chat_agent.answer("納期を教えて")
+    assert "回答" in result["answer"]  # 回答自体は正常に返る

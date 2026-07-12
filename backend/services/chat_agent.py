@@ -20,9 +20,17 @@ AI / Trace Everything）への対応（trace_id発行 + CapabilityRegistryへの
 Capability実行として追跡されず、`GET /api/debug/trace/{id}`でも
 遡れない状態になっていた。`reasoning_pipeline.reason()`と同じパターンで
 `answer()`にもtrace_id発行 + Capability実行記録を追加する。
+
+2026-07-12 (docs/architecture.md 14.80): 14.79で意図的に見送っていた
+Learningフィードバックループを追加。`reasoning_pipeline.py`の
+`_record_unknown_as_learning`（`unknown`欄をAI_OBSERVATIONとして記録）
+の`chat`版。`chat`には固定の`unknown`欄が無いため、代わりに
+`tool_registry.execute_tool`が返す`status: "unavailable"`/`"error"`を
+信号として使う（`_record_tool_gaps_as_learning`）。
 """
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime
 from typing import Any
@@ -77,6 +85,86 @@ def _build_system_prompt() -> str:
     return SYSTEM_PROMPT_TEMPLATE.format(today=datetime.now().strftime("%Y-%m-%d"))
 
 
+def _record_tool_gaps_as_learning(question: str, tool_results: list[dict[str, Any]]) -> None:
+    """`tool_results`（このターンで実際に呼ばれたツールとその生の結果）を
+    検査し、`status: "unavailable"`/`"error"`を返したツール呼び出しを
+    Learning Domainの観測（AI_OBSERVATION）として記録する（2026-07-12）。
+
+    `reasoning_pipeline._record_unknown_as_learning`のchat版。あちらは
+    固定Q1-Q6パターンの`unknown`欄という単一の信号を使えたが、`chat`は
+    Claude自身が自由にツールを選ぶ構造なので、そのような単一の欄が
+    ない。代わりに`tool_registry.execute_tool`が既に返している
+    `status: "unavailable"`（例: ユーザー特定不可でGmail検索できない）
+    /`"error"`（データ取得中の例外）を、同種の信号として使う。
+
+    重複防止・承認要否・失敗時の扱いは`_record_unknown_as_learning`と
+    同じ方針: 同じ制約（ツール名+summary）は1度記録すれば十分、
+    AI_OBSERVATIONはclassifier.pyの既定ルールにより自動的に
+    OPERATIONAL（承認不要）に分類される、この記録処理自体が失敗しても
+    本来の回答はブロックしない（ベストエフォート）。
+    """
+    gaps: list[dict[str, Any]] = []
+    for entry in tool_results:
+        try:
+            parsed = json.loads(entry["output"])
+        except (TypeError, ValueError):
+            continue
+        status = parsed.get("status") if isinstance(parsed, dict) else None
+        if status in ("unavailable", "error"):
+            gaps.append({
+                "tool": entry["tool"],
+                "input": entry["input"],
+                "status": status,
+                "summary": parsed.get("summary", ""),
+            })
+
+    if not gaps:
+        return
+
+    try:
+        from learning import service as learning_service
+        from learning.models import LearningScopeType, LearningSourceType
+        from learning.repository import get_candidate_repository
+
+        repo = get_candidate_repository()
+        existing_titles = {c.title for c in repo.list()}
+
+        for gap in gaps:
+            title = f"AIが観測した未回答事項(chat): {gap['tool']} - {gap['summary'][:60]}"
+            if title in existing_titles:
+                continue  # 既知の制約として記録済み
+
+            candidate = learning_service.create_candidate(
+                title=title,
+                description=(
+                    f"質問「{question}」への回答中、ツール`{gap['tool']}`の呼び出しが"
+                    f"status={gap['status']}を返した:\n{gap['summary']}"
+                ),
+                source_type=LearningSourceType.AI_OBSERVATION,
+                created_by="chat_agent",
+                confidence=0.6,
+                evidence=[{
+                    "question": question,
+                    "tool": gap["tool"],
+                    "input": gap["input"],
+                    "summary": gap["summary"],
+                }],
+                suggested_application=(
+                    "この制約が業務上重要であれば、データ取得方法の見直しや"
+                    "ツール自体の改善を検討する"
+                ),
+            )
+            candidate = learning_service.classify_and_scope(
+                candidate,
+                requested_scope=LearningScopeType.CAPABILITY,
+                scope_id=CHAT_CAPABILITY.capability_id,
+            )
+            learning_service.apply_candidate(candidate)
+            existing_titles.add(title)
+    except Exception:
+        pass
+
+
 def answer(question: str, session_id: str | None = None, user_email: str | None = None) -> dict[str, Any]:
     """1回のchatターンを処理する。session_idを指定すれば、その会話の
     続きとして扱われる（過去のやり取りがClaudeに渡される）。
@@ -108,8 +196,12 @@ def answer(question: str, session_id: str | None = None, user_email: str | None 
     history = conversation_store.get_history(session_id)
     messages = history + [{"role": "user", "content": question}]
 
+    tool_results_seen: list[dict[str, Any]] = []
+
     def _tool_executor(tool_name: str, tool_input: dict[str, Any]) -> str:
-        return execute_tool(tool_name, tool_input, user_email=user_email)
+        output = execute_tool(tool_name, tool_input, user_email=user_email)
+        tool_results_seen.append({"tool": tool_name, "input": tool_input, "output": output})
+        return output
 
     try:
         final_text, tool_calls = generate_with_tools(
@@ -129,6 +221,8 @@ def answer(question: str, session_id: str | None = None, user_email: str | None 
 
     conversation_store.append_message(session_id, "user", question)
     conversation_store.append_message(session_id, "assistant", final_text)
+
+    _record_tool_gaps_as_learning(question, tool_results_seen)
 
     result = {
         "answer": final_text,
