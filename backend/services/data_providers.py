@@ -605,6 +605,19 @@ class LogsysProvider:
             else:
                 row["days_until_delivery"] = None
 
+            # 2026-07-14（14.99追加、Noritsuguが実チャットで発見・確認済み）:
+            # PO未発行（"ステータス" != 4、code_masterのORDER_STATUSで4=発注済）
+            # の案件は、"Delivery_納品日"が過去の類似発注をコピーした際の
+            # 暫定値であることが多く、確定した納期として信頼できない。
+            # 「PO未発行の案件で納期を7日超過している」と、確定リスクとして
+            # 断定してしまった実例があった（久保川さんの案件、2026-07-14）。
+            # delivery_date_confirmedをFalseにして、Claudeが安易に
+            # 「〇日遅延」と断定しないようにする（未発行の場合は
+            # days_until_deliveryもNoneにする — 意味の無い数値を見せない）。
+            row["delivery_date_confirmed"] = row.get("ステータス") == 4
+            if not row["delivery_date_confirmed"]:
+                row["days_until_delivery"] = None
+
         agg_sql = f'SELECT COUNT(*) AS "件数" FROM ({base_select}) sub{delivery_clause}'
         agg_rows = self._query(agg_sql, tuple(args))
         aggregate = agg_rows[0] if agg_rows else {"件数": len(rows)}
@@ -622,7 +635,13 @@ class LogsysProvider:
             f"サーバー側で計算済み（経過していればマイナス）。納期が「明日」「〇日後」"
             f"「〇日経過」等の相対的な表現が必要な場合は、必ずこの値をそのまま使い、"
             f"自分で日付を比較・暗算しないこと（2026-07-14、暗算で「明日」と誤って"
-            f"述べ、実際には11日経過していた実例があるため）。",
+            f"述べ、実際には11日経過していた実例があるため）。"
+            f"delivery_date_confirmedがfalse（＝PO未発行）の行は、Delivery_納品日が"
+            f"過去の類似発注をコピーした際の暫定値であることが多く、確定した納期として"
+            f"信頼できない（この場合days_until_deliveryはNone）。PO未発行の案件を"
+            f"「〇日遅延」のような確定リスクとして断定してはいけない — 納期が未確定で"
+            f"ある旨を伝え、担当者に正式な納期を確認するよう案内すること"
+            f"（2026-07-14、Noritsuguが実チャットで発見・確認済み）。",
             rows,
         )
         evidence["aggregate"] = aggregate

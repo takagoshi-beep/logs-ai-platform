@@ -604,9 +604,9 @@ def test_projects_computes_days_until_delivery_from_delivery_column(monkeypatch)
 
     def _fake_query(self, sql, params=()):
         return [
-            {"ID": 1, "Delivery_納品日": past_date, "has_sales": False, "production_closed": False},
-            {"ID": 2, "Delivery_納品日": future_date, "has_sales": False, "production_closed": False},
-            {"ID": 3, "Delivery_納品日": None, "has_sales": False, "production_closed": False},
+            {"ID": 1, "Delivery_納品日": past_date, "ステータス": 4, "has_sales": False, "production_closed": False},
+            {"ID": 2, "Delivery_納品日": future_date, "ステータス": 4, "has_sales": False, "production_closed": False},
+            {"ID": 3, "Delivery_納品日": None, "ステータス": 4, "has_sales": False, "production_closed": False},
         ]
 
     monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
@@ -619,6 +619,34 @@ def test_projects_computes_days_until_delivery_from_delivery_column(monkeypatch)
     assert records[2]["days_until_delivery"] == expected_future
     assert records[2]["days_until_delivery"] > 0
     assert records[3]["days_until_delivery"] is None  # 納期未設定
+
+
+def test_projects_treats_unissued_po_delivery_date_as_unconfirmed(monkeypatch):
+    """14.99、Noritsuguが実チャットで発見・確認済み: PO未発行
+    （"ステータス" != 4）の案件のDelivery_納品日は、過去の類似発注を
+    コピーした際の暫定値であることが多く、確定した納期として信頼
+    できない。「PO未発行かつ納期7日超過」を確定リスクとして断定して
+    しまった実例（久保川さんの案件、2026-07-14）の修正。"""
+    past_date = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+    expected_days = (datetime.fromisoformat(past_date) - datetime.now()).days
+
+    def _fake_query(self, sql, params=()):
+        return [
+            # ステータス=1 (依頼中、code_masterのORDER_STATUSで4以外は未発行)
+            {"ID": 1, "Delivery_納品日": past_date, "ステータス": 1, "has_sales": False, "production_closed": False},
+            {"ID": 2, "Delivery_納品日": past_date, "ステータス": 4, "has_sales": False, "production_closed": False},
+        ]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._projects({})
+    records = {r["ID"]: r for r in result["records"]}
+
+    assert records[1]["delivery_date_confirmed"] is False
+    assert records[1]["days_until_delivery"] is None  # 未発行なので意味の無い数値を見せない
+
+    assert records[2]["delivery_date_confirmed"] is True
+    assert records[2]["days_until_delivery"] == expected_days  # 発注済みなら通常通り計算される
 
 
 def test_projects_orders_by_delivery_column_not_customer_delivery_date(monkeypatch):

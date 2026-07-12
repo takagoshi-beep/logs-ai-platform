@@ -3807,6 +3807,36 @@ _bucket.py`・`test_data_providers_enrichment.py`に計5件追加。既存の
 delivery_month_bucket`を新しい基準・フィールドに合わせて修正。
 475件全てパス。
 
+## 14.99 PO未発行の案件の納期を「確定リスク」として断定しないよう修正 (2026-07-14)
+
+14.98で日付計算自体は正しくなったが、実チャットで新たな問題が発見された
+（Noritsugu、2026-07-14）: 「久保川さんの未納品案件」について、
+PO未発行の案件を「納期を7日経過しており、かつPO未発行のため至急対応が
+必要」と、確定したリスクとして断定してしまった。
+
+Noritsuguに確認したところ、**PO未発行の案件のDelivery_納品日は、過去の
+類似発注をコピーした際の暫定値であることが多く、確定した納期として
+信頼できない**という業務ルールが確認された（過去の発注を複製して新規
+発注を作成する際、納期フィールドが更新されないまま残ることがあるため）。
+
+`_projects`（`get_projects`）に`delivery_date_confirmed`
+（`"ステータス" == 4`、code_masterのORDER_STATUSで4=発注済）を追加。
+PO未発行（`delivery_date_confirmed`がfalse）の場合は`days_until_
+delivery`を意図的にNoneにし、意味の無い「〇日遅延」という数値を
+そもそも見せないようにした。`get_my_projects`にも同様に追加
+（`agg.data.po_status`を使用）。
+
+ツール説明文・system prompt双方に、「PO未発行の案件を確定リスクとして
+断定せず、納期が未確定である旨を伝え、担当者に正式な納期を確認する
+よう案内すること」というルールを明記した。
+
+`tests/backend/test_data_providers_enrichment.py`に1件追加（PO未発行/
+発注済みそれぞれでdays_until_delivery・delivery_date_confirmedが
+正しく設定されることの確認）。既存の日数計算テストのfixtureに
+"ステータス": 4を追加（デフォルトで発注済み扱いにするため）。
+`test_get_my_projects_surfaces_status_badges_and_delivery_month_bucket`
+の`_FakeData`モックにも`po_status = 4`を追加。476件全てパス。
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.

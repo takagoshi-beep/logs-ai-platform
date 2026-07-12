@@ -197,6 +197,13 @@ TOOLS: list[dict[str, Any]] = [
             "「〇日後」「〇日経過」のような相対的な表現が必要な場合は、必ずこの値を"
             "そのまま使い、日付を自分で比較・暗算しないこと（2026-07-14、暗算で"
             "「納品は明日」と誤り、実際には11日経過していた実例があるため）。"
+            "【重要】各行の`delivery_date_confirmed`がfalse（＝PO未発行、"
+            "`ステータス`が発注済み以外）の場合、Delivery_納品日は過去の類似発注を"
+            "コピーした際の暫定値であることが多く確定した納期として信頼できない"
+            "（この場合days_until_deliveryはNone）。PO未発行の案件を「〇日遅延」の"
+            "ような確定リスクとして断定してはいけない — 納期が未確定である旨を伝え、"
+            "担当者に正式な納期を確認するよう案内すること（2026-07-14、Noritsuguが"
+            "実チャットで確認済みの業務ルール）。"
             "【件数は必ず結果の`aggregate`フィールドを使うこと。`records`は件数が"
             "多い場合に先頭200件だけに切り捨てられることがあるが、`aggregate`は"
             "指定した条件（キーワード・担当者・期間・納品状況）全体に対して正確な件数】"
@@ -483,6 +490,11 @@ TOOLS: list[dict[str, Any]] = [
             "納期予定日と今日の日付との差分日数がサーバー側で計算済み（経過していれば"
             "マイナス）。納期を「明日」「〇日後」「〇日経過」等の相対的な表現で伝える"
             "場合は、必ずこの値をそのまま使い、日付を自分で比較・暗算しないこと。"
+            "【重要】delivery_date_confirmedがfalse（＝PO未発行）の場合、納期は"
+            "過去の類似発注をコピーした際の暫定値であることが多く確定した納期として"
+            "信頼できない（この場合days_until_deliveryはNone）。PO未発行の案件を"
+            "「〇日遅延」のような確定リスクとして断定してはいけない（2026-07-14、"
+            "Noritsuguが実チャットで確認済みの業務ルール）。"
         ),
         "input_schema": {
             "type": "object",
@@ -697,7 +709,8 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
                             "customer": agg.data.customer_name,
                             "status_badges": agg.status_badges,
                             "delivery_month_bucket": agg.delivery_month_bucket,
-                            "days_until_delivery": agg.data.days_until_delivery,
+                            "days_until_delivery": agg.data.days_until_delivery if agg.data.po_status == 4 else None,
+                            "delivery_date_confirmed": agg.data.po_status == 4,
                             "actions_count": len(agg.actions),
                             "sales_rep_name": agg.data.sales_rep_name,
                             "sales_admin_name": agg.data.sales_admin_name,
