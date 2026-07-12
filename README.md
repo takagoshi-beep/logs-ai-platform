@@ -1,5 +1,88 @@
 # LOGS AI Platform
 
+ログズ株式会社（ファッション雑貨の輸入・卸売business）向けの社内AI/BI
+プラットフォームです。Logsysと連携した実データ（Supabase）を、Function
+Callingによる自由な相談機能（chat）と、固定パターンの検証用推論エンジン
+（reasoning）の2つの経路から扱います。
+
+**2026-07-14 整理:** このREADMEは元々`app/`ディレクトリ（2026-07-06に
+完全削除、14.14参照）を中心にSprintごとの開発ログとして書かれていた
+ため、現在稼働しているのは`backend/`+`frontend/`の構成にも関わらず、
+内容の大半が古いままになっていた。以下は現在の構成に合わせて書き直した
+セクション。それ以降（`---`区切りの下）は、削除済みの`app/`時代の
+Sprintログをそのまま履歴として残してある（現状を知りたいだけなら読む
+必要はない）。
+
+## ドキュメント
+
+- **現在の状態を知りたい場合はこちら:** [docs/architecture.md](docs/architecture.md) — フェーズごとの開発記録（13以降が現行`backend/`構成、日付順）
+- Blueprint（設計思想）: [docs/blueprint/AI_OS_BLUEPRINT_v0.2_DRAFT.md](docs/blueprint/AI_OS_BLUEPRINT_v0.2_DRAFT.md)
+- 既知の課題: [docs/review/KNOWN_ISSUES.md](docs/review/KNOWN_ISSUES.md)
+- 本番同期の設定手順: [docs/production_sync_setup.md](docs/production_sync_setup.md)
+- Renderデプロイ設定: [docs/render_deployment.md](docs/render_deployment.md)
+
+## 構成
+
+- `backend/` — FastAPI。Supabase（Tokyo region）の実データを読む。Renderの「Root Directory: backend」設定で、このディレクトリ単体がデプロイされる（Dockerは使わない）。
+- `frontend/` — Next.js。`backend/`の`/api/*`を叩く。
+- `knowledge/` — 業務用語の定義（`code_master`の数値コードの意味等）を持つmarkdownファイル。`tool_registry.py`が動的に読み込む。
+- `docs/architecture.md` — 開発の全記録。セッションごとにフェーズ番号（13.x、14.x、...）で追記されている。
+
+## ローカル起動
+
+### Backend
+
+```bash
+cd backend
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+```
+
+ヘルスチェック: `http://localhost:8000/api/health`
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+アクセス: `http://localhost:3000`
+
+環境変数 `NEXT_PUBLIC_API_BASE`（未設定時は`http://localhost:8000`にフォールバック）でバックエンドの向き先を指定する。
+
+### 主なページ
+
+- `/chat` — 相談（Function Calling、chat_agent.py）
+- `/reasoning` — 推論エンジン（固定Q1-Q6パターン）
+- `/products`・`/products/{id}` — 商品一覧・詳細
+- `/workspace`・`/workspace/{projectId}` — 案件一覧・詳細
+- `/tasks` — 今日のタスク
+- `/proposals` — 提案書ドラフト（Governance承認込み）
+- `/history` — 実行履歴
+- `/learning` — Learning Center（現状サイドメニュー未表示、直接URLでアクセス）
+- `/settings` — 設定
+
+### 環境変数（Supabase接続）
+
+`backend/`は`SUPABASE_DB_URL`（PostgreSQL接続文字列）で本番Supabaseの
+`public`スキーマに直接接続する。ローカル開発時にテストが本番へ接続する
+ことを防ぐため、`tests/backend/conftest.py`の`autouse`フィクスチャが
+`STORAGE_PROVIDER=sqlite`・`GOOGLE_OAUTH_ENABLED=false`を強制する。
+
+## デプロイ
+
+Render（Singapore region）。詳細は[docs/render_deployment.md](docs/render_deployment.md)を参照。本番同期（Logsys Excel → Supabase）の手順は[docs/production_sync_setup.md](docs/production_sync_setup.md)を参照。
+
+---
+
+## 履歴（`app/`時代のSprintログ、2026-07-06に`app/`削除済み・以下は参考情報として保持）
+
+# LOGS AI Platform
+
 LOGS AI Platform is an internal AI/data platform for using Logsys-connected Excel data as a structured business intelligence layer.
 
 ## 🚀 Quick Start — Walking Skeleton Demo (5 min)

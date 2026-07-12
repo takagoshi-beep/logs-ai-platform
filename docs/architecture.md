@@ -3599,6 +3599,32 @@ test_gmail_service.pyで回帰無しを確認）。
 あることを確認済み）。`list`/`metadata_batch`/`gmail`全体、のような
 フェーズ単位の計測は引き続き速度の変化を追う基本ログとして維持する。
 
+## 14.93 ルート直下のDockerfile削除、README.mdを現状に合わせて整理 (2026-07-14)
+
+以前から指摘のあった「Dockerfile・README.mdが`app/`（2026-07-06削除済み）
+前提のまま残っている」件に対応。
+
+**Dockerfile削除。** `app.main:app`（削除済み）を起動しようとする内容の
+まま残っており、実際のRenderデプロイは`docs/render_deployment.md`の
+通り「Root Directory: backend」のネイティブPython実行で、Dockerは
+使われていなかった。`.github/workflows/`にも参照は無く、完全に
+不使用・死んだ設定だったため削除。
+
+**README.md整理。** 元々1000行超で、大半が`app/`時代のSprint 1〜34の
+開発ログだった（Walking Skeleton Demo、`app/main.py`と`backend/main.py`
+の「2つのサーバー」説明、SQLiteインポーター等、いずれも現在は存在しない
+か使われていない）。`KNOWN_ISSUES.md`（14.79）と同じ方針で対応:
+- 冒頭に、現在の構成（`backend/`+`frontend/`、Supabase、Render）に
+  合わせて書き直した新しいセクションを追加（起動手順、主なページ一覧、
+  ドキュメントへのリンク）
+- 元の内容は全て削除せず、`---`区切りの下に「履歴」として保持（当時の
+  開発判断の記録として）
+
+`backend/README.md`は元々`backend/requirements.txt`・`uvicorn main:app`
+という現状通りの内容だったため変更なし。
+
+465件全てパス（ドキュメント整理のみのため回帰無し）。
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.

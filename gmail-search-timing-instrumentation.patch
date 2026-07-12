@@ -1,0 +1,94 @@
+diff --git a/backend/services/gmail_service.py b/backend/services/gmail_service.py
+index 2aca08f..c2e3f1c 100644
+--- a/backend/services/gmail_service.py
++++ b/backend/services/gmail_service.py
+@@ -158,15 +158,26 @@ def search_messages(email: str, query: str, max_results: int = 10) -> dict[str,
+             "records": [],
+         }
+ 
++    # 2026-07-14（14.90、Noritsuguが実データで発見）: 商品詳細ページの
++    # Gmail検索が、以前想定していた1.1〜1.2秒ではなく実際には2.0〜2.6秒
++    # かかっていることが判明。14.76でメール1件ごとの個別取得（メタデータ
++    # 取得）は並行化済みだが、それでも遅い場合、「一覧取得(list)」と
++    # 「メタデータ取得バッチ」のどちらが支配的かをこれまで区別して計測
++    # していなかった（親のtimed()ブロックはsearch_messages全体をまとめて
++    # 計測するのみ）。原因を推測せず特定するため、2つのフェーズを個別に
++    # 計測するよう分割した。
++    from services.timing import timed
++
+     try:
+-        list_resp = requests.get(
+-            f"{GMAIL_API_BASE}/messages",
+-            headers={"Authorization": f"Bearer {access_token}"},
+-            params={"q": query, "maxResults": max(1, min(max_results, 25))},
+-            timeout=10,
+-        )
+-        list_resp.raise_for_status()
+-        message_ids = [m["id"] for m in list_resp.json().get("messages", [])]
++        with timed("gmail_service.search_messages.list"):
++            list_resp = requests.get(
++                f"{GMAIL_API_BASE}/messages",
++                headers={"Authorization": f"Bearer {access_token}"},
++                params={"q": query, "maxResults": max(1, min(max_results, 25))},
++                timeout=10,
++            )
++            list_resp.raise_for_status()
++            message_ids = [m["id"] for m in list_resp.json().get("messages", [])]
+     except requests.exceptions.HTTPError as e:
+         body = e.response.text if e.response is not None else ""
+         return {"status": "error", "summary": f"Gmail検索中にエラーが発生しました: {e} / {body}", "records": []}
+@@ -202,10 +213,11 @@ def search_messages(email: str, query: str, max_results: int = 10) -> dict[str,
+ 
+     records = []
+     if message_ids:
+-        with ThreadPoolExecutor(max_workers=min(len(message_ids), 10)) as executor:
+-            for result in executor.map(_fetch_one, message_ids):
+-                if result is not None:
+-                    records.append(result)
++        with timed(f"gmail_service.search_messages.metadata_batch(n={len(message_ids)})"):
++            with ThreadPoolExecutor(max_workers=min(len(message_ids), 10)) as executor:
++                for result in executor.map(_fetch_one, message_ids):
++                    if result is not None:
++                        records.append(result)
+ 
+     return {
+         "status": "ok",
+diff --git a/docs/architecture.md b/docs/architecture.md
+index 354925f..fa5f63c 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -3466,6 +3466,34 @@ LLMの実際の呼び出し判断自体はユニットテストでは検証で
+ report_capability_gap未呼び出しでの記録確認、report_capability_gapが
+ 既に呼ばれていれば二重記録されないことの確認）。461件全てパス。
+ 
++## 14.90 商品詳細のGmail検索、詳細な[TIMING]計測を追加 (2026-07-14)
++
++Noritsuguが実際のRenderログで実測してくれたところ、以前「1.1〜1.2秒
++程度」と見積もっていた商品詳細ページのGmail検索が、実際には**2.0〜
++2.6秒**かかっていることが判明した(3商品分のログで確認: 2506ms、
++2604ms、2094ms)。14.76でメール1件ごとの個別取得（メタデータ取得）は
++ThreadPoolExecutorで並行化済みだが、`get_related_communications_
++for_product.gmail`という1つの`timed()`ブロックで全体をまとめて計測
++していたため、「一覧取得(list)」と「メタデータ取得バッチ」のどちらが
++支配的なのかが区別できていなかった。
++
++仮説（未検証）: 現在のコードは (1) Gmail APIの一覧取得(list)呼び出し
++→ (2) ヒットしたメールそれぞれのメタデータ取得（並行実行）、という
++2フェーズが直列に実行される構造になっている。それぞれがRenderの
++Singaporeリージョン↔GoogleのAPIサーバー間のネットワーク往復1回分の
++レイテンシを持つとすれば、2回分の往復で2秒前後になる計算は筋が通る
++が、実際にどちらのフェーズが何ms占めているかのデータはまだ無い。
++
++推測で最適化に踏み込まず、まず`gmail_service.search_messages`内の
++list呼び出しとメタデータ取得バッチをそれぞれ個別の`[TIMING]`ログに
++分割した（`gmail_service.search_messages.list`・
++`gmail_service.search_messages.metadata_batch(n=...)`）。次回、実際の
++Renderログでどちらが支配的かを見てから、対応（Gmail APIのバッチ
++リクエスト機能への統合、max_resultsの見直し等）を判断する。
++
++461件全てパス（ログ計測の追加のみのため新規テストは無し、既存の
++`test_gmail_service.py`で回帰無しを確認）。
++
+ ## Constraints
+ 
+ - Confidential business data remains local and must not be committed.

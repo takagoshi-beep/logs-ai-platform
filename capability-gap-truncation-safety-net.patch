@@ -1,0 +1,191 @@
+diff --git a/backend/services/chat_agent.py b/backend/services/chat_agent.py
+index bd4f65f..6416466 100644
+--- a/backend/services/chat_agent.py
++++ b/backend/services/chat_agent.py
+@@ -112,6 +112,14 @@ def _record_tool_gaps_as_learning(question: str, tool_results: list[dict[str, An
+        申告させる設計にしている（Principle 7/9: No Silent Learning /
+        Explain Before Rememberの精神に合わせ、推測で検知するのではなく
+        AI自身に説明させる）。
++    3. （2026-07-14、14.89追加）ツールの結果に`"truncated": true`が含まれて
++       いるのに、その回答のどのツール呼び出しからも`report_capability_gap`
++       が呼ばれなかったケース — 2.の「自己申告」設計そのものが機能しな
++       かった場合（顧客ランキングをget_sales_linesの切り捨てられた
++       データから作ってしまったが、report_capability_gapが呼ばれなかった
++       実例、2026-07-13）の安全網。切り捨て自体は正常なケース（Claudeが
++       正しく絞り込みを促すだけで済ませた場合等）もあるため断定はせず、
++       低いconfidenceで「要確認」として記録するのみに留める。
+ 
+     重複防止・承認要否・失敗時の扱いは`_record_unknown_as_learning`と
+     同じ方針: 同じ制約は1度記録すれば十分、AI_OBSERVATIONはclassifier.py
+@@ -119,6 +127,9 @@ def _record_tool_gaps_as_learning(question: str, tool_results: list[dict[str, An
+     記録処理自体が失敗しても本来の回答はブロックしない（ベストエフォート）。
+     """
+     gaps: list[dict[str, Any]] = []
++    saw_capability_gap_report = any(e["tool"] == "report_capability_gap" for e in tool_results)
++    saw_unreported_truncation = False
++
+     for entry in tool_results:
+         try:
+             parsed = json.loads(entry["output"])
+@@ -148,6 +159,21 @@ def _record_tool_gaps_as_learning(question: str, tool_results: list[dict[str, An
+                 "requested_capability": "",
+                 "confidence": 0.6,
+             })
++        elif not saw_capability_gap_report and not saw_unreported_truncation and parsed.get("truncated") is True:
++            saw_unreported_truncation = True  # 1ターンにつき1件で十分
++            gaps.append({
++                "tool": entry["tool"],
++                "input": entry["input"],
++                "status": "truncated_without_gap_report",
++                "summary": (
++                    f"{entry['tool']}の結果がtruncated=true（一部データのみ）"
++                    "だったが、report_capability_gapは呼ばれなかった。この回答が"
++                    "切り捨てられたデータのみから集計・ランキング等を作って"
++                    "いないか要確認。"
++                ),
++                "requested_capability": "",
++                "confidence": 0.4,
++            })
+ 
+     if not gaps:
+         return
+diff --git a/backend/services/tool_registry.py b/backend/services/tool_registry.py
+index 1e0ff1d..b8e6fab 100644
+--- a/backend/services/tool_registry.py
++++ b/backend/services/tool_registry.py
+@@ -483,16 +483,21 @@ TOOLS: list[dict[str, Any]] = [
+         "name": "report_capability_gap",
+         "description": (
+             "現在のツール群では正確に答えられない「機能そのものの不足」に"
+-            "気づいた場合に呼び出す（2026-07-13、14.82）。「データが存在しない/"
+-            "見つからない」（＝そのケースはget_XXXツールが返すstatus:"
+-            "\"unavailable\"で十分）とは異なり、こちらは「絞り込み・集計の"
+-            "手段自体がツールに用意されていない」ケース専用（例:"
++            "気づいた場合に呼び出す（2026-07-13、14.82、14.89でルール明確化）。"
++            "「データが存在しない/見つからない」（＝そのケースはget_XXXツール"
++            "が返すstatus:\"unavailable\"で十分）とは異なり、こちらは「絞り込み・"
++            "集計の手段自体がツールに用意されていない」ケース専用（例:"
+             "「今月のOEMの売上は？」で、事業分類による絞り込み手段が"
+             "get_sales_linesにもget_sales_by_categoryにも無かった実例）。"
+             "呼び出しても回答自体は変わらない — 正直に「現状のツールでは"
+             "できません」と説明した上で、この不足を記録するために呼ぶ。"
+             "本当に機能不足の場合のみ呼ぶこと（データが単に無い/0件だった"
+             "だけの場合には呼ばない）。"
++            "【必ず呼ぶべきケース】ツールの結果に\"truncated\": trueが含まれて"
++            "おり、かつ集計・ランキング・件数などをその不完全なrecordsから"
++            "自分で計算して回答した場合は、必ずこのツールを呼ぶこと（2026-07-13、"
++            "顧客ランキングをget_sales_linesの切り捨てられたデータから作って"
++            "しまったにも関わらず、このツールを呼ばなかった実例あり）。"
+         ),
+         "input_schema": {
+             "type": "object",
+diff --git a/docs/architecture.md b/docs/architecture.md
+index 30d0b16..354925f 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -3436,6 +3436,36 @@ LLMの実際の呼び出し判断自体はユニットテストでは検証で
+ 分解して提示できることを確認した。トリガー強化の修正が有効だったことを
+ 実データで確認済み。
+ 
++## 14.89 `report_capability_gap`が呼ばれなかった場合の安全網を追加 (2026-07-14)
++
++14.87で「AIが自分の限界に気づいたがreport_capability_gapを呼ばなかった」
++実例（顧客ランキングをget_sales_linesの切り捨てられたデータから作って
++しまった）が見つかった際、根本原因（集計手段の不足）は直接解消したが、
++「自己申告の設計自体が機能しなかった」という問題は残っていた。
++
++対応は2段構え:
++1. `report_capability_gap`のツール説明文に「ツールの結果に
++   `"truncated": true`が含まれており、かつその不完全なrecordsから
++   自分で集計・ランキングを計算して回答した場合は必ず呼ぶこと」という
++   ルールを明記（プロンプトレベルでの再発防止）。
++2. `chat_agent._record_tool_gaps_as_learning`に3つ目の信号を追加:
++   `report_capability_gap`が同じターンで一度も呼ばれておらず、かつ
++   いずれかのツール結果に`"truncated": true`が含まれている場合、
++   「report_capability_gapが呼ばれなかった可能性」自体を低confidence
++   (0.4)のAI_OBSERVATIONとして記録する安全網（プロンプトだけに頼らない
++   構造的なバックストップ）。切り捨て自体は正常なケース（Claudeが正しく
++   絞り込みを促すだけで済ませた場合等）もあるため、断定はせず「要確認」
++   として記録するのみ。1ターンにつき1件のみ記録（同一ターンで複数の
++   truncated結果があってもノイズにならないよう抑制）。
++
++いずれもテキストへの正規表現マッチングではなく、ツール結果の構造化
++フィールド（"truncated"）を見るだけの判定なので、14.82で確立した
++「推測で検知するのではなく構造化された信号を使う」方針を維持している。
++
++`tests/backend/test_chat_agent.py`に2件追加（truncated=trueかつ
++report_capability_gap未呼び出しでの記録確認、report_capability_gapが
++既に呼ばれていれば二重記録されないことの確認）。461件全てパス。
++
+ ## Constraints
+ 
+ - Confidential business data remains local and must not be committed.
+diff --git a/tests/backend/test_chat_agent.py b/tests/backend/test_chat_agent.py
+index 3033010..7af18e8 100644
+--- a/tests/backend/test_chat_agent.py
++++ b/tests/backend/test_chat_agent.py
+@@ -272,4 +272,61 @@ def test_report_capability_gap_is_not_triggered_by_ordinary_ok_status(monkeypatc
+ 
+     chat_agent.answer("今月のOEMの売上は？")
+ 
+-    assert get_candidate_repository().list() == []
+\ No newline at end of file
++    assert get_candidate_repository().list() == []
++
++
++def test_truncated_result_without_capability_gap_report_creates_low_confidence_candidate(monkeypatch):
++    """14.89: report_capability_gapの自己申告設計そのものが機能しな
++    かった場合（truncated=trueなのに呼ばれなかった）の安全網。"""
++    from learning.repository import get_candidate_repository
++
++    monkeypatch.setattr(
++        chat_agent, "generate_with_tools",
++        _fake_generate_with_tools_calling_one_tool("get_sales_lines", {"sales_rep_keyword": "石川"}),
++    )
++    monkeypatch.setattr(
++        chat_agent, "execute_tool",
++        lambda tool_name, tool_input, user_email=None: json.dumps({
++            "status": "ok", "records": [{"得意先名": "A社"}], "truncated": True,
++        }, ensure_ascii=False),
++    )
++
++    chat_agent.answer("顧客ランキングを教えて")
++
++    candidates = get_candidate_repository().list()
++    assert len(candidates) == 1
++    assert candidates[0].source_type.value == "ai_observation"
++    assert "truncated" in candidates[0].description or "report_capability_gap" in candidates[0].description
++
++
++def test_truncated_result_is_not_flagged_when_capability_gap_was_reported(monkeypatch):
++    """report_capability_gapが同じターンで既に呼ばれていれば、
++    truncated=trueの安全網は二重に記録しない。"""
++    from learning.repository import get_candidate_repository
++
++    calls = {"n": 0}
++
++    def _fake_generate_with_tools(**kwargs):
++        executor = kwargs["tool_executor"]
++        executor("get_sales_lines", {"sales_rep_keyword": "石川"})
++        executor("report_capability_gap", {"description": "顧客別集計手段が無い"})
++        return "回答です", [
++            {"tool": "get_sales_lines", "input": {}},
++            {"tool": "report_capability_gap", "input": {}},
++        ]
++
++    monkeypatch.setattr(chat_agent, "generate_with_tools", _fake_generate_with_tools)
++    monkeypatch.setattr(
++        chat_agent, "execute_tool",
++        lambda tool_name, tool_input, user_email=None: (
++            json.dumps({"status": "ok", "records": [], "truncated": True}, ensure_ascii=False)
++            if tool_name == "get_sales_lines"
++            else json.dumps({"status": "capability_gap_reported", "description": tool_input.get("description", "")}, ensure_ascii=False)
++        ),
++    )
++
++    chat_agent.answer("顧客ランキングを教えて")
++
++    candidates = get_candidate_repository().list()
++    assert len(candidates) == 1  # report_capability_gap分のみ。truncated安全網は発火しない
++    assert candidates[0].description.count("顧客別集計手段が無い") >= 1
+\ No newline at end of file
