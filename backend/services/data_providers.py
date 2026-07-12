@@ -519,6 +519,17 @@ class LogsysProvider:
         このチャットツールにも反映した。delivery_statusで絞り込める
         ようにし、集計件数（aggregate）は200件の壁の影響を受けない
         正確な値を返す（14.31と同じ理由）。
+
+        2026-07-14（14.96追加）: 「木村さんの今月納品予定の案件」という
+        質問に対し、chatが「営業担当者を納品予定日で絞り込む機能が
+        ありません」と自覚しつつ、代わりにget_sales_linesのLOGS_CODEを
+        keywordとしてget_projectsを呼ぶという不安定な代用策を取り、
+        別の案件（表記が似ているだけの無関係な過去案件）を誤って提示
+        した実例（Noritsugu、2026-07-14）の修正。sales_rep_keyword
+        （get_sales_linesと同じ4ロールへのOR、"営業担当者名"・
+        "営業事務担当者名"・"生産管理担当者名"・"企画担当者名"のいずれか）
+        とperiod_start/period_end（"顧客納品日"基準）を追加し、
+        本来の「特定の担当者×納品予定月」で直接絞り込めるようにした。
         """
         keyword = params.get("keyword")
         delivery_status = params.get("delivery_status")  # "delivered" | "undelivered" | None
@@ -536,6 +547,19 @@ class LogsysProvider:
         if keyword:
             base_select += ' AND (po."案件名" LIKE %s OR po."顧客名" LIKE %s)'
             args += [f"%{keyword}%", f"%{keyword}%"]
+        if params.get("sales_rep_keyword"):
+            base_select += (
+                ' AND (po."営業担当者名" LIKE %s OR po."営業事務担当者名" LIKE %s '
+                'OR po."生産管理担当者名" LIKE %s OR po."企画担当者名" LIKE %s)'
+            )
+            kw = f"%{params['sales_rep_keyword']}%"
+            args += [kw, kw, kw, kw]
+        if params.get("period_start"):
+            base_select += ' AND po."顧客納品日" >= %s'
+            args.append(params["period_start"])
+        if params.get("period_end"):
+            base_select += ' AND po."顧客納品日" <= %s'
+            args.append(params["period_end"])
 
         delivery_clause = ""
         if delivery_status == "undelivered":

@@ -170,21 +170,34 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "get_projects",
         "description": (
-            "案件（PO）情報を、案件名または顧客名のキーワードで検索する。"
+            "案件（PO）情報を、案件名・顧客名のキーワード、担当者名、"
+            "納品予定期間で検索する（2026-07-14、14.96でsales_rep_keyword/"
+            "period_start/period_endを追加）。「〇〇さんの今月納品予定の"
+            "案件」のように特定の担当者×期間で絞り込みたい場合は、"
+            "get_sales_linesのLOGS_CODEやkeywordでの代用検索（案件名の"
+            "部分一致に頼った不安定な特定）をせず、必ずsales_rep_keyword/"
+            "period_start/period_endを直接指定すること（自分自身の案件"
+            "ではなく他の担当者の案件を聞かれた場合はget_my_projectsでは"
+            "なくこちらを使う）。"
             "納品済みかどうかで絞り込みたい場合はdelivery_statusを使うこと"
             "（POの「顧客納品日」列は入力予定日であり、実際に納品されたかどうかとは"
             "無関係なので、納品判定に使ってはいけない。実際の納品有無はhas_sales"
             "（同じLOGS_CODEでsalesに売上実データがあるか）またはproduction_closed"
             "（生産管理『量産』シートの表示フラグ=0か）で判定済みで、各行にその"
-            "2つのフィールドが含まれる）。"
+            "2つのフィールドが含まれる）。period_start/period_endは「顧客納品日」"
+            "（＝納品予定日）に対する絞り込みであり、delivery_statusとは別の軸"
+            "（両方同時に指定してよい）。"
             "【件数は必ず結果の`aggregate`フィールドを使うこと。`records`は件数が"
             "多い場合に先頭200件だけに切り捨てられることがあるが、`aggregate`は"
-            "指定した条件（キーワード・納品状況）全体に対して正確な件数】"
+            "指定した条件（キーワード・担当者・期間・納品状況）全体に対して正確な件数】"
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "keyword": {"type": "string", "description": "案件名または顧客名の部分一致キーワード"},
+                "sales_rep_keyword": {"type": "string", "description": "担当者名の部分一致キーワード（営業担当者・営業事務・生産管理・企画担当者のいずれかに一致すればヒット）。0件、または名前の一致が不確かな場合はfind_similar_name（domain=\"staff\"）で正式名称を確認してから呼び直すこと。"},
+                "period_start": {"type": "string", "description": "納品予定期間の開始日（YYYY-MM-DD形式、「顧客納品日」基準）"},
+                "period_end": {"type": "string", "description": "納品予定期間の終了日（YYYY-MM-DD形式、「顧客納品日」基準）"},
                 "delivery_status": {
                     "type": "string",
                     "enum": ["delivered", "undelivered"],

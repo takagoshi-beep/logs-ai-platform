@@ -3677,6 +3677,44 @@ sg.onrender.com`）で、かつIDとして使われていた値も`LOGS_CODE`
 `product_id`が含まれることを確認するアサーションを追加。465件全て
 パス。
 
+## 14.96 `get_projects`に担当者・納品予定期間フィルタを追加、不明時の表現を明確化 (2026-07-14)
+
+実チャットでの深掘りで発見された実例(Noritsugu、2026-07-14):
+「木村さんの今月納品予定の案件をURLとともに」という質問に対し、chatが
+「営業担当者を納品予定日で絞り込む機能がありません」と自覚しつつ、
+代わりに`get_sales_lines`のLOGS_CODEを`get_projects`の`keyword`として
+使うという不安定な代用策を取り、案件名が偶然似ているだけの無関係な
+過去案件（納品日が2025年）を誤って提示してしまった。
+
+`get_projects`（`_projects`）に`sales_rep_keyword`（`get_sales_lines`/
+`get_sales_by_category`と同じ4ロールへのOR: 営業担当者名・営業事務
+担当者名・生産管理担当者名・企画担当者名）と`period_start`/
+`period_end`（「顧客納品日」基準）を追加。これにより「特定の担当者×
+納品予定月」を直接絞り込めるようになり、案件名の部分一致に頼った
+不安定な代用検索が不要になった。`delivery_status`（納品済み/未納品の
+実績判定）とは独立した軸として組み合わせて指定できる。
+
+ツール説明文にも、「他の担当者の案件を聞かれた場合は
+get_my_projectsではなくget_projectsにsales_rep_keywordを指定して
+使うこと」と明記した（get_my_projectsはログイン中の本人専用のため）。
+
+**あわせて対応: IDが不明な場合の表現を明確化。** 同じセッションで、
+「案件ID: データから案件IDを特定中」という、まだ処理が続いている
+かのような曖昧な表現をした実例も見つかった。system promptに
+「不明な場合は『特定中』のような曖昧な言い回しを避け、『リンクは
+特定できませんでした』のようにはっきり不明であると分かる表現にする」
+というルールを追加した（14.95のURL捏造禁止ルールに追記）。
+
+`tests/backend/test_data_providers_enrichment.py`に3件追加
+（sales_rep_keywordの4ロールOR確認、period_start/period_endの確認、
+delivery_status等との組み合わせ確認）。468件全てパス。
+
+なお、今回も`report_capability_gap`は呼ばれていなかった（「機能が
+ありません」とテキストで自覚しつつ申告しなかった実例、これで3回目
+—14.87、14.89の際にも同様のケースがあった）。根本原因（この
+フィルタの不足）は直接解消したが、「自己申告の設計が実際にはあまり
+機能していない」というメタな課題は依然として未解決のまま残っている。
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.

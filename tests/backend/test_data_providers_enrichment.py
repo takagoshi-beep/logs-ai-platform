@@ -497,6 +497,68 @@ def test_projects_without_delivery_status_does_not_filter(monkeypatch):
     assert "WHERE" not in captured["sqls"][0].split(") sub", 1)[1]
 
 
+def test_projects_filters_by_sales_rep_keyword_across_four_roles(monkeypatch):
+    """14.96: 「木村さんの今月納品予定の案件」に対し、chatが自身では
+    絞り込めず、get_sales_linesのLOGS_CODEをkeywordとして代用検索し、
+    無関係な過去案件を誤って提示した実例（Noritsugu、2026-07-14）の
+    修正。get_sales_by_categoryと同じ4ロールへのOR検索を追加。"""
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured.setdefault("sqls", []).append(sql)
+        return []
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    LogsysProvider()._projects({"sales_rep_keyword": "木村"})
+
+    sql = captured["sqls"][0]
+    assert '"営業担当者名" LIKE %s' in sql
+    assert '"営業事務担当者名" LIKE %s' in sql
+    assert '"生産管理担当者名" LIKE %s' in sql
+    assert '"企画担当者名" LIKE %s' in sql
+
+
+def test_projects_filters_by_delivery_period(monkeypatch):
+    """14.96: 「今月納品予定の案件」のような、期間での絞り込みを
+    「顧客納品日」に対して行えるようにした。"""
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured["params"] = params
+        return []
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    LogsysProvider()._projects({"period_start": "2026-07-01", "period_end": "2026-07-31"})
+
+    assert "2026-07-01" in captured["params"]
+    assert "2026-07-31" in captured["params"]
+
+
+def test_projects_combines_sales_rep_and_period_and_delivery_status(monkeypatch):
+    """担当者・期間・納品状況を同時に指定できることの確認（互いに独立
+    した絞り込み軸として組み合わせられる）。"""
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured.setdefault("sqls", []).append(sql)
+        return []
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    LogsysProvider()._projects({
+        "sales_rep_keyword": "木村", "period_start": "2026-07-01",
+        "period_end": "2026-07-31", "delivery_status": "undelivered",
+    })
+
+    sql = captured["sqls"][0]
+    assert '"営業担当者名" LIKE %s' in sql
+    assert 'po."顧客納品日" >= %s' in sql
+    assert 'po."顧客納品日" <= %s' in sql
+    assert "NOT" in sql
+
+
 def test_sales_by_category_sales_rep_keyword_matches_any_of_four_roles(monkeypatch):
     captured = {}
 
