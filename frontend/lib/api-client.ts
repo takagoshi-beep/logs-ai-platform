@@ -58,6 +58,22 @@ export async function getExecutionHistory() {
 }
 
 /**
+ * Get a single Capability execution record by ID
+ * (2026-07-14, 14.101: /historyの各行から詳細を見られるようにするため追加)
+ */
+export async function getExecution(executionId: string) {
+  return apiCall(`/api/executions/${executionId}`);
+}
+
+/**
+ * Get aggregated success-rate metrics across all registered Capabilities
+ * (2026-07-14, 14.101: /settingsのAIパフォーマンスセクション用に追加)
+ */
+export async function getEvaluationSummary() {
+  return apiCall("/api/evaluation/summary");
+}
+
+/**
  * Get debug trace for a given trace ID
  */
 export async function getDebugTrace(traceId: string) {

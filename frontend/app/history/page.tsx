@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Card, EmptyState, SectionHeader, StatusBadge } from "@/components/design-system";
-import { getExecutionHistory } from "@/lib/api-client";
+import { getExecutionHistory, getExecution } from "@/lib/api-client";
 
 interface HistoryItem {
   type: "capability_execution" | "governance_approval";
@@ -12,6 +12,22 @@ interface HistoryItem {
   trace_id: string;
   capability_id?: string;
   concept?: string;
+}
+
+interface ExecutionDetail {
+  execution_id: string;
+  capability_id?: string;
+  capability_version?: string;
+  project_id?: string;
+  user_id?: string;
+  trace_id?: string;
+  status: string;
+  inputs?: Record<string, unknown>;
+  outputs?: Record<string, unknown>;
+  started_at?: string | null;
+  completed_at?: string | null;
+  execution_time_seconds?: number;
+  error_message?: string | null;
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -47,6 +63,14 @@ export default function HistoryPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // 2026-07-14（14.101、Noritsuguの指定）: 各行は元々executionのidを
+  // 持っていたが、クリックしても何も起きなかった（GET /api/executions/{id}
+  // は実装済みで実データを返すが、フロントエンドから未接続だった）。
+  // 行クリックで詳細（入力・出力・エラー内容）を展開表示するようにした。
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [detailCache, setDetailCache] = useState<Record<string, ExecutionDetail>>({});
+  const [detailLoading, setDetailLoading] = useState<string | null>(null);
+
   useEffect(() => {
     getExecutionHistory()
       .then((data: any) => {
@@ -58,6 +82,26 @@ export default function HistoryPage() {
       })
       .finally(() => setLoading(false));
   }, []);
+
+  function handleRowClick(item: HistoryItem) {
+    // Governance承認の履歴には対応するCapability実行詳細が無いため
+    // （getExecutionはcapability_executionのIDしか探さない）、展開対象外。
+    if (item.type !== "capability_execution") return;
+
+    if (expandedId === item.id) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(item.id);
+    if (!detailCache[item.id]) {
+      setDetailLoading(item.id);
+      getExecution(item.id)
+        .then((data: any) => {
+          setDetailCache((prev) => ({ ...prev, [item.id]: data }));
+        })
+        .finally(() => setDetailLoading(null));
+    }
+  }
 
   return (
     <div className="space-y-5">
@@ -75,24 +119,61 @@ export default function HistoryPage() {
       )}
 
       <Card>
-        <SectionHeader title="実行・承認履歴" subtitle="新しい順に表示しています。" />
+        <SectionHeader title="実行・承認履歴" subtitle="新しい順に表示しています。AI機能の実行はクリックすると詳細が見られます。" />
         {loading && <p className="py-8 text-center text-sm text-sub">読み込み中...</p>}
         {!loading && items.length === 0 && (
           <p className="py-8 text-center text-sm text-sub">まだ履歴がありません</p>
         )}
         {!loading && items.length > 0 && (
           <ul className="space-y-2 text-sm">
-            {items.map((item) => (
-              <li key={`${item.type}-${item.id}`} className="surface-soft p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="font-medium text-ink">{itemTitle(item)}</div>
-                  <StatusBadge status={STATUS_LABEL[item.status] ?? item.status} />
-                </div>
-                <div className="text-xs text-sub">
-                  {itemTypeLabel(item)} | {formatTimestamp(item.timestamp)}
-                </div>
-              </li>
-            ))}
+            {items.map((item) => {
+              const isExpanded = expandedId === item.id;
+              const detail = detailCache[item.id];
+              const clickable = item.type === "capability_execution";
+              return (
+                <li key={`${item.type}-${item.id}`} className="surface-soft p-3">
+                  <div
+                    className={`flex items-center justify-between gap-2 ${clickable ? "cursor-pointer" : ""}`}
+                    onClick={() => handleRowClick(item)}
+                  >
+                    <div className="font-medium text-ink">{itemTitle(item)}</div>
+                    <StatusBadge status={STATUS_LABEL[item.status] ?? item.status} />
+                  </div>
+                  <div className="text-xs text-sub">
+                    {itemTypeLabel(item)} | {formatTimestamp(item.timestamp)}
+                  </div>
+
+                  {isExpanded && (
+                    <div className="mt-2 rounded-lg border border-slate-200 bg-white p-3 text-xs">
+                      {detailLoading === item.id && <p className="text-sub">詳細を読み込み中...</p>}
+                      {detail && detail.status === "not_found" && (
+                        <p className="text-sub">詳細データが見つかりませんでした。</p>
+                      )}
+                      {detail && detail.status !== "not_found" && (
+                        <div className="space-y-1">
+                          <div>trace_id: {detail.trace_id ?? "—"}</div>
+                          <div>project_id: {detail.project_id ?? "—"}</div>
+                          <div>実行時間: {detail.execution_time_seconds != null ? `${detail.execution_time_seconds.toFixed(2)}秒` : "—"}</div>
+                          <div>開始: {detail.started_at ? formatTimestamp(detail.started_at) : "—"}</div>
+                          <div>終了: {detail.completed_at ? formatTimestamp(detail.completed_at) : "—"}</div>
+                          {detail.error_message && (
+                            <div className="text-red-600">エラー: {detail.error_message}</div>
+                          )}
+                          <div className="mt-1">
+                            <div className="font-medium">入力</div>
+                            <pre className="mt-1 overflow-x-auto rounded bg-slate-50 p-2">{JSON.stringify(detail.inputs ?? {}, null, 2)}</pre>
+                          </div>
+                          <div className="mt-1">
+                            <div className="font-medium">出力</div>
+                            <pre className="mt-1 overflow-x-auto rounded bg-slate-50 p-2">{JSON.stringify(detail.outputs ?? {}, null, 2)}</pre>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </Card>

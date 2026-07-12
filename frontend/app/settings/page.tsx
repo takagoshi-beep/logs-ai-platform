@@ -3,6 +3,7 @@
 import { Card, SectionHeader, Button, Badge } from "@/components/design-system";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { getEvaluationSummary } from "@/lib/api-client";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
 
@@ -17,6 +18,80 @@ const PROVIDER_DESCRIPTION: Record<Provider, string> = {
   gmail: "「相談」で自分宛のメールを検索・参照できるようになります（現時点では読み取りのみ、送信は未対応）。",
   slack: "「相談」で自分が参加しているチャンネル・DMのメッセージを検索できるようになります。",
 };
+
+interface CapabilityMetric {
+  capability_id: string;
+  total_executions: number;
+  successful_executions?: number;
+  success_rate: number;
+  avg_execution_time_seconds: number;
+  confidence?: number;
+  last_used_at?: string | null;
+}
+
+interface EvaluationSummary {
+  overall_success_rate: number | null;
+  total_executions: number;
+  capabilities: CapabilityMetric[];
+}
+
+function fmtPercent(v: number | null | undefined): string {
+  if (v === null || v === undefined) return "—";
+  return `${(v * 100).toFixed(0)}%`;
+}
+
+// 2026-07-14（14.101、Noritsuguの指定）: GET /api/evaluation/summaryは
+// 実装済みで実際の実行成功率を集計しているが、これまでどのページからも
+// 呼ばれておらず未接続だった。設定ページに「AIパフォーマンス」として
+// 追加し、ログズ社内で継続的に相談・推論エンジンの挙動をチェックする
+// 際の簡易的な健康診断として使えるようにする。
+function AiPerformanceSection() {
+  const [summary, setSummary] = useState<EvaluationSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    getEvaluationSummary()
+      .then((data: any) => setSummary(data))
+      .finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <Card>
+      <SectionHeader
+        title="AIパフォーマンス"
+        subtitle="登録済みの各AI機能（Capability）の実行成功率です。ハードコードではなく実際の実行履歴から集計しています。"
+      />
+      {loading && <p className="py-4 text-center text-sm text-sub">読み込み中...</p>}
+      {!loading && summary && summary.total_executions === 0 && (
+        <p className="py-4 text-center text-sm text-sub">まだ実行記録がありません</p>
+      )}
+      {!loading && summary && summary.total_executions > 0 && (
+        <>
+          <div className="mt-2 flex gap-6 text-sm">
+            <div>
+              <div className="text-xs text-sub">全体の成功率</div>
+              <div className="text-lg font-semibold text-ink">{fmtPercent(summary.overall_success_rate)}</div>
+            </div>
+            <div>
+              <div className="text-xs text-sub">総実行回数</div>
+              <div className="text-lg font-semibold text-ink">{summary.total_executions.toLocaleString()}</div>
+            </div>
+          </div>
+          <div className="mt-3 space-y-2">
+            {summary.capabilities.map((cap) => (
+              <div key={cap.capability_id} className="surface-soft flex items-center justify-between p-2 text-xs">
+                <span className="font-medium text-ink">{cap.capability_id}</span>
+                <span className="text-sub">
+                  成功率 {fmtPercent(cap.success_rate)} ・ {cap.total_executions}回実行 ・ 平均{cap.avg_execution_time_seconds.toFixed(1)}秒
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
 
 function IntegrationCard({
   provider,
@@ -121,6 +196,8 @@ export default function SettingsPage() {
         }}
         onDisconnect={() => handleDisconnect("slack")}
       />
+
+      <AiPerformanceSection />
     </div>
   );
 }
