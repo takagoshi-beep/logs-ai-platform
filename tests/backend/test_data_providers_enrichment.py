@@ -146,20 +146,25 @@ def test_customer_master_includes_sales_rep_name(monkeypatch):
 
 
 def test_product_master_translates_category_and_includes_new_fields(monkeypatch):
+    """14.95: LOGS_CODEを商品ページURLのIDとして誤用し、架空のURLを
+    生成してしまった実例（2026-07-14）の修正。products."ID"を
+    product_idとして含めるようにした。"""
     captured = {}
 
     def _fake_query(self, sql, params=()):
         captured["sql"] = sql
-        return [{"LOGS_CODE": "5145", "Sample_CODE": "S1", "商品名": "Baseball Cap",
+        return [{"product_id": 5001, "LOGS_CODE": "5145", "Sample_CODE": "S1", "商品名": "Baseball Cap",
                   "型番": "K01", "商品分類": 1, "仕入先名": "1064STUDIO"}]
 
     monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
 
     result = LogsysProvider()._product_master({})
 
+    assert '"ID" AS "product_id"' in captured["sql"]
     assert '"Sample_CODE"' in captured["sql"]
     assert '"仕入先名"' in captured["sql"]
     assert result["records"][0]["商品分類名"] == "帽子"
+    assert result["records"][0]["product_id"] == 5001
 
 
 def test_sales_lines_reads_from_enriched_view(monkeypatch):

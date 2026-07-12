@@ -3640,6 +3640,43 @@ safety-net.patch`等、Claudeとのやり取りで生成した一連のパッチ
 を明示した`git add backend docs frontend tests`のような形にし、意図せず
 無関係なファイルを巻き込まないよう注意する。
 
+## 14.95 chatがこのアプリ自体の架空URLを生成していた問題を修正 (2026-07-14)
+
+実チャットで発見された実例(Noritsugu、2026-07-14): 「木村さんの今月納品の
+案件をURLとともに教えてください」という質問に対し、chatが
+`https://app.logsystem.biz/products/12226`のような**完全に架空の
+URL**を各商品ごとに生成して回答していた。ドメイン自体がこのプラット
+フォームと無関係（実際のフロントエンドは`https://logs-ai-frontend-
+sg.onrender.com`）で、かつIDとして使われていた値も`LOGS_CODE`
+（商品ページのURLパラメータである`products."ID"`とは別物）だった。
+
+原因は、chatがこのWebアプリ自体のURL構造を一切知らなかったこと。
+`get_sales_lines`はLOGS_CODEしか返さず、`products."ID"`（商品ページ
+`/products/{product_id}`のURLパラメータ）は当時どのツールからも取得
+できなかった。
+
+**対応1:** `get_product_master`に`product_id`（`products."ID"`）を
+追加した（`get_my_products`は既にこのフィールドを持っていた）。
+これで少なくとも`get_product_master`/`get_my_products`を呼べば、
+商品ページへの本物のリンクを構成するための正しいIDが手に入る。
+
+**対応2:** system promptに明確なルールを追加:
+- このアプリ自体のURLを聞かれた場合、絶対に架空のURLを作らないこと
+- 本番URL(`https://logs-ai-frontend-sg.onrender.com`)を明記
+- 商品ページは`{base_url}/products/{product_id}`（`product_id`は
+  get_product_master/get_my_productsの`product_id`フィールド。
+  LOGS_CODE/Sample_CODEはIDとして使えない）
+- 案件ページは`{base_url}/workspace/{project_id}`（`project_id`は
+  get_projects/get_my_projectsの`ID`/`project_id`フィールド。
+  こちらは元々get_projectsのSELECTに`po."ID"`が含まれておりIDは既に
+  取得可能だったが、URLパターン自体をchatに教えていなかった）
+- 該当IDを未取得の場合は、URLを組み立てる前に該当ツールを呼んで確認
+  するか、正直に「リンクは分かりません」と伝えること
+
+`tests/backend/test_data_providers_enrichment.py`の既存テストを更新し、
+`product_id`が含まれることを確認するアサーションを追加。465件全て
+パス。
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.

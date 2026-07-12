@@ -244,9 +244,11 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "get_product_master",
         "description": (
-            "商品マスタの全件を取得する。LOGS_CODE、Sample_CODE、商品名、型番、"
-            "仕入先名、商品分類名（数値コードではなく既に名称に変換済み。"
-            "get_code_masterで確認する必要はない）を含む。"
+            "商品マスタの全件を取得する。product_id（products.\"ID\"、"
+            "商品詳細ページ/products/{product_id}のURLに使える実在のID）、"
+            "LOGS_CODE、Sample_CODE、商品名、型番、仕入先名、商品分類名"
+            "（数値コードではなく既に名称に変換済み。get_code_masterで"
+            "確認する必要はない）を含む。"
         ),
         "input_schema": {"type": "object", "properties": {}},
     },

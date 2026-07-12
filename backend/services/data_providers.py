@@ -573,8 +573,14 @@ class LogsysProvider:
         return _evidence(self.name, "customer_master", "ok", f"顧客マスタ {len(rows)}件を取得（名寄せ・営業担当確認用）", rows)
 
     def _product_master(self, params: dict[str, Any]) -> dict[str, Any]:
+        # 2026-07-14（14.95追加）: 商品ページ（/products/{product_id}）への
+        # 正しいリンクをClaudeが構成できるよう、products."ID"を
+        # product_idとして含める（get_my_productsの命名と揃えた）。
+        # LOGS_CODEはURLのIDとして使えない別物であり、これを混同すると
+        # 実在しないURLを作ってしまう（2026-07-14、実際にLOGS_CODEを
+        # 使った架空のドメイン・架空のURLをchatが生成した実例あり）。
         rows = self._query(
-            'SELECT "LOGS_CODE", "Sample_CODE", "商品名", "型番", "商品分類", "仕入先名" FROM products'
+            'SELECT "ID" AS "product_id", "LOGS_CODE", "Sample_CODE", "商品名", "型番", "商品分類", "仕入先名" FROM products'
         )
         for row in rows:
             row["商品分類名"] = _product_category_label(row.get("商品分類"))
