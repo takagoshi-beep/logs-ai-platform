@@ -62,7 +62,7 @@ def test_search_messages_fetches_message_metadata_in_parallel(monkeypatch):
             "snippet": "本文の抜粋",
         })
 
-    monkeypatch.setattr(gmail_service.requests, "get", _fake_get)
+    monkeypatch.setattr(gmail_service._session, "get", _fake_get)
 
     start = time.perf_counter()
     result = gmail_service.search_messages("user@logs.co.jp", "query", 10)
@@ -81,7 +81,7 @@ def test_search_messages_returns_empty_records_when_no_matches(monkeypatch):
     def _fake_get(url, headers=None, params=None, timeout=None):
         return _FakeResponse({"messages": []})
 
-    monkeypatch.setattr(gmail_service.requests, "get", _fake_get)
+    monkeypatch.setattr(gmail_service._session, "get", _fake_get)
 
     result = gmail_service.search_messages("user@logs.co.jp", "query", 10)
 
@@ -106,10 +106,67 @@ def test_search_messages_skips_individual_fetch_failures_gracefully(monkeypatch)
             "snippet": "",
         })
 
-    monkeypatch.setattr(gmail_service.requests, "get", _fake_get)
+    monkeypatch.setattr(gmail_service._session, "get", _fake_get)
 
     result = gmail_service.search_messages("user@logs.co.jp", "query", 10)
 
     assert result["status"] == "ok"
     assert len(result["records"]) == 1
     assert result["records"][0]["message_id"] == "msg-ok"
+
+
+class TestAccessTokenCache:
+    """14.91: 以前はsearch_messages/get_messageが呼ばれるたびに無条件で
+    Googleのトークンエンドポイントへrefresh_token交換のPOSTを行っており、
+    [TIMING]計測で約250〜300msの無駄が判明した。有効期限内はメモリ
+    キャッシュを使い回すことを確認する。"""
+
+    def setup_method(self):
+        gmail_service._access_token_cache.clear()
+
+    def teardown_method(self):
+        gmail_service._access_token_cache.clear()
+
+    def test_second_call_within_expiry_does_not_refresh_again(self, monkeypatch):
+        call_count = {"n": 0}
+
+        def _fake_refresh(refresh_token):
+            call_count["n"] += 1
+            return "new-token", 3600
+
+        monkeypatch.setattr(gmail_service, "get_refresh_token", lambda email, provider: "refresh-abc")
+        monkeypatch.setattr(gmail_service, "_refresh_access_token", _fake_refresh)
+
+        first = gmail_service._get_access_token("user@logs.co.jp")
+        second = gmail_service._get_access_token("user@logs.co.jp")
+
+        assert first == second == "new-token"
+        assert call_count["n"] == 1  # 2回目はキャッシュから返り、再度リフレッシュしない
+
+    def test_refreshes_again_after_expiry(self, monkeypatch):
+        tokens = iter(["token-1", "token-2"])
+        monkeypatch.setattr(gmail_service, "get_refresh_token", lambda email, provider: "refresh-abc")
+        # expires_in=0 → 安全マージン差引後は即座に期限切れ扱いになる
+        monkeypatch.setattr(gmail_service, "_refresh_access_token", lambda rt: (next(tokens), 0))
+
+        first = gmail_service._get_access_token("user@logs.co.jp")
+        second = gmail_service._get_access_token("user@logs.co.jp")
+
+        assert first == "token-1"
+        assert second == "token-2"  # 期限切れ扱いのため再度リフレッシュされる
+
+    def test_different_users_are_cached_independently(self, monkeypatch):
+        monkeypatch.setattr(gmail_service, "get_refresh_token", lambda email, provider: f"refresh-{email}")
+        monkeypatch.setattr(gmail_service, "_refresh_access_token", lambda rt: (f"token-for-{rt}", 3600))
+
+        token_a = gmail_service._get_access_token("a@logs.co.jp")
+        token_b = gmail_service._get_access_token("b@logs.co.jp")
+
+        assert token_a == "token-for-refresh-a@logs.co.jp"
+        assert token_b == "token-for-refresh-b@logs.co.jp"
+
+    def test_no_refresh_token_returns_none_without_caching(self, monkeypatch):
+        monkeypatch.setattr(gmail_service, "get_refresh_token", lambda email, provider: None)
+
+        assert gmail_service._get_access_token("user@logs.co.jp") is None
+        assert "user@logs.co.jp" not in gmail_service._access_token_cache

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import os
+import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -28,6 +29,16 @@ AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 USERINFO_ENDPOINT = "https://www.googleapis.com/oauth2/v2/userinfo"
 GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
+
+# 2026-07-14（14.91追加）: 商品詳細ページのGmail検索で、ヒットしたメール
+# それぞれのメタデータ取得（並行実行、14.76）が実測で1件あたり200〜
+# 300ms程度かかっており、都度`requests.get()`（モジュール関数、接続の
+# 使い回し無し）で新規にTCP+TLSハンドシェイクを行っていたのが一因と
+# 考えられる。同一ホスト（gmail.googleapis.com）への複数リクエストで
+# コネクションを使い回せるよう、モジュール共通の`requests.Session`に
+# 変更した。`requests.Session`はスレッド間で共有してよいことが公式に
+# ドキュメント化されている（コネクションプールが内部でスレッドセーフ）。
+_session = requests.Session()
 
 
 def _client_id() -> str:
@@ -62,7 +73,7 @@ def handle_callback(code: str) -> dict[str, Any] | None:
     （他人のGoogleアカウントを誤って連携しないための必須チェック）。
     """
     try:
-        resp = requests.post(
+        resp = _session.post(
             TOKEN_ENDPOINT,
             data={
                 "client_id": _client_id(),
@@ -90,7 +101,7 @@ def handle_callback(code: str) -> dict[str, Any] | None:
         return None
 
     try:
-        userinfo_resp = requests.get(
+        userinfo_resp = _session.get(
             USERINFO_ENDPOINT,
             headers={"Authorization": f"Bearer {access_token}"},
             timeout=10,
@@ -108,9 +119,27 @@ def handle_callback(code: str) -> dict[str, Any] | None:
     }
 
 
-def _refresh_access_token(refresh_token: str) -> str | None:
+# 2026-07-14（14.91追加）: search_messages/get_messageが呼ばれるたびに
+# 無条件でGoogleのトークンエンドポイントへrefresh_token交換のPOSTを
+# 行っていたことが、[TIMING]計測の差分（gmail検索全体の時間 と
+# list+metadata_batchの合計との間に約250〜300msの説明できない差が
+# あった）から発覚した（14.90で追加した詳細計測がこの発見に直接
+# つながった）。Googleのアクセストークンは通常1時間程度有効なので、
+# 有効期限内は使い回してよい。プロセス内メモリキャッシュ（安全マージン
+# として60秒早めに失効扱いにする）を追加した。
+#
+# 複数ワーカープロセス/インスタンスにまたがる永続キャッシュではない
+# （プロセス内メモリのみ）。Renderが複数インスタンスで動く場合は
+# インスタンスごとに個別にキャッシュされるが、それでも各インスタンス内
+# での重複呼び出しは削減できる。
+_access_token_cache: dict[str, tuple[str, float]] = {}
+
+
+def _refresh_access_token(refresh_token: str) -> tuple[str | None, int]:
+    """アクセストークンと、その有効期間（秒、Google側が返すexpires_in）
+    のペアを返す。取得失敗時は(None, 0)。"""
     try:
-        resp = requests.post(
+        resp = _session.post(
             TOKEN_ENDPOINT,
             data={
                 "client_id": _client_id(),
@@ -121,17 +150,25 @@ def _refresh_access_token(refresh_token: str) -> str | None:
             timeout=10,
         )
         resp.raise_for_status()
-        return resp.json().get("access_token")
+        data = resp.json()
+        return data.get("access_token"), data.get("expires_in", 3600)
     except Exception as e:
         print(f"Gmail access token refresh failed: {e}")
-        return None
+        return None, 0
 
 
 def _get_access_token(email: str) -> str | None:
+    cached = _access_token_cache.get(email)
+    if cached and cached[1] > time.time():
+        return cached[0]
+
     refresh_token = get_refresh_token(email, PROVIDER)
     if not refresh_token:
         return None
-    return _refresh_access_token(refresh_token)
+    access_token, expires_in = _refresh_access_token(refresh_token)
+    if access_token:
+        _access_token_cache[email] = (access_token, time.time() + max(expires_in - 60, 0))
+    return access_token
 
 
 def connect_status(email: str) -> bool:
@@ -170,7 +207,7 @@ def search_messages(email: str, query: str, max_results: int = 10) -> dict[str, 
 
     try:
         with timed("gmail_service.search_messages.list"):
-            list_resp = requests.get(
+            list_resp = _session.get(
                 f"{GMAIL_API_BASE}/messages",
                 headers={"Authorization": f"Bearer {access_token}"},
                 params={"q": query, "maxResults": max(1, min(max_results, 25))},
@@ -192,7 +229,7 @@ def search_messages(email: str, query: str, max_results: int = 10) -> dict[str, 
     # 並行実行するよう修正し、所要時間を「一番遅い1件分」に近づけた。
     def _fetch_one(mid: str) -> dict[str, Any] | None:
         try:
-            msg_resp = requests.get(
+            msg_resp = _session.get(
                 f"{GMAIL_API_BASE}/messages/{mid}",
                 headers={"Authorization": f"Bearer {access_token}"},
                 params={"format": "metadata", "metadataHeaders": ["Subject", "From", "Date"]},
@@ -233,7 +270,7 @@ def get_message(email: str, message_id: str) -> dict[str, Any]:
         return {"status": "unavailable", "summary": "Gmail未連携です。", "records": []}
 
     try:
-        resp = requests.get(
+        resp = _session.get(
             f"{GMAIL_API_BASE}/messages/{message_id}",
             headers={"Authorization": f"Bearer {access_token}"},
             params={"format": "full"},
