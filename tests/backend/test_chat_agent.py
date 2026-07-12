@@ -273,3 +273,60 @@ def test_report_capability_gap_is_not_triggered_by_ordinary_ok_status(monkeypatc
     chat_agent.answer("今月のOEMの売上は？")
 
     assert get_candidate_repository().list() == []
+
+
+def test_truncated_result_without_capability_gap_report_creates_low_confidence_candidate(monkeypatch):
+    """14.89: report_capability_gapの自己申告設計そのものが機能しな
+    かった場合（truncated=trueなのに呼ばれなかった）の安全網。"""
+    from learning.repository import get_candidate_repository
+
+    monkeypatch.setattr(
+        chat_agent, "generate_with_tools",
+        _fake_generate_with_tools_calling_one_tool("get_sales_lines", {"sales_rep_keyword": "石川"}),
+    )
+    monkeypatch.setattr(
+        chat_agent, "execute_tool",
+        lambda tool_name, tool_input, user_email=None: json.dumps({
+            "status": "ok", "records": [{"得意先名": "A社"}], "truncated": True,
+        }, ensure_ascii=False),
+    )
+
+    chat_agent.answer("顧客ランキングを教えて")
+
+    candidates = get_candidate_repository().list()
+    assert len(candidates) == 1
+    assert candidates[0].source_type.value == "ai_observation"
+    assert "truncated" in candidates[0].description or "report_capability_gap" in candidates[0].description
+
+
+def test_truncated_result_is_not_flagged_when_capability_gap_was_reported(monkeypatch):
+    """report_capability_gapが同じターンで既に呼ばれていれば、
+    truncated=trueの安全網は二重に記録しない。"""
+    from learning.repository import get_candidate_repository
+
+    calls = {"n": 0}
+
+    def _fake_generate_with_tools(**kwargs):
+        executor = kwargs["tool_executor"]
+        executor("get_sales_lines", {"sales_rep_keyword": "石川"})
+        executor("report_capability_gap", {"description": "顧客別集計手段が無い"})
+        return "回答です", [
+            {"tool": "get_sales_lines", "input": {}},
+            {"tool": "report_capability_gap", "input": {}},
+        ]
+
+    monkeypatch.setattr(chat_agent, "generate_with_tools", _fake_generate_with_tools)
+    monkeypatch.setattr(
+        chat_agent, "execute_tool",
+        lambda tool_name, tool_input, user_email=None: (
+            json.dumps({"status": "ok", "records": [], "truncated": True}, ensure_ascii=False)
+            if tool_name == "get_sales_lines"
+            else json.dumps({"status": "capability_gap_reported", "description": tool_input.get("description", "")}, ensure_ascii=False)
+        ),
+    )
+
+    chat_agent.answer("顧客ランキングを教えて")
+
+    candidates = get_candidate_repository().list()
+    assert len(candidates) == 1  # report_capability_gap分のみ。truncated安全網は発火しない
+    assert candidates[0].description.count("顧客別集計手段が無い") >= 1

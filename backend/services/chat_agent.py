@@ -112,6 +112,14 @@ def _record_tool_gaps_as_learning(question: str, tool_results: list[dict[str, An
        申告させる設計にしている（Principle 7/9: No Silent Learning /
        Explain Before Rememberの精神に合わせ、推測で検知するのではなく
        AI自身に説明させる）。
+    3. （2026-07-14、14.89追加）ツールの結果に`"truncated": true`が含まれて
+       いるのに、その回答のどのツール呼び出しからも`report_capability_gap`
+       が呼ばれなかったケース — 2.の「自己申告」設計そのものが機能しな
+       かった場合（顧客ランキングをget_sales_linesの切り捨てられた
+       データから作ってしまったが、report_capability_gapが呼ばれなかった
+       実例、2026-07-13）の安全網。切り捨て自体は正常なケース（Claudeが
+       正しく絞り込みを促すだけで済ませた場合等）もあるため断定はせず、
+       低いconfidenceで「要確認」として記録するのみに留める。
 
     重複防止・承認要否・失敗時の扱いは`_record_unknown_as_learning`と
     同じ方針: 同じ制約は1度記録すれば十分、AI_OBSERVATIONはclassifier.py
@@ -119,6 +127,9 @@ def _record_tool_gaps_as_learning(question: str, tool_results: list[dict[str, An
     記録処理自体が失敗しても本来の回答はブロックしない（ベストエフォート）。
     """
     gaps: list[dict[str, Any]] = []
+    saw_capability_gap_report = any(e["tool"] == "report_capability_gap" for e in tool_results)
+    saw_unreported_truncation = False
+
     for entry in tool_results:
         try:
             parsed = json.loads(entry["output"])
@@ -147,6 +158,21 @@ def _record_tool_gaps_as_learning(question: str, tool_results: list[dict[str, An
                 "summary": parsed.get("summary", ""),
                 "requested_capability": "",
                 "confidence": 0.6,
+            })
+        elif not saw_capability_gap_report and not saw_unreported_truncation and parsed.get("truncated") is True:
+            saw_unreported_truncation = True  # 1ターンにつき1件で十分
+            gaps.append({
+                "tool": entry["tool"],
+                "input": entry["input"],
+                "status": "truncated_without_gap_report",
+                "summary": (
+                    f"{entry['tool']}の結果がtruncated=true（一部データのみ）"
+                    "だったが、report_capability_gapは呼ばれなかった。この回答が"
+                    "切り捨てられたデータのみから集計・ランキング等を作って"
+                    "いないか要確認。"
+                ),
+                "requested_capability": "",
+                "confidence": 0.4,
             })
 
     if not gaps:
