@@ -122,6 +122,7 @@ def test_get_my_projects_surfaces_status_badges_and_delivery_month_bucket(monkey
         sales_admin_name = "高橋"
         production_staff_name = "田中"
         planning_staff_name = "佐藤"
+        days_until_delivery = 12
 
     class _FakeAgg:
         project_id = "1"

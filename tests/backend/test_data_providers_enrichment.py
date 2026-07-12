@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from services.data_providers import LogsysProvider, _product_category_label
 
 
@@ -520,8 +522,9 @@ def test_projects_filters_by_sales_rep_keyword_across_four_roles(monkeypatch):
 
 
 def test_projects_filters_by_delivery_period(monkeypatch):
-    """14.96: 「今月納品予定の案件」のような、期間での絞り込みを
-    「顧客納品日」に対して行えるようにした。"""
+    """14.96/14.98: 「今月納品予定の案件」のような、期間での絞り込みを
+    正式な納期予定日である「Delivery_納品日」に対して行えるようにした
+    （「顧客納品日」は14.69/14.98で信頼できないと判明したため使わない）。"""
     captured = {}
 
     def _fake_query(self, sql, params=()):
@@ -554,8 +557,8 @@ def test_projects_combines_sales_rep_and_period_and_delivery_status(monkeypatch)
 
     sql = captured["sqls"][0]
     assert '"営業担当者名" LIKE %s' in sql
-    assert 'po."顧客納品日" >= %s' in sql
-    assert 'po."顧客納品日" <= %s' in sql
+    assert 'po."Delivery_納品日" >= %s' in sql
+    assert 'po."Delivery_納品日" <= %s' in sql
     assert "NOT" in sql
 
 
@@ -584,6 +587,56 @@ def test_projects_select_includes_staff_names(monkeypatch):
     assert 'po."生産管理担当者名"' in captured["sql"]
     assert 'po."企画担当者名"' in captured["sql"]
     assert result["records"][0]["営業担当者名"] == "木村美菜"
+
+
+def test_projects_computes_days_until_delivery_from_delivery_column(monkeypatch):
+    """14.98: 「納品予定日は明日」と暗算で誤り、実際には11日経過して
+    いた実例（Noritsugu、2026-07-14）の修正。Claudeに日付の相対計算を
+    させず、サーバー側でdays_until_deliveryを計算して渡す。"""
+    past_date = (datetime.now() - timedelta(days=11)).strftime("%Y-%m-%d")
+    future_date = (datetime.now() + timedelta(days=5)).strftime("%Y-%m-%d")
+    # 実装と同じ「日付のみ(00:00:00)としてパースしたもの と 現在時刻
+    # (時分秒あり)の差分」で期待値を計算する（時刻部分の端数で
+    # ±1日ずれうるため、決め打ちの日数ではなく実装と同じロジックで
+    # 期待値を出す）。
+    expected_past = (datetime.fromisoformat(past_date) - datetime.now()).days
+    expected_future = (datetime.fromisoformat(future_date) - datetime.now()).days
+
+    def _fake_query(self, sql, params=()):
+        return [
+            {"ID": 1, "Delivery_納品日": past_date, "has_sales": False, "production_closed": False},
+            {"ID": 2, "Delivery_納品日": future_date, "has_sales": False, "production_closed": False},
+            {"ID": 3, "Delivery_納品日": None, "has_sales": False, "production_closed": False},
+        ]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._projects({})
+    records = {r["ID"]: r for r in result["records"]}
+
+    assert records[1]["days_until_delivery"] == expected_past
+    assert records[1]["days_until_delivery"] < 0  # 経過済みはマイナスであること自体は確定
+    assert records[2]["days_until_delivery"] == expected_future
+    assert records[2]["days_until_delivery"] > 0
+    assert records[3]["days_until_delivery"] is None  # 納期未設定
+
+
+def test_projects_orders_by_delivery_column_not_customer_delivery_date(monkeypatch):
+    """14.98: 絞り込み・並び順の基準を「顧客納品日」（14.69で信頼できない
+    と判明）から「Delivery_納品日」（正式な納期予定日）に統一した。"""
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured.setdefault("sqls", []).append(sql)
+        return []
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    LogsysProvider()._projects({})
+
+    # 1回目の呼び出し(records取得)にORDER BYが含まれる。2回目(aggregate用
+    # COUNTクエリ)にはORDER BYが無いため、1回目だけを見る必要がある。
+    assert 'ORDER BY "Delivery_納品日"' in captured["sqls"][0]
 
 
 def test_sales_by_category_sales_rep_keyword_matches_any_of_four_roles(monkeypatch):

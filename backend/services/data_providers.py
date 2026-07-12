@@ -528,14 +528,35 @@ class LogsysProvider:
         した実例（Noritsugu、2026-07-14）の修正。sales_rep_keyword
         （get_sales_linesと同じ4ロールへのOR、"営業担当者名"・
         "営業事務担当者名"・"生産管理担当者名"・"企画担当者名"のいずれか）
-        とperiod_start/period_end（"顧客納品日"基準）を追加し、
-        本来の「特定の担当者×納品予定月」で直接絞り込めるようにした。
+        とperiod_start/period_end（"Delivery_納品日"基準、14.98で
+        "顧客納品日"から変更 — 理由は下記）を追加し、本来の「特定の
+        担当者×納品予定月」で直接絞り込めるようにした。
+
+        2026-07-14（14.98追加）: 上記の修正後、実チャットで「KBFの案件の
+        納品予定日は明日」という発言をし、後で指摘されて確認すると実際
+        には11日前（過去）だったという重大な日付計算ミスが発生した
+        （Noritsugu、2026-07-14）。原因は2つ:
+        1. 期間フィルタ・並び順に使っていた"顧客納品日"は、14.69で
+           「リピート発注時に前回POの値がコピーされたまま残ることがあり
+           信頼できない」と判明していた列で、UI側（project_service.py の
+           `_po_dict_to_project_data`）は既に正式な納期として
+           "Delivery_納品日"を使うよう切り替え済みだった。chatツールだけ
+           取り残されていた。
+        2. 納期までの日数をClaude自身に相対的な言葉（「明日」等）で暗算
+           させており、実際には「今日の日付」システムプロンプトの値との
+           比較を誤っていた。
+        この2点を修正: 絞り込み・並び順を"Delivery_納品日"基準に変更し、
+        UIの`ProjectData.days_until_delivery`と全く同じロジック（今日との
+        差分日数、経過していればマイナス）をサーバー側のPythonで計算して
+        `days_until_delivery`フィールドとして各行に含めた。Claudeは
+        この値をそのまま使い、日付の相対計算を自分で行う必要が無くなる。
         """
         keyword = params.get("keyword")
         delivery_status = params.get("delivery_status")  # "delivered" | "undelivered" | None
 
         base_select = (
-            'SELECT po."ID", po."案件名", po."顧客名", po."ステータス", po."PO_No", po."顧客納品日", '
+            'SELECT po."ID", po."案件名", po."顧客名", po."ステータス", po."PO_No", '
+            'po."顧客納品日", po."Delivery_納品日", '
             'po."営業担当者名", po."営業事務担当者名", po."生産管理担当者名", po."企画担当者名", '
             'EXISTS(SELECT 1 FROM sales s WHERE s."LOGS_CODE" = po."LOGS_CODE") AS "has_sales", '
             'EXISTS('
@@ -556,10 +577,10 @@ class LogsysProvider:
             kw = f"%{params['sales_rep_keyword']}%"
             args += [kw, kw, kw, kw]
         if params.get("period_start"):
-            base_select += ' AND po."顧客納品日" >= %s'
+            base_select += ' AND po."Delivery_納品日" >= %s'
             args.append(params["period_start"])
         if params.get("period_end"):
-            base_select += ' AND po."顧客納品日" <= %s'
+            base_select += ' AND po."Delivery_納品日" <= %s'
             args.append(params["period_end"])
 
         delivery_clause = ""
@@ -568,8 +589,21 @@ class LogsysProvider:
         elif delivery_status == "delivered":
             delivery_clause = ' WHERE ("has_sales" OR "production_closed")'
 
-        sql = f'SELECT * FROM ({base_select}) sub{delivery_clause} ORDER BY "顧客納品日"'
+        sql = f'SELECT * FROM ({base_select}) sub{delivery_clause} ORDER BY "Delivery_納品日"'
         rows = self._query(sql, tuple(args))
+
+        for row in rows:
+            delivery_date = row.get("Delivery_納品日")
+            if delivery_date:
+                parsed = delivery_date if isinstance(delivery_date, datetime) else None
+                if parsed is None:
+                    try:
+                        parsed = datetime.fromisoformat(str(delivery_date).replace("Z", "+00:00"))
+                    except Exception:
+                        parsed = None
+                row["days_until_delivery"] = (parsed - datetime.now()).days if parsed else None
+            else:
+                row["days_until_delivery"] = None
 
         agg_sql = f'SELECT COUNT(*) AS "件数" FROM ({base_select}) sub{delivery_clause}'
         agg_rows = self._query(agg_sql, tuple(args))
@@ -582,7 +616,13 @@ class LogsysProvider:
             f"{label}{status_label}案件 {len(rows)}件を取得（合計件数はaggregateフィールドを使うこと。"
             f"納品判定はhas_sales（売上実データの有無）またはproduction_closed"
             f"（生産管理『量産』シートの表示フラグ=0）に基づく。顧客納品日はPOへの"
-            f"入力予定日であり実際の納品有無とは無関係なので、納品判定には使わないこと）。",
+            f"入力予定日であり実際の納品有無とは無関係なので、納品判定には使わないこと。"
+            f"正式な納期予定日はDelivery_納品日（顧客納品日ではない、14.69/14.98参照）。"
+            f"各行のdays_until_deliveryは、Delivery_納品日と今日の日付との差分日数を"
+            f"サーバー側で計算済み（経過していればマイナス）。納期が「明日」「〇日後」"
+            f"「〇日経過」等の相対的な表現が必要な場合は、必ずこの値をそのまま使い、"
+            f"自分で日付を比較・暗算しないこと（2026-07-14、暗算で「明日」と誤って"
+            f"述べ、実際には11日経過していた実例があるため）。",
             rows,
         )
         evidence["aggregate"] = aggregate

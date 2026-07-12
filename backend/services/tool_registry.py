@@ -173,7 +173,8 @@ TOOLS: list[dict[str, Any]] = [
             "案件（PO）情報を、案件名・顧客名のキーワード、担当者名、"
             "納品予定期間で検索する（2026-07-14、14.96でsales_rep_keyword/"
             "period_start/period_endを追加、14.97で担当者名を結果にも含める"
-            "ように拡張）。各行に営業担当者名・営業事務担当者名・生産管理"
+            "ように拡張、14.98でDelivery_納品日基準に統一しdays_until_delivery"
+            "を追加）。各行に営業担当者名・営業事務担当者名・生産管理"
             "担当者名・企画担当者名が含まれるので、案件ごとの担当者を"
             "そのまま確認・提示できる。「〇〇さんの今月納品予定の"
             "案件」のように特定の担当者×期間で絞り込みたい場合は、"
@@ -187,9 +188,15 @@ TOOLS: list[dict[str, Any]] = [
             "無関係なので、納品判定に使ってはいけない。実際の納品有無はhas_sales"
             "（同じLOGS_CODEでsalesに売上実データがあるか）またはproduction_closed"
             "（生産管理『量産』シートの表示フラグ=0か）で判定済みで、各行にその"
-            "2つのフィールドが含まれる）。period_start/period_endは「顧客納品日」"
-            "（＝納品予定日）に対する絞り込みであり、delivery_statusとは別の軸"
-            "（両方同時に指定してよい）。"
+            "2つのフィールドが含まれる）。period_start/period_endは「Delivery_納品日」"
+            "（＝正式な納期予定日。「顧客納品日」はリピート発注時に前回値が残ったまま"
+            "のことがあり信頼できないため使わない、14.69/14.98参照）に対する絞り込み"
+            "であり、delivery_statusとは別の軸（両方同時に指定してよい）。"
+            "【重要】各行の`days_until_delivery`は、Delivery_納品日と今日の日付との"
+            "差分日数がサーバー側で計算済み（経過していればマイナス）。納期が「明日」"
+            "「〇日後」「〇日経過」のような相対的な表現が必要な場合は、必ずこの値を"
+            "そのまま使い、日付を自分で比較・暗算しないこと（2026-07-14、暗算で"
+            "「納品は明日」と誤り、実際には11日経過していた実例があるため）。"
             "【件数は必ず結果の`aggregate`フィールドを使うこと。`records`は件数が"
             "多い場合に先頭200件だけに切り捨てられることがあるが、`aggregate`は"
             "指定した条件（キーワード・担当者・期間・納品状況）全体に対して正確な件数】"
@@ -472,6 +479,10 @@ TOOLS: list[dict[str, Any]] = [
             "「PO発行済み」「PO未発行」は常にどちらか一方が付く。"
             "delivery_month_bucketは納品予定月（this_month=今月、next_month=来月、"
             "month_after_next_or_later=再来月以降）で、既に納期を過ぎている場合はnull。"
+            "【重要】各行のdays_until_delivery（2026-07-14、14.98追加）は、正式な"
+            "納期予定日と今日の日付との差分日数がサーバー側で計算済み（経過していれば"
+            "マイナス）。納期を「明日」「〇日後」「〇日経過」等の相対的な表現で伝える"
+            "場合は、必ずこの値をそのまま使い、日付を自分で比較・暗算しないこと。"
         ),
         "input_schema": {
             "type": "object",
@@ -686,6 +697,7 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
                             "customer": agg.data.customer_name,
                             "status_badges": agg.status_badges,
                             "delivery_month_bucket": agg.delivery_month_bucket,
+                            "days_until_delivery": agg.data.days_until_delivery,
                             "actions_count": len(agg.actions),
                             "sales_rep_name": agg.data.sales_rep_name,
                             "sales_admin_name": agg.data.sales_admin_name,

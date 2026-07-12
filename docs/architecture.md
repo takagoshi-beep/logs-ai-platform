@@ -3758,6 +3758,55 @@ _bucket.py`・`test_data_providers_enrichment.py`に計5件追加。既存の
 モックに4フィールドを追加して修正。473件全てパス。フロントエンドは
 `npx tsc --noEmit`で確認済み。
 
+## 14.98 `get_projects`の納期基準を統一し、日数計算をサーバー側で確定 (2026-07-14)
+
+実チャットで発見された、これまでで最も重大な実例(Noritsugu、
+2026-07-14): 「KBFの案件の納品予定日」について、chatが「納品予定日は
+明日です」と回答した。実際には今日は2026年7月12日で、納品予定日
+2026年7月1日は**11日前（過去）**だった。指摘されて初めて気づき、
+1回目の訂正でもまだ日付計算を誤り、2回目でようやく正しい計算に
+至った。
+
+原因は2つ重なっていた:
+
+1. `get_projects`（`_projects`）が絞り込み・並び順に使っていた
+   「顧客納品日」は、14.69で「リピート発注時に前回POの値がコピーされた
+   まま残ることがあり信頼できない」と判明済みの列だった。UI側
+   （`project_service.py`の`_po_dict_to_project_data`）は既に正式な
+   納期として「Delivery_納品日」に切り替え済みだったが、chatツールだけ
+   14.96時点でも「顧客納品日」のまま取り残されていた。
+2. より本質的な問題として、納期までの日数をClaude自身に「今日の日付」
+   （システムプロンプトに明記）との比較で暗算させており、その暗算
+   自体を誤っていた。
+
+**対応:**
+- `get_projects`の絞り込み（period_start/period_end）・並び順を
+  「顧客納品日」から「Delivery_納品日」に変更（UIと同じ基準に統一）。
+- UIの`ProjectData.days_until_delivery`プロパティと全く同じロジック
+  （Delivery_納品日と今日の差分日数、経過していればマイナス）を
+  サーバー側のPythonで計算し、`days_until_delivery`として各行に
+  含めた。Claudeはこの値をそのまま使えばよく、日付の相対計算を自分で
+  行う必要が無くなった。
+- `get_my_projects`の返り値にも同様に`days_until_delivery`
+  （`agg.data.days_until_delivery`、既存プロパティをそのまま利用）を
+  追加。
+- 両ツールの説明文、およびsystem prompt本体にも「日付の相対表現は
+  ツールが計算済みのフィールドをそのまま使い、自分で比較・暗算しない
+  こと」という明示的なルールを追加した。
+
+これは商品詳細ページの通貨表示の誤り（14.84）と同種の教訓: 「UI側で
+既に確立された正しいロジック・データソースが、chatツール側には
+反映されていなかった」というパターンが繰り返し発生している。今後
+新しい判定ロジックをUI側に追加する際は、対応するchatツールにも
+反映されているか確認する習慣が必要かもしれない。
+
+`tests/backend/test_data_providers_enrichment.py`に2件追加
+（days_until_deliveryの計算確認、Delivery_納品日基準への統一確認）。
+既存の`test_projects_combines_sales_rep_and_period_and_delivery_status`
+（14.96で追加）と`test_get_my_projects_surfaces_status_badges_and_
+delivery_month_bucket`を新しい基準・フィールドに合わせて修正。
+475件全てパス。
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.
