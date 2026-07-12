@@ -227,7 +227,17 @@ def search_messages(email: str, query: str, max_results: int = 10) -> dict[str, 
     # （実例: ヒットが少ない商品は772ms、ヒットが多い商品は3〜4秒）
     # N+1的な作りだった。ThreadPoolExecutorで各メールのメタデータ取得を
     # 並行実行するよう修正し、所要時間を「一番遅い1件分」に近づけた。
-    def _fetch_one(mid: str) -> dict[str, Any] | None:
+    # 2026-07-14（14.92、Noritsuguが実データで発見）: 14.91のコネクション
+    # 使い回し化後も、metadata_batchはn=5で1.0〜1.7秒とn=1（0.37〜0.42秒）
+    # に比べて重いままだった。真に並行実行できているのか（5件がほぼ同時に
+    # 開始・終了しているか）、それとも何かに阻まれて実質直列に近い動きに
+    # なっているのかを判別するため、各リクエストの開始オフセット（バッチ
+    # 開始からの経過時間）と所要時間を個別にログ出力する。
+    import threading
+
+    def _fetch_one(mid: str, batch_start: float) -> dict[str, Any] | None:
+        start_offset_ms = (time.perf_counter() - batch_start) * 1000
+        t0 = time.perf_counter()
         try:
             msg_resp = _session.get(
                 f"{GMAIL_API_BASE}/messages/{mid}",
@@ -238,6 +248,11 @@ def search_messages(email: str, query: str, max_results: int = 10) -> dict[str, 
             msg_resp.raise_for_status()
             msg = msg_resp.json()
             headers = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            print(
+                f"[TIMING] gmail_service.search_messages._fetch_one(thread={threading.current_thread().name}, "
+                f"start_offset={start_offset_ms:.0f}ms): {elapsed_ms:.0f}ms"
+            )
             return {
                 "message_id": mid,
                 "subject": headers.get("Subject", "(件名なし)"),
@@ -246,13 +261,21 @@ def search_messages(email: str, query: str, max_results: int = 10) -> dict[str, 
                 "snippet": msg.get("snippet", ""),
             }
         except Exception:
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            print(
+                f"[TIMING] gmail_service.search_messages._fetch_one(thread={threading.current_thread().name}, "
+                f"start_offset={start_offset_ms:.0f}ms, FAILED): {elapsed_ms:.0f}ms"
+            )
             return None
 
     records = []
     if message_ids:
         with timed(f"gmail_service.search_messages.metadata_batch(n={len(message_ids)})"):
+            batch_start = time.perf_counter()
             with ThreadPoolExecutor(max_workers=min(len(message_ids), 10)) as executor:
-                for result in executor.map(_fetch_one, message_ids):
+                futures = [executor.submit(_fetch_one, mid, batch_start) for mid in message_ids]
+                for future in futures:
+                    result = future.result()
                     if result is not None:
                         records.append(result)
 
