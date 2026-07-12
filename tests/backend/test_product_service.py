@@ -439,6 +439,7 @@ def test_get_product_detail_includes_planned_and_actual_cost_fields(monkeypatch)
     assert master["発注単価通貨"] == "USD"
     assert master["予定輸入経費率"] == 1.18
     assert master["予定原価単価"] == 236.0  # 2360.0（売上原価=合計） ÷ 10（発注数量）
+    assert master["予定原価単価通貨"] == "USD"  # 14.84: 発注単価と同じ行・同じ通貨列の値
     assert master["実績輸入経費率"] == pytest.approx(3460 / 3000)
     assert master["実績原価単価"] == 173.0  # 3460（諸掛込金額円の合計） ÷ 20（仕入数量pcsの合計）
 
@@ -669,13 +670,13 @@ def test_get_product_detail_groups_purchase_orders_by_po_no(monkeypatch):
     master_cols = ["ID", "LOGS_CODE", "Sample_CODE", "商品名", "商品分類", "supplier_production_staff"]
     master_rows = [(101, "5145", "S1", "Baseball Cap", 1, "木村美菜")]
 
-    po_cols = ["ID", "PO_No", "顧客名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "企画担当者名", "発注数量", "発注金額", "PO発行日"]
-    # 同じPO_No「914-1」に2明細行（カラー違い）+ 別PO「914-2」に1行。
+    po_cols = ["ID", "PO_No", "顧客名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "企画担当者名", "発注数量", "発注金額", "PO発行日", "通貨"]
+    # 同じPO_No「914-1」に2明細行（カラー違い、通貨=1=USD）+ 別PO「914-2」に1行（通貨=2=円）。
     # po_dictsはPO発行日の降順で渡される想定なので、914-1の2行を先に置く。
     po_rows = [
-        (1, "914-1", "US_LOGS Inc.", "山田太郎", None, None, None, 10, 1000, "2026-02-01"),
-        (2, "914-1", "US_LOGS Inc.", "山田太郎", None, None, None, 5, 500, "2026-02-01"),
-        (3, "914-2", "US_LOGS Inc.", "山田太郎", None, None, None, 20, 2000, "2026-01-01"),
+        (1, "914-1", "US_LOGS Inc.", "山田太郎", None, None, None, 10, 1000, "2026-02-01", 1),
+        (2, "914-1", "US_LOGS Inc.", "山田太郎", None, None, None, 5, 500, "2026-02-01", 1),
+        (3, "914-2", "US_LOGS Inc.", "山田太郎", None, None, None, 20, 2000, "2026-01-01", 2),
     ]
 
     sales_cols = ["得意先名", "営業担当者名", "事務処理担当者名", "経理担当者名", "数量pcs", "売上金額", "売上入力日"]
@@ -703,12 +704,14 @@ def test_get_product_detail_groups_purchase_orders_by_po_no(monkeypatch):
     assert po_914_1["発注金額"] == 1500  # 1000 + 500
     assert po_914_1["line_count"] == 2
     assert po_914_1["project_id"] == "1"  # グループ内で最初の行（=最新の明細行）のIDを代表とする
+    assert po_914_1["発注金額通貨"] == "USD"  # 14.84: 通貨コード1=USD
 
     po_914_2 = next(p for p in pos if p["PO_No"] == "914-2")
     assert po_914_2["発注数量"] == 20
     assert po_914_2["発注金額"] == 2000
     assert po_914_2["line_count"] == 1
     assert po_914_2["project_id"] == "3"
+    assert po_914_2["発注金額通貨"] == "円"  # 通貨コード2=円
 
 
 def test_get_product_detail_skips_po_sales_purchase_lookup_when_no_logs_code(monkeypatch):

@@ -15,6 +15,7 @@ interface PurchaseOrderGroup {
   PO発行日: string | null;
   発注数量: number | null;
   発注金額: number | null;
+  発注金額通貨: string | null;
   line_count: number;
 }
 
@@ -82,6 +83,16 @@ function fmtYen(v: number | null | undefined): string {
   return `${Math.round(v).toLocaleString()}円`;
 }
 
+// 2026-07-13（14.84、Noritsuguが実データで発見）: purchase_ordersの
+// "発注金額"・"売上原価"由来の金額（発注単価と同じ行の"通貨"列に属し、
+// 円固定ではない）はfmtYenで円と決め打ちしてはいけない。currencyLabel
+// が無い場合（データ欠損等）だけ、従来通り円として扱う（後方互換）。
+function fmtAmount(v: number | null | undefined, currencyLabel: string | null | undefined): string {
+  if (v === null || v === undefined) return "—";
+  const currency = currencyLabel || "円";
+  return currency === "円" ? fmtYen(v) : `${Math.round(v).toLocaleString()} ${currency}`;
+}
+
 export default function ProductDetailPage({ params }: Params) {
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -140,12 +151,12 @@ export default function ProductDetailPage({ params }: Params) {
         <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-sub sm:grid-cols-3 border-t border-slate-100 pt-3">
           <div>発注単価: {m.発注単価 != null ? `${m.発注単価.toLocaleString()} ${m.発注単価通貨 ?? ""}`.trim() : "—"}</div>
           <div>予定輸入経費率: {m.予定輸入経費率 != null ? Number(m.予定輸入経費率).toFixed(2) : "—"}</div>
-          <div>予定原価単価: {fmtYen(m.予定原価単価)}</div>
+          <div>予定原価単価: {fmtAmount(m.予定原価単価, m.予定原価単価通貨)}</div>
           <div>実績輸入経費率: {m.実績輸入経費率 != null ? Number(m.実績輸入経費率).toFixed(2) : "—"}</div>
           <div>実績原価単価: {fmtYen(m.実績原価単価)}</div>
         </div>
         <p className="mt-1 text-xs text-sub">
-          いずれも最新のPO明細（PO発行日が最新の1件）、または全ての仕入明細（カラー/サイズ違いやリピートオーダーを含む全行）から取得。発注単価・予定輸入経費率・予定原価単価はPO入力時点（最新1件）、実績輸入経費率・実績原価単価は仕入確定後の値（全明細行の加重平均）です。発注単価はPOに入力された通貨のままで、円ではない場合があります。
+          いずれも最新のPO明細（PO発行日が最新の1件）、または全ての仕入明細（カラー/サイズ違いやリピートオーダーを含む全行）から取得。発注単価・予定輸入経費率・予定原価単価はPO入力時点（最新1件）、実績輸入経費率・実績原価単価は仕入確定後の値（全明細行の加重平均）です。発注単価・予定原価単価・PO履歴の金額は、いずれもPOに入力された通貨のままで、円ではない場合があります（実績原価単価は仕入確定後の円換算済みの値です）。
         </p>
       </Card>
 
@@ -164,7 +175,7 @@ export default function ProductDetailPage({ params }: Params) {
                   <span className="text-sub">{po.PO発行日 ?? "—"}</span>
                 </div>
                 <p className="mt-1 text-sub">
-                  顧客: {po.顧客名 ?? "—"} ・ 営業: {po.営業担当者名 ?? "—"} ・ 数量: {po.発注数量 ?? "—"} ・ 金額: {fmtYen(po.発注金額)}
+                  顧客: {po.顧客名 ?? "—"} ・ 営業: {po.営業担当者名 ?? "—"} ・ 数量: {po.発注数量 ?? "—"} ・ 金額: {fmtAmount(po.発注金額, po.発注金額通貨)}
                   {po.line_count > 1 && ` （明細${po.line_count}件を合算）`}
                 </p>
               </Link>

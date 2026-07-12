@@ -162,6 +162,13 @@ def _group_po_dicts_by_po_no(po_dicts: list[dict[str, Any]]) -> list[dict[str, A
     （呼び出し元のpo_dictsは既に"PO発行日"降順のため、そのPO_No内で
     最新の明細行）のIDを代表project_idとして使う。
 
+    2026-07-13（14.84追加）: "発注金額"は"通貨"列と同じ行に属する値で
+    あり円固定ではない（Noritsuguが実データで発見 — PO履歴カードが
+    USD建てのPOを円と表示していた）。代表行（project_idと同じ選び方）の
+    "通貨"をラベル変換して"発注金額通貨"として持たせる。同一PO_No内で
+    通貨が複数行にまたがって異なることは想定していない（同じ発注先・
+    同じ伝票のため）。
+
     get_product_detail()の`master`側の集計（発注単価等）は、この関数を
     通す前の生のpo_dicts（明細レベル）をそのまま使い続ける — ここで
     集約するのはレスポンスの`purchase_orders`フィールド（カード表示用）
@@ -180,6 +187,7 @@ def _group_po_dicts_by_po_no(po_dicts: list[dict[str, Any]]) -> list[dict[str, A
                 "PO発行日": row.get("PO発行日"),
                 "発注数量": 0,
                 "発注金額": 0,
+                "発注金額通貨": _currency_label(row.get("通貨")),
                 "line_count": 0,
             }
             order.append(po_no)
@@ -508,15 +516,25 @@ def get_product_detail(product_id: str) -> dict[str, Any] | None:
     #
     # "発注単価"は"通貨"列（円ではない場合がある）で表示するため、
     # 通貨コードも一緒に持たせる。
+    #
+    # 2026-07-13（14.84、Noritsuguが実データで発見）: "売上原価"も
+    # "発注単価"と同じ行の同じ"通貨"列に属する値であり、円固定ではない
+    # （14.46/14.47では"発注単価"にだけ通貨ラベルを付け、そこから導出
+    # した"予定原価単価"には付け忘れていた）。フロントエンドが円固定で
+    # 表示していたため、USD建てのPOで金額が誤って読める状態になって
+    # いた。"発注単価通貨"と同じ値（同じ行・同じ通貨列）を
+    # "予定原価単価通貨"としても持たせる。
     latest_po = po_dicts[0] if po_dicts else {}
     po_quantity = latest_po.get("発注数量")
     po_total_cost = latest_po.get("売上原価")
+    po_currency_label = _currency_label(latest_po.get("通貨"))
     master["発注単価"] = latest_po.get("発注単価")
-    master["発注単価通貨"] = _currency_label(latest_po.get("通貨"))
+    master["発注単価通貨"] = po_currency_label
     master["予定輸入経費率"] = latest_po.get("輸入経費率")
     master["予定原価単価"] = (
         po_total_cost / po_quantity if po_total_cost is not None and po_quantity else None
     )
+    master["予定原価単価通貨"] = po_currency_label if master["予定原価単価"] is not None else None
 
     # 2026-07-09（14.52、Noritsuguの指定）: 実績輸入経費率・実績原価
     # 単価は、「最新の仕入明細1行だけ」ではなく、この商品（LOGS_CODE）
