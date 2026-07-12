@@ -484,3 +484,122 @@ def test_sales_by_category_sales_rep_keyword_matches_any_of_four_roles(monkeypat
     assert '"事務処理担当者名" LIKE %s' in sql
     assert '"作成者名" LIKE %s' in sql
     assert captured["params"].count("%高橋%") == 4
+
+
+def test_budget_forecast_filters_by_category_period_and_keyword(monkeypatch):
+    """14.85: budget_forecastテーブルへの新規アクセス。categoryは
+    budget/forecast/expenseのenumから01_予算/02_予定/05_費用へ変換される。"""
+    calls = []
+
+    def _fake_query(self, sql, params=()):
+        calls.append((sql, params))
+        return [{"分類": "01_予算", "顧客名": "US_LOGS Inc.", "案件売上": 1000000}]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._budget_forecast({
+        "category": "budget", "year": "2026", "month": "6",
+        "customer_keyword": "US_LOGS", "sales_rep_keyword": "木村",
+    })
+
+    records_sql, records_params = calls[0]
+    assert "SELECT *" in records_sql
+    assert '"分類" = %s' in records_sql
+    assert '"年" = %s' in records_sql
+    assert '"月" = %s' in records_sql
+    assert '"顧客名" LIKE %s' in records_sql
+    assert '"社員名" LIKE %s' in records_sql
+    assert "01_予算" in records_params
+    assert "06月" in records_params  # "6" → "06月" に正規化される
+    assert result["status"] == "ok"
+    assert result["records"][0]["分類"] == "01_予算"
+
+
+def test_budget_forecast_accepts_already_formatted_month(monkeypatch):
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured["params"] = params
+        return []
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    LogsysProvider()._budget_forecast({"month": "06月"})
+    assert "06月" in captured["params"]  # 既に整形済みならそのまま使う（二重変換しない）
+
+
+def test_budget_forecast_rejects_unknown_category(monkeypatch):
+    result = LogsysProvider()._budget_forecast({"category": "not_a_real_category"})
+    assert result["status"] == "unavailable"
+
+
+def test_budget_forecast_returns_aggregate_independent_of_records(monkeypatch):
+    def _fake_query(self, sql, params=()):
+        if "COUNT(*)" in sql:
+            return [{"件数": 42, "案件売上合計": 99999999, "案件粗利合計": 20000000}]
+        return [{"分類": "02_予定"}]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._budget_forecast({"category": "forecast"})
+    assert result["aggregate"]["件数"] == 42
+    assert result["aggregate"]["案件売上合計"] == 99999999
+
+
+def test_purchase_surcharges_joins_with_purchases_and_filters(monkeypatch):
+    """14.85: purchase_surchargesテーブルへの新規アクセス。諸掛区分IDは
+    意味付けせず生の値のまま返す（社内資料間で対応表が矛盾しているため）。"""
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured["sql"] = sql
+        captured["params"] = params
+        return [{"諸掛区分ID": 3, "金額円": 5000, "POnum": "914-1"}]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._purchase_surcharges({
+        "period_start": "2026-01-01", "period_end": "2026-06-30",
+        "po_number": "914-1", "logs_code": "5145",
+    })
+
+    assert "JOIN purchases pu" in captured["sql"]
+    assert 'ps."仕入ID" = pu."ID"' in captured["sql"]
+    assert 'pu."伝票日" >= %s' in captured["sql"]
+    assert 'pu."POnum" = %s' in captured["sql"]
+    assert 'pu."LOGS_CODE" = %s' in captured["sql"]
+    assert result["status"] == "ok"
+    assert result["records"][0]["諸掛区分ID"] == 3  # 翻訳せず生の値のまま
+
+
+def test_purchase_surcharges_returns_unavailable_when_empty(monkeypatch):
+    monkeypatch.setattr(LogsysProvider, "_query", lambda self, sql, params=(): [])
+    result = LogsysProvider()._purchase_surcharges({})
+    assert result["status"] == "unavailable"
+
+
+def test_customer_contacts_joins_with_customers_and_filters_by_keyword(monkeypatch):
+    """14.85: customer_contactsテーブルへの新規アクセス。"""
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured["sql"] = sql
+        captured["params"] = params
+        return [{"担当者氏名": "田中一郎", "メールアドレス": "tanaka@example.com", "顧客名称": "US_LOGS Inc."}]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._customer_contacts({"customer_keyword": "US_LOGS"})
+
+    assert "JOIN customers c" in captured["sql"]
+    assert 'cc."顧客ID" = c."ID"' in captured["sql"]
+    assert 'c."顧客名称" LIKE %s' in captured["sql"]
+    assert captured["params"] == ("%US_LOGS%",)
+    assert result["status"] == "ok"
+    assert result["records"][0]["担当者氏名"] == "田中一郎"
+
+
+def test_customer_contacts_returns_unavailable_when_empty(monkeypatch):
+    monkeypatch.setattr(LogsysProvider, "_query", lambda self, sql, params=(): [])
+    result = LogsysProvider()._customer_contacts({})
+    assert result["status"] == "unavailable"

@@ -74,6 +74,31 @@ def test_execute_tool_dispatches_to_logsys_provider(monkeypatch):
     assert result["records"] == [{"顧客名称": "US_LOGS Inc."}]
 
 
+def test_execute_tool_dispatches_new_14_85_tools(monkeypatch):
+    """14.85: budget_forecast/purchase_surcharges/customer_contactsの
+    3ツールが登録され、正しいdatasetへディスパッチされることの確認。"""
+    for tool_name in ("get_budget_forecast", "get_purchase_surcharges", "get_customer_contacts"):
+        assert any(t["name"] == tool_name for t in tool_registry.TOOLS), f"{tool_name} not registered"
+
+    monkeypatch.setattr(
+        data_providers.LogsysProvider, "_budget_forecast",
+        lambda self, params: {"status": "ok", "records": [{"分類": "01_予算"}]},
+    )
+    assert json.loads(tool_registry.execute_tool("get_budget_forecast", {"category": "budget"}))["status"] == "ok"
+
+    monkeypatch.setattr(
+        data_providers.LogsysProvider, "_purchase_surcharges",
+        lambda self, params: {"status": "ok", "records": [{"諸掛区分ID": 1}]},
+    )
+    assert json.loads(tool_registry.execute_tool("get_purchase_surcharges", {}))["status"] == "ok"
+
+    monkeypatch.setattr(
+        data_providers.LogsysProvider, "_customer_contacts",
+        lambda self, params: {"status": "ok", "records": [{"担当者氏名": "田中一郎"}]},
+    )
+    assert json.loads(tool_registry.execute_tool("get_customer_contacts", {}))["status"] == "ok"
+
+
 def test_get_my_projects_surfaces_status_badges_and_delivery_month_bucket(monkeypatch):
     """2026-07-09（14.58修正）: 以前はstate（14.39でstatus_badgesに
     置き換える前の古い単一状態）を返していた。build_project_aggregates_

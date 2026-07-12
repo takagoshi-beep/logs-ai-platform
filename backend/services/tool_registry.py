@@ -266,6 +266,75 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "get_budget_forecast",
+        "description": (
+            "予算・売上予定・費用データ（budget_forecastテーブル）を取得する"
+            "（2026-07-13、14.85）。「〇〇さんの予算/売上予定を教えて」"
+            "「今期の予算達成率は」のような質問に使う。1行=1案件（顧客×担当者×"
+            "期×月×分類）。categoryは budget=予算、forecast=売上予定、"
+            "expense=費用の3種類のみ（発注・実績データはここには無い —"
+            "発注はget_projects、売上実績はget_sales_linesを使うこと）。"
+            "期の形式は「LGS 10期」のようにLGS+スペース+数字+期"
+            "（get_sales_linesが対象とするsalesテーブルの「LOGS10期」とは"
+            "表記が異なるので注意）。expenseカテゴリの金額はマイナスで"
+            "入力されている仕様のため、提示時は絶対値に変換すること。"
+            "【重要】このツールが返す実際のレコードの生の列名（丸数字を含む"
+            "費用の内訳列等）をそのまま使い、列名を推測で書き換えないこと。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "enum": ["budget", "forecast", "expense"],
+                    "description": "budget=予算(01_予算)、forecast=売上予定(02_予定)、expense=費用(05_費用)",
+                },
+                "period": {"type": "string", "description": "期（例: \"LGS 10期\"）。year/monthの代わりに指定してもよい。"},
+                "year": {"type": "string", "description": "年（例: \"2026\"）。text型のため文字列で指定。"},
+                "month": {"type": "string", "description": "月（例: \"6\"または\"06月\"。自動で\"06月\"形式に正規化される）"},
+                "customer_keyword": {"type": "string", "description": "顧客名の部分一致キーワード"},
+                "sales_rep_keyword": {"type": "string", "description": "社員名（担当者）の部分一致キーワード"},
+            },
+        },
+    },
+    {
+        "name": "get_purchase_surcharges",
+        "description": (
+            "仕入の諸掛（輸入経費）内訳を、仕入明細（purchases）とJOINして"
+            "取得する（2026-07-13、14.85）。「関税はいくら」「諸掛の内訳を"
+            "教えて」のような質問に使う。"
+            "【重要】各行の「諸掛区分ID」が具体的に何を指すか（関税/運賃/"
+            "国内手数料/消費税等のどれか）は、社内資料間で矛盾する記述が"
+            "あり、本ツールでは断定的な意味付けをしていない（生のIDのまま"
+            "返す）。区分IDの意味を勝手に推測して断定してはいけない —"
+            "分からない場合は正直に「区分の意味は確認できていません」と"
+            "伝えること。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "period_start": {"type": "string", "description": "期間開始日（YYYY-MM-DD形式、仕入の伝票日基準）"},
+                "period_end": {"type": "string", "description": "期間終了日（YYYY-MM-DD形式、仕入の伝票日基準）"},
+                "po_number": {"type": "string", "description": "PO番号で絞り込む"},
+                "logs_code": {"type": "string", "description": "LOGS_CODEで絞り込む"},
+            },
+        },
+    },
+    {
+        "name": "get_customer_contacts",
+        "description": (
+            "顧客担当者の連絡先（customer_contactsテーブル: 担当者氏名・"
+            "メールアドレス・電話番号等）を取得する（2026-07-13、14.85）。"
+            "「〇〇社の担当者の連絡先は」のような質問に使う。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "customer_keyword": {"type": "string", "description": "顧客名の部分一致キーワード"},
+            },
+        },
+    },
+    {
         "name": "get_sample_staff_names",
         "description": (
             "サンプル依頼対応の生産担当（回答者）の実在する名前一覧を取得する。"
@@ -494,6 +563,12 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
             result = _PROVIDERS["logsys"].fetch("cancelled_sales", tool_input)
         elif tool_name == "get_returns":
             result = _PROVIDERS["logsys"].fetch("returns", tool_input)
+        elif tool_name == "get_budget_forecast":
+            result = _PROVIDERS["logsys"].fetch("budget_forecast", tool_input)
+        elif tool_name == "get_purchase_surcharges":
+            result = _PROVIDERS["logsys"].fetch("purchase_surcharges", tool_input)
+        elif tool_name == "get_customer_contacts":
+            result = _PROVIDERS["logsys"].fetch("customer_contacts", tool_input)
         elif tool_name == "get_sample_staff_names":
             result = _PROVIDERS["production"].fetch("sample_staff_master", tool_input)
         elif tool_name == "get_ongoing_samples_by_staff":

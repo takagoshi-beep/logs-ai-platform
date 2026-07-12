@@ -635,6 +635,166 @@ class LogsysProvider:
             note="粗利トレンドの算出基準が会社として未整備",
         )
 
+    _BUDGET_FORECAST_CATEGORY_LABELS = {
+        "budget": "01_予算", "forecast": "02_予定", "expense": "05_費用",
+    }
+
+    def _budget_forecast(self, params: dict[str, Any]) -> dict[str, Any]:
+        """budget_forecastテーブル（予算・予定・費用データ）を取得する
+        （2026-07-13、14.85追加）。
+
+        従来チャットからは一切参照されていなかったテーブル。「木村さんの
+        8月以降の売上予定」のような質問に対し、AIが実際には存在する
+        データを「別システム管理でアクセスできない」と誤って回答して
+        いた実例（Noritsugu、2026-07-13）の修正。
+
+        列名・分類値・期の形式は、reference/03_application/streamlit/
+        app.py（旧デバッグアプリ、2026-07-10にNoritsuguが実データで確立
+        済みの定義）に基づく。1行=1案件（顧客×担当者×期×月×分類）。
+        分類は01_予算/02_予定/05_費用のみで、03_発注・04_実績はここには
+        存在しない（発注はget_projects、実績はget_sales_linesを使う）。
+
+        "年"・"月"はtext型（月は"06月"のようにゼロ埋め2桁+"月"）、
+        "期"は"LGS 10期"形式（salesテーブルの"LOGS10期"とは表記が異なる
+        点に注意）。
+
+        05_費用の金額カラム群（②二次加工費等、丸数字を含む列名のため
+        SELECT *で安全に取得し名前を決め打ちしない）はマイナスで入力
+        されている仕様のため、Claude側で絶対値に変換して提示する必要が
+        ある。
+        """
+        category = params.get("category")
+        where = "1=1"
+        args: list[Any] = []
+        if category:
+            db_category = self._BUDGET_FORECAST_CATEGORY_LABELS.get(category)
+            if not db_category:
+                return _evidence(
+                    self.name, "budget_forecast", "unavailable",
+                    f"categoryには{list(self._BUDGET_FORECAST_CATEGORY_LABELS)}のいずれかを指定してください。",
+                )
+            where += ' AND "分類" = %s'
+            args.append(db_category)
+        if params.get("period"):
+            where += ' AND "期" = %s'
+            args.append(params["period"])
+        if params.get("year"):
+            where += ' AND "年" = %s'
+            args.append(str(params["year"]))
+        if params.get("month"):
+            month_raw = str(params["month"]).strip()
+            month_normalized = month_raw if month_raw.endswith("月") else f"{int(month_raw):02d}月"
+            where += ' AND "月" = %s'
+            args.append(month_normalized)
+        if params.get("customer_keyword"):
+            where += ' AND "顧客名" LIKE %s'
+            args.append(f"%{params['customer_keyword']}%")
+        if params.get("sales_rep_keyword"):
+            where += ' AND "社員名" LIKE %s'
+            args.append(f"%{params['sales_rep_keyword']}%")
+
+        # 丸数字・全角括弧を含む費用カラム名を決め打ちしないよう、
+        # SELECT *で実際の列名・値をそのまま返す（_code_masterと同じ理由）。
+        sql = f'SELECT * FROM budget_forecast WHERE {where} ORDER BY "年", "月"'
+        rows = self._query(sql, tuple(args))
+
+        agg_sql = (
+            'SELECT COUNT(*) AS "件数", COALESCE(SUM("案件売上"), 0) AS "案件売上合計", '
+            'COALESCE(SUM("案件粗利"), 0) AS "案件粗利合計" '
+            f'FROM budget_forecast WHERE {where}'
+        )
+        agg_rows = self._query(agg_sql, tuple(args))
+        aggregate = agg_rows[0] if agg_rows else {"件数": len(rows), "案件売上合計": 0, "案件粗利合計": 0}
+
+        evidence = _evidence(
+            self.name, "budget_forecast",
+            "ok" if rows else "unavailable",
+            f"予算・予定・費用データ{len(rows)}件を取得（分類={category or '指定なし'}）。"
+            "05_費用の金額はマイナスで入力されている仕様のため、絶対値に変換して提示すること。"
+            "03_発注・04_実績はこのテーブルには無い（発注実績はget_projects、"
+            "売上実績はget_sales_linesを使うこと）。",
+            rows,
+        )
+        evidence["aggregate"] = aggregate
+        return evidence
+
+    def _purchase_surcharges(self, params: dict[str, Any]) -> dict[str, Any]:
+        """purchase_surchargesをpurchasesとJOINし、仕入の諸掛（輸入経費）
+        内訳を取得する（2026-07-13、14.85追加）。
+
+        従来チャットから参照されていなかったテーブル。
+
+        【重要・未確認】諸掛区分ID（1〜8）が具体的に何を指すかについて、
+        reference/02_database/sync/sync.py のコメントと reference/03_
+        application/streamlit/app.py のコメントで異なる対応表が書かれて
+        おり（例: 前者は「1=関税」、後者は「1=国内手数料」）、本セッション
+        ではどちらが正しいか実データで確認できなかった。code_masterにも
+        該当エントリが見当たらない。誤った断定を避けるため、諸掛区分IDは
+        翻訳せず生の値のまま返す — Claudeには意味を推測せず、そのまま
+        提示するか「区分の意味は未確認」と正直に伝えるよう指示している。
+        """
+        where = 'pu."ステータス" IN (2, 3)'
+        args: list[Any] = []
+        if params.get("period_start"):
+            where += ' AND pu."伝票日" >= %s'
+            args.append(params["period_start"])
+        if params.get("period_end"):
+            where += ' AND pu."伝票日" <= %s'
+            args.append(params["period_end"])
+        if params.get("po_number"):
+            where += ' AND pu."POnum" = %s'
+            args.append(params["po_number"])
+        if params.get("logs_code"):
+            where += ' AND pu."LOGS_CODE" = %s'
+            args.append(params["logs_code"])
+
+        sql = (
+            'SELECT ps.*, pu."伝票日", pu."POnum", pu."LOGS_CODE", pu."仕入先名" '
+            "FROM purchase_surcharges ps "
+            'JOIN purchases pu ON ps."仕入ID" = pu."ID" '
+            f'WHERE {where} ORDER BY pu."伝票日" DESC'
+        )
+        rows = self._query(sql, tuple(args))
+        return _evidence(
+            self.name, "purchase_surcharges",
+            "ok" if rows else "unavailable",
+            f"仕入諸掛明細{len(rows)}件を取得。諸掛区分IDの意味は資料間で"
+            "矛盾があり本セッションでは確認できていないため、翻訳せず生の値の"
+            "まま返している。意味を断定的に説明せず、不明な場合は正直にその旨を"
+            "伝えること。",
+            rows,
+        )
+
+    def _customer_contacts(self, params: dict[str, Any]) -> dict[str, Any]:
+        """customer_contacts（顧客担当者連絡先）を取得する（2026-07-13、
+        14.85追加）。従来チャットから参照されていなかったテーブル。
+
+        【未確認】customer_contactsとcustomersの結合キー列名
+        （"顧客ID"と推定）は、project_relations.pyの既存コメントからの
+        類推であり、実データでの確認はできていない。結合に失敗した場合
+        （列名不一致等）はfetch()の例外処理により"unavailable"として
+        返る（アプリ全体が落ちることはない）。
+        """
+        where = "1=1"
+        args: list[Any] = []
+        if params.get("customer_keyword"):
+            where += ' AND c."顧客名称" LIKE %s'
+            args.append(f"%{params['customer_keyword']}%")
+
+        sql = (
+            'SELECT cc.*, c."顧客名称" '
+            "FROM customer_contacts cc "
+            'JOIN customers c ON cc."顧客ID" = c."ID" '
+            f'WHERE {where}'
+        )
+        rows = self._query(sql, tuple(args))
+        return _evidence(
+            self.name, "customer_contacts",
+            "ok" if rows else "unavailable",
+            f"顧客担当者連絡先{len(rows)}件を取得。",
+            rows,
+        )
+
     def _find_similar_name(self, params: dict[str, Any]) -> dict[str, Any]:
         """あいまい検索（2026-07-10、14.65、Noritsuguの指定）: 入力文字列
         （表記ゆれ・スペルミス・曖昧な入力を含む）に最も近い実在の顧客名・
