@@ -53,6 +53,16 @@ def _product_category_label(code: Any) -> str:
 # （1=USD, 2=円, 3=RMB、Noritsuguが実際にcode_masterで確認して提示）。
 _CURRENCY_LABELS = {1: "USD", 2: "円", 3: "RMB"}
 
+# 2026-07-13（14.86追加）: purchase_surchargesの"諸掛区分ID"（CHARGES_
+# CATEGORY）。14.85時点ではsync.pyとapp.pyのコメントで矛盾する対応表が
+# あり未確認としていたが、Noritsuguがcode_masterで実データを確認し、
+# sync.py側の対応表が正しいと確定した。消費税に該当する区分は3・5・6
+# （sync.pyのコメント通り。app.py側の「2・7・8」は誤りだった）。
+_SURCHARGE_CATEGORY_LABELS = {
+    1: "関税", 2: "国内手数料（税抜）", 3: "国内手数料消費税額", 4: "運賃",
+    5: "輸入消費税（地方）", 6: "輸入消費税（内国）", 7: "燃料サーチャージ", 8: "通関料他",
+}
+
 
 def _currency_label(code: Any) -> str | None:
     if code is None:
@@ -720,18 +730,15 @@ class LogsysProvider:
 
     def _purchase_surcharges(self, params: dict[str, Any]) -> dict[str, Any]:
         """purchase_surchargesをpurchasesとJOINし、仕入の諸掛（輸入経費）
-        内訳を取得する（2026-07-13、14.85追加）。
+        内訳を取得する（2026-07-13、14.85追加、14.86で区分ラベル確定）。
 
         従来チャットから参照されていなかったテーブル。
 
-        【重要・未確認】諸掛区分ID（1〜8）が具体的に何を指すかについて、
-        reference/02_database/sync/sync.py のコメントと reference/03_
-        application/streamlit/app.py のコメントで異なる対応表が書かれて
-        おり（例: 前者は「1=関税」、後者は「1=国内手数料」）、本セッション
-        ではどちらが正しいか実データで確認できなかった。code_masterにも
-        該当エントリが見当たらない。誤った断定を避けるため、諸掛区分IDは
-        翻訳せず生の値のまま返す — Claudeには意味を推測せず、そのまま
-        提示するか「区分の意味は未確認」と正直に伝えるよう指示している。
+        諸掛区分ID（CHARGES_CATEGORY、1〜8）は、Noritsuguがcode_masterで
+        実データを確認し対応表を確定済み（_SURCHARGE_CATEGORY_LABELS）。
+        14.85時点ではsync.py/app.pyのコメントで矛盾する対応表があり
+        未確認としていたが、sync.py側が正しいと判明した（app.py側の
+        「1=国内手数料」は誤り）。消費税に該当する区分は3・5・6。
         """
         where = 'pu."ステータス" IN (2, 3)'
         args: list[Any] = []
@@ -755,13 +762,14 @@ class LogsysProvider:
             f'WHERE {where} ORDER BY pu."伝票日" DESC'
         )
         rows = self._query(sql, tuple(args))
+        for row in rows:
+            row["諸掛区分名"] = _SURCHARGE_CATEGORY_LABELS.get(row.get("諸掛区分ID"), "その他")
         return _evidence(
             self.name, "purchase_surcharges",
             "ok" if rows else "unavailable",
-            f"仕入諸掛明細{len(rows)}件を取得。諸掛区分IDの意味は資料間で"
-            "矛盾があり本セッションでは確認できていないため、翻訳せず生の値の"
-            "まま返している。意味を断定的に説明せず、不明な場合は正直にその旨を"
-            "伝えること。",
+            f"仕入諸掛明細{len(rows)}件を取得（各行の「諸掛区分名」は"
+            "code_masterで確認済みのラベル変換済み。消費税に該当するのは"
+            "区分3・5・6）。",
             rows,
         )
 

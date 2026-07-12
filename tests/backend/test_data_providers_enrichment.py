@@ -547,8 +547,8 @@ def test_budget_forecast_returns_aggregate_independent_of_records(monkeypatch):
 
 
 def test_purchase_surcharges_joins_with_purchases_and_filters(monkeypatch):
-    """14.85: purchase_surchargesテーブルへの新規アクセス。諸掛区分IDは
-    意味付けせず生の値のまま返す（社内資料間で対応表が矛盾しているため）。"""
+    """14.85: purchase_surchargesテーブルへの新規アクセス。14.86で
+    諸掛区分IDのラベル変換をcode_masterの実データに基づき確定。"""
     captured = {}
 
     def _fake_query(self, sql, params=()):
@@ -569,7 +569,17 @@ def test_purchase_surcharges_joins_with_purchases_and_filters(monkeypatch):
     assert 'pu."POnum" = %s' in captured["sql"]
     assert 'pu."LOGS_CODE" = %s' in captured["sql"]
     assert result["status"] == "ok"
-    assert result["records"][0]["諸掛区分ID"] == 3  # 翻訳せず生の値のまま
+    assert result["records"][0]["諸掛区分ID"] == 3  # 生のIDも残す
+    assert result["records"][0]["諸掛区分名"] == "国内手数料消費税額"  # 14.86でラベル変換確定
+
+
+def test_purchase_surcharges_labels_unknown_category_as_other(monkeypatch):
+    monkeypatch.setattr(
+        LogsysProvider, "_query",
+        lambda self, sql, params=(): [{"諸掛区分ID": 99, "金額円": 100}],
+    )
+    result = LogsysProvider()._purchase_surcharges({})
+    assert result["records"][0]["諸掛区分名"] == "その他"
 
 
 def test_purchase_surcharges_returns_unavailable_when_empty(monkeypatch):
