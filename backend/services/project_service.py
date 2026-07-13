@@ -498,8 +498,12 @@ class ProjectService:
 
         if data.has_purchase and data.purchase_date:
             # 2026-07-15（14.111、Noritsuguの指定）: 活動履歴の「仕入登録」に
-            # 実際の仕入ID（purchases."ID"）を併記する。1つのPOに複数の
+            # 実際の仕入伝票ID（purchases."ID"）を併記する。1つのPOに複数の
             # 仕入明細が紐づくことがあるため、複数件ならカンマ区切りで表示。
+            # 2026-07-15（14.114、Noritsuguが実データで発見）: "ID"は明細
+            # 1行ごとの一意なIDではなく、1回の伝票入力につき複数の商品
+            # 明細で共有される「仕入伝票ID」だったと判明したため、表示名を
+            # 「仕入ID」から「仕入伝票ID」に変更した。
             purchase_ids_text = "、".join(str(pid) for pid in data.purchase_ids) if data.purchase_ids else "不明"
             events.add_event(ProjectEvent(
                 event_id=f"evt-{event_id}",
@@ -508,7 +512,7 @@ class ProjectService:
                 event_time=data.purchase_date,
                 source_table="purchases",
                 business_meaning="仕入登録 - 原価確定",
-                impact_summary=f"原価が確定し、粗利を計算可能に（仕入ID: {purchase_ids_text}）",
+                impact_summary=f"原価が確定し、粗利を計算可能に（仕入伝票ID: {purchase_ids_text}）",
                 trace_id=trace_id,
                 event_source_type="actual",
                 before_state=ProjectState.INITIATED,
@@ -518,7 +522,8 @@ class ProjectService:
             event_id += 1
 
         if data.has_sales and data.sales_date:
-            # 14.111: 同様に、「売上登録」に実際の売上ID（sales."ID"）を併記する。
+            # 14.111・14.114: 同様に、「売上登録」に実際の売上伝票ID
+            # （sales."ID"）を併記する。
             sales_ids_text = "、".join(str(sid) for sid in data.sales_ids) if data.sales_ids else "不明"
             events.add_event(ProjectEvent(
                 event_id=f"evt-{event_id}",
@@ -527,7 +532,7 @@ class ProjectService:
                 event_time=data.sales_date,
                 source_table="sales",
                 business_meaning="売上登録 - 納品完了と判断",
-                impact_summary=f"売上が確定し、納品済みと判断（売上ID: {sales_ids_text}）",
+                impact_summary=f"売上が確定し、納品済みと判断（売上伝票ID: {sales_ids_text}）",
                 trace_id=trace_id,
                 event_source_type="actual",
                 after_state=ProjectState.COMPLETED,

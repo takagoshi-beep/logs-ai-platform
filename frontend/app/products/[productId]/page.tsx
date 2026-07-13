@@ -190,7 +190,7 @@ export default function ProductDetailPage({ params }: Params) {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
-          <SectionHeader title="売上履歴" subtitle="この商品の売上明細です（最新5件、同一売上IDは1件にまとめています）。" />
+          <SectionHeader title="売上履歴" subtitle="この商品の売上明細です（最新5件、内容が完全に同一の行は1件にまとめています）。" />
           <div className="mt-3 space-y-2">
             {product.sales.length > 0 ? (
               product.sales.map((s, idx) => (
@@ -199,7 +199,7 @@ export default function ProductDetailPage({ params }: Params) {
                     <span className="font-medium text-ink">{s.得意先名 ?? "—"}</span>
                     <span className="text-sub">{s.売上入力日 ?? "—"}</span>
                   </div>
-                  <p className="mt-1 text-sub">売上ID: {s.ID ?? "—"} ・ 営業: {s.営業担当者名 ?? "—"} ・ 数量: {s.数量pcs ?? "—"} ・ 金額: {fmtYen(s.売上金額)}</p>
+                  <p className="mt-1 text-sub">売上伝票ID: {s.ID ?? "—"} ・ 営業: {s.営業担当者名 ?? "—"} ・ 数量: {s.数量pcs ?? "—"} ・ 金額: {fmtYen(s.売上金額)}</p>
                 </div>
               ))
             ) : (
@@ -209,7 +209,7 @@ export default function ProductDetailPage({ params }: Params) {
         </Card>
 
         <Card>
-          <SectionHeader title="仕入履歴" subtitle="この商品の仕入明細です（明細レベルの担当者を優先表示、同一仕入IDは1件にまとめています）。" />
+          <SectionHeader title="仕入履歴" subtitle="この商品の仕入明細です（明細レベルの担当者を優先表示、内容が完全に同一の行は1件にまとめています）。" />
           <div className="mt-3 space-y-2">
             {product.purchases.length > 0 ? (
               product.purchases.map((p, idx) => (
@@ -219,7 +219,7 @@ export default function ProductDetailPage({ params }: Params) {
                     <span className="text-sub">{p.伝票日 ?? "—"}</span>
                   </div>
                   <p className="mt-1 text-sub">
-                    仕入ID: {p.ID ?? "—"} ・ 営業: {p.営業担当者名 ?? "—"} ・ 生産管理: {p.生産管理担当者名 ?? "—"} ・ 数量: {p.仕入数量pcs ?? "—"} ・ 金額: {fmtYen(p.仕入金額円)}
+                    仕入伝票ID: {p.ID ?? "—"} ・ 営業: {p.営業担当者名 ?? "—"} ・ 生産管理: {p.生産管理担当者名 ?? "—"} ・ 数量: {p.仕入数量pcs ?? "—"} ・ 金額: {fmtYen(p.仕入金額円)}
                   </p>
                 </div>
               ))
