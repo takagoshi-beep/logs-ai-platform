@@ -166,11 +166,18 @@ class LogsysProvider:
             )
             kw = f"%{params['sales_rep_keyword']}%"
             args.extend([kw, kw, kw, kw])
+        if params.get("model_no_keyword"):
+            # 2026-07-15（14.115、Noritsuguの指定）: 「品番」で売上を検索
+            # したい実需要があった（仕入先NEWHATTANの商品はメーカー側の
+            # 品番が"型番"列に格納されている）。sales."型番"はJOIN無しで
+            # 明細レベルにフラットに存在するため、そのままLIKE検索できる。
+            where += ' AND "型番" LIKE %s'
+            args.append(f"%{params['model_no_keyword']}%")
 
         sql = (
-            'SELECT "売上入力日", "得意先ID", "得意先名", "登録商品名", '
-            '"LOGS_CODE", "SAMPLE_CODE", "product_category", '
-            '"事業分類", "数量pcs", "売上金額", "明細粗利", '
+            'SELECT "明細ID", "売上入力日", "得意先ID", "得意先名", "登録商品名", '
+            '"LOGS_CODE", "SAMPLE_CODE", "型番", "カラー", "サイズ", "product_category", '
+            '"事業分類", "数量pcs", "売単価", "売上金額", "明細粗利", '
             '"営業担当者名", "事務処理担当者名", "経理担当者名", "作成者名", '
             '"customer_category", "customer_business_scale", "customer_trade_tendency", '
             '"supplier_production_staff", "sales_rep_email", "sales_admin_email", "accounting_email" '

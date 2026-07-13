@@ -184,6 +184,45 @@ def test_sales_lines_reads_from_enriched_view(monkeypatch):
     assert '"product_category"' in captured["sqls"][0]
 
 
+def test_sales_lines_filters_by_model_no_keyword(monkeypatch):
+    """14.115、Noritsuguの指定: 仕入先によってはメーカー側の品番が
+    sales."型番"列に格納されている（例: NEWHATTAN）。JOIN無しで
+    明細レベルにフラットに存在するため、直接LIKE検索できる。"""
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured.setdefault("sqls", []).append(sql)
+        captured.setdefault("params", []).append(params)
+        return []
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    LogsysProvider()._sales_lines({"model_no_keyword": "NH-1234"})
+
+    assert '"型番" LIKE %s' in captured["sqls"][0]
+    assert "%NH-1234%" in captured["params"][0]
+
+
+def test_sales_lines_includes_line_id_color_size_and_unit_price(monkeypatch):
+    """14.115、Noritsuguの指定: 色・サイズ別の内訳を明細レベルで確認
+    できるよう、"明細ID"・"カラー"・"サイズ"・"売単価"を返す。"""
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured.setdefault("sqls", []).append(sql)
+        return []
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    LogsysProvider()._sales_lines({})
+
+    assert '"明細ID"' in captured["sqls"][0]
+    assert '"型番"' in captured["sqls"][0]
+    assert '"カラー"' in captured["sqls"][0]
+    assert '"サイズ"' in captured["sqls"][0]
+    assert '"売単価"' in captured["sqls"][0]
+
+
 def test_sales_by_category_groups_by_product_category(monkeypatch):
     captured = {}
 

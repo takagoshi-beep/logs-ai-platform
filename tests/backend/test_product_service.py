@@ -412,14 +412,14 @@ def test_get_product_detail_includes_planned_and_actual_cost_fields(monkeypatch)
         (1, "914-1", "US_LOGS Inc.", "山田太郎", None, None, None, 10, 1000, "2026-01-01", 100.0, 1.10, 1100.0, 1),
     ]
 
-    purchase_cols = ["ID", "仕入先名", "営業担当者名", "営業事務担当者名", "生産管理担当者名",
+    purchase_cols = ["ID", "明細ID", "仕入先名", "営業担当者名", "営業事務担当者名", "生産管理担当者名",
                       "仕入数量pcs", "仕入金額円", "伝票日", "経費率", "実際原価", "諸掛込金額円"]
     purchase_rows = [
         # 2件の仕入明細行（カラー違い等）を合算する:
         # 諸掛込金額円 2360+1100=3460, 仕入金額円 2000+1000=3000, 仕入数量pcs 10+10=20
         # → 実績輸入経費率 = 3460/3000 ≒ 1.1533..., 実績原価単価 = 3460/20 = 173.0
-        (301, "1064STUDIO", "山田太郎", None, "木村美菜", 10, 2000, "2026-02-10", 1.20, 240.0, 2360),
-        (302, "1064STUDIO", "山田太郎", None, "木村美菜", 10, 1000, "2026-01-15", 1.10, 110.0, 1100),
+        (301, 9001, "1064STUDIO", "山田太郎", None, "木村美菜", 10, 2000, "2026-02-10", 1.20, 240.0, 2360),
+        (302, 9002, "1064STUDIO", "山田太郎", None, "木村美菜", 10, 1000, "2026-01-15", 1.10, 110.0, 1100),
     ]
 
     monkeypatch.setattr(
@@ -667,27 +667,29 @@ def test_get_product_detail_aggregates_all_sources(monkeypatch):
     }
 
 
-def test_get_product_detail_deduplicates_only_fully_identical_rows(monkeypatch):
-    """14.112・14.114、Noritsuguが実データで発見・指定: 明細単位で読み取って
+def test_get_product_detail_deduplicates_by_line_id(monkeypatch):
+    """14.112・14.115、Noritsuguが実データで発見・指定: 明細単位で読み取って
     いるため、内容が完全に同一の行が複数回表示されていた実例の修正。
-    完全に同一の行だけを1件にまとめる（"ID"だけで判定してはいけない
-    — "ID"は複数の商品明細で共有される「売上伝票ID」/「仕入伝票ID」
-    であり、同じIDでも内容（数量・金額）が異なる別々の取引が実在する
-    ため）。"""
+    "明細ID"（sales."明細ID"・purchases."明細ID"）が同じ行だけを1件に
+    まとめる。当初は"ID"（伝票ID）で重複判定していたが、それは複数の
+    商品明細で共有される値だったと判明し（14.114）、その場では全項目
+    一致という代替策で対応していたが、その後information_schema.columns
+    で"明細ID"という本当に一意な列が実在すると確認できたため、こちらを
+    使うよう改めた（14.115）。"""
     master_cols = ["ID", "LOGS_CODE", "Sample_CODE", "商品名"]
     master_rows = [(101, "5145", None, "Baseball Cap")]
     po_cols = ["ID", "PO_No", "顧客名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "企画担当者名", "発注数量", "発注金額", "PO発行日"]
 
-    sales_cols = ["ID", "得意先名", "営業担当者名", "事務処理担当者名", "経理担当者名", "数量pcs", "売上金額", "売上入力日"]
+    sales_cols = ["ID", "明細ID", "得意先名", "営業担当者名", "事務処理担当者名", "経理担当者名", "カラー", "サイズ", "数量pcs", "売上金額", "売上入力日"]
     sales_rows = [
-        (5001, "US_LOGS Inc.", "山田太郎", None, None, 10, 2000, "2026-02-01"),
-        (5001, "US_LOGS Inc.", "山田太郎", None, None, 10, 2000, "2026-02-01"),  # 完全に同一な重複
-        (5002, "SHIPS_L", "山田太郎", None, None, 5, 1000, "2026-01-20"),
+        (48897, 9001, "US_LOGS Inc.", "山田太郎", None, None, "black", "M", 10, 2000, "2026-02-01"),
+        (48897, 9001, "US_LOGS Inc.", "山田太郎", None, None, "black", "M", 10, 2000, "2026-02-01"),  # 明細IDが同じ完全な重複
+        (48897, 9002, "SHIPS_L", "山田太郎", None, None, "navy", "L", 5, 1000, "2026-01-20"),  # 同じ伝票ID・別の明細
     ]
-    purchase_cols = ["ID", "仕入先名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "仕入数量pcs", "仕入金額円", "伝票日"]
+    purchase_cols = ["ID", "明細ID", "仕入先名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "カラー", "サイズ", "仕入数量pcs", "仕入金額円", "伝票日"]
     purchase_rows = [
-        (6001, "1064STUDIO", "山田太郎", None, "木村美菜", 10, 500, "2026-01-15"),
-        (6001, "1064STUDIO", "山田太郎", None, "木村美菜", 10, 500, "2026-01-15"),  # 完全に同一な重複
+        (6001, 8001, "1064STUDIO", "山田太郎", None, "木村美菜", "black", "M", 10, 500, "2026-01-15"),
+        (6001, 8001, "1064STUDIO", "山田太郎", None, "木村美菜", "black", "M", 10, 500, "2026-01-15"),  # 明細IDが同じ完全な重複
     ]
 
     monkeypatch.setattr(
@@ -702,26 +704,25 @@ def test_get_product_detail_deduplicates_only_fully_identical_rows(monkeypatch):
 
     detail = product_service.get_product_detail("101")
 
-    assert [s["ID"] for s in detail["sales"]] == [5001, 5002]  # 重複が除去される
-    assert [p["ID"] for p in detail["purchases"]] == [6001]
+    assert [s["明細ID"] for s in detail["sales"]] == [9001, 9002]  # 重複が除去される
+    assert [p["明細ID"] for p in detail["purchases"]] == [8001]
 
 
-def test_get_product_detail_keeps_same_id_rows_when_content_differs(monkeypatch):
-    """14.114、Noritsuguが実データで発見: "ID"は複数の商品明細に共有
-    される「仕入伝票ID」であり、同じ伝票IDでも金額等の内容が異なる
-    別々の取引（実例: 同じ伝票・同じLOGS_CODEで金額が2,800円と0円の
-    2行、訂正/相殺と思われる）が実在する。IDだけで重複判定すると、
-    こうした本当は別々の取引を誤って1件に潰してしまうため、全項目が
-    完全に一致する場合のみ重複とみなすよう修正した。"""
+def test_get_product_detail_keeps_same_voucher_id_rows_when_line_id_differs(monkeypatch):
+    """14.114で発見・14.115で正式に解決: "ID"（伝票ID）は複数の商品明細
+    に共有される値であり、同じ伝票IDでも"明細ID"が異なれば別々の取引
+    （実例: 同じ伝票・同じLOGS_CODEで金額が2,800円と0円の2行、訂正/
+    相殺と思われる）として両方保持する。"明細ID"だけで重複判定する
+    ことで、伝票IDが同じでも明細IDが違えば正しく別行として残る。"""
     master_cols = ["ID", "LOGS_CODE", "Sample_CODE", "商品名"]
     master_rows = [(101, "5145", None, "Baseball Cap")]
     po_cols = ["ID", "PO_No", "顧客名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "企画担当者名", "発注数量", "発注金額", "PO発行日"]
 
-    purchase_cols = ["ID", "仕入先名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "仕入数量pcs", "仕入金額円", "伝票日"]
+    purchase_cols = ["ID", "明細ID", "仕入先名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "カラー", "サイズ", "仕入数量pcs", "仕入金額円", "伝票日"]
     purchase_rows = [
-        # 同じ伝票ID(48897)だが、金額が異なる別の取引(訂正/相殺と思われる)
-        (48897, "1064STUDIO", "山田太郎", None, "木村美菜", 2, 2800, "2026-07-02"),
-        (48897, "1064STUDIO", "山田太郎", None, "木村美菜", 2, 0, "2026-07-02"),
+        # 同じ伝票ID(48897)だが、明細IDが異なる別の取引(訂正/相殺と思われる)
+        (48897, 70001, "1064STUDIO", "山田太郎", None, "木村美菜", None, None, 2, 2800, "2026-07-02"),
+        (48897, 70002, "1064STUDIO", "山田太郎", None, "木村美菜", None, None, 2, 0, "2026-07-02"),
     ]
 
     monkeypatch.setattr(
@@ -736,7 +737,7 @@ def test_get_product_detail_keeps_same_id_rows_when_content_differs(monkeypatch)
 
     detail = product_service.get_product_detail("101")
 
-    # 同じIDでも内容が異なるため、両方の行が残る（1件に潰されない）
+    # 伝票IDは同じだが明細IDが異なるため、両方の行が残る（1件に潰されない）
     assert len(detail["purchases"]) == 2
     assert {p["仕入金額円"] for p in detail["purchases"]} == {2800, 0}
 
@@ -748,8 +749,8 @@ def test_get_product_detail_caps_sales_history_to_latest_5(monkeypatch):
     master_rows = [(101, "5145", None, "Baseball Cap")]
     po_cols = ["ID", "PO_No", "顧客名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "企画担当者名", "発注数量", "発注金額", "PO発行日"]
 
-    sales_cols = ["ID", "得意先名", "営業担当者名", "事務処理担当者名", "経理担当者名", "数量pcs", "売上金額", "売上入力日"]
-    sales_rows = [(5000 + i, f"顧客{i}", "山田太郎", None, None, 1, 100, f"2026-01-{i:02d}") for i in range(1, 8)]
+    sales_cols = ["ID", "明細ID", "得意先名", "営業担当者名", "事務処理担当者名", "経理担当者名", "カラー", "サイズ", "数量pcs", "売上金額", "売上入力日"]
+    sales_rows = [(5000 + i, 9000 + i, f"顧客{i}", "山田太郎", None, None, None, None, 1, 100, f"2026-01-{i:02d}") for i in range(1, 8)]
 
     monkeypatch.setattr(
         product_service, "get_connection",
@@ -757,7 +758,7 @@ def test_get_product_detail_caps_sales_history_to_latest_5(monkeypatch):
             (master_rows, master_cols),
             ([], po_cols),
             (sales_rows, sales_cols),
-            ([], ["ID", "仕入先名"]),
+            ([], ["ID", "明細ID", "仕入先名"]),
         ]),
     )
 
@@ -765,7 +766,7 @@ def test_get_product_detail_caps_sales_history_to_latest_5(monkeypatch):
 
     assert len(detail["sales"]) == 5
     # クエリ自体が既に日付の新しい順のため、先頭5件がそのまま残る
-    assert [s["ID"] for s in detail["sales"]] == [5001, 5002, 5003, 5004, 5005]
+    assert [s["明細ID"] for s in detail["sales"]] == [9001, 9002, 9003, 9004, 9005]
     # 上限に絞られていても、実際に売上記録があること自体は正しく判定される
     assert detail["status"]["sales_recorded"] is True
 

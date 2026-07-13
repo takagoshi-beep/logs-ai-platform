@@ -25,6 +25,8 @@ interface SalesLine {
   営業担当者名: string | null;
   事務処理担当者名: string | null;
   経理担当者名: string | null;
+  カラー: string | null;
+  サイズ: string | null;
   数量pcs: number | null;
   売上金額: number | null;
   売上入力日: string | null;
@@ -36,6 +38,8 @@ interface PurchaseLine {
   営業担当者名: string | null;
   営業事務担当者名: string | null;
   生産管理担当者名: string | null;
+  カラー: string | null;
+  サイズ: string | null;
   仕入数量pcs: number | null;
   仕入金額円: number | null;
   伝票日: string | null;
@@ -199,7 +203,7 @@ export default function ProductDetailPage({ params }: Params) {
                     <span className="font-medium text-ink">{s.得意先名 ?? "—"}</span>
                     <span className="text-sub">{s.売上入力日 ?? "—"}</span>
                   </div>
-                  <p className="mt-1 text-sub">売上伝票ID: {s.ID ?? "—"} ・ 営業: {s.営業担当者名 ?? "—"} ・ 数量: {s.数量pcs ?? "—"} ・ 金額: {fmtYen(s.売上金額)}</p>
+                  <p className="mt-1 text-sub">売上伝票ID: {s.ID ?? "—"} ・ カラー: {s.カラー ?? "—"} ・ サイズ: {s.サイズ ?? "—"} ・ 営業: {s.営業担当者名 ?? "—"} ・ 数量: {s.数量pcs ?? "—"} ・ 金額: {fmtYen(s.売上金額)}</p>
                 </div>
               ))
             ) : (
@@ -219,7 +223,7 @@ export default function ProductDetailPage({ params }: Params) {
                     <span className="text-sub">{p.伝票日 ?? "—"}</span>
                   </div>
                   <p className="mt-1 text-sub">
-                    仕入伝票ID: {p.ID ?? "—"} ・ 営業: {p.営業担当者名 ?? "—"} ・ 生産管理: {p.生産管理担当者名 ?? "—"} ・ 数量: {p.仕入数量pcs ?? "—"} ・ 金額: {fmtYen(p.仕入金額円)}
+                    仕入伝票ID: {p.ID ?? "—"} ・ カラー: {p.カラー ?? "—"} ・ サイズ: {p.サイズ ?? "—"} ・ 営業: {p.営業担当者名 ?? "—"} ・ 生産管理: {p.生産管理担当者名 ?? "—"} ・ 数量: {p.仕入数量pcs ?? "—"} ・ 金額: {fmtYen(p.仕入金額円)}
                   </p>
                 </div>
               ))

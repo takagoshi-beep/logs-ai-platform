@@ -197,18 +197,20 @@ def _group_po_dicts_by_po_no(po_dicts: list[dict[str, Any]]) -> list[dict[str, A
     return [grouped[po_no] for po_no in order]
 
 
-def _dedupe_identical_rows(rows: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
-    """完全に内容が同一の行（全項目が一致）だけを1件にまとめる
-    （2026-07-15、14.114、Noritsuguが実データで発見: `"ID"`
-    （sales."ID"・purchases."ID"）は、1回の伝票入力（複数の商品明細を
-    まとめて入力した1回の作業）につき共有される「売上伝票ID」/
-    「仕入伝票ID」であり、明細1行ごとの一意なIDではないと判明した。
-    そのため14.112では「IDだけで重複判定する」実装をしていたが、これ
-    では、同じ伝票内の別々の明細（実例: 同じ伝票ID・同じLOGS_CODEでも
-    金額が2,800円と0円で異なる、訂正/相殺と思われる2行）を誤って1件に
-    潰してしまう不具合があった。IDだけでなく全項目が完全に一致する場合
-    のみ、本当の重複（明細レベルで読み取ったことによる同一行の重複）と
-    みなすよう修正した。
+def _dedupe_by_line_id(rows: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
+    """"明細ID"（sales."明細ID"・purchases."明細ID"）が同じ行は1件にまとめる
+    （2026-07-15、14.115、Noritsuguが実データで発見）。
+
+    14.114までの経緯: 当初`"ID"`（sales."ID"・purchases."ID"）を明細の
+    一意なIDと誤解して重複判定に使っていたが、実際には`"ID"`は1回の
+    伝票入力（複数の商品明細をまとめて入力した1回の作業）につき複数の
+    商品明細で共有される「伝票ID」だと判明した（14.114）。その場では
+    「全項目が完全に一致する場合のみ重複とみなす」という代替策で対応
+    していたが、その後Noritsuguが`information_schema.columns`で
+    sales/purchases両テーブルの全列を確認したところ、"明細ID"という
+    別の列が実際に存在し、これこそが明細1行ごとの本当に一意なIDだと
+    判明した。以後はこちらを重複判定の基準にする（全項目一致という
+    やや不安定な代替策は不要になった）。
 
     `limit`を指定すると、重複排除後の件数をさらに絞り込む（売上履歴が
     大量になる商品向け、Noritsuguの指定で既定は最新5件）。
@@ -216,10 +218,10 @@ def _dedupe_identical_rows(rows: list[dict[str, Any]], limit: int | None = None)
     seen: set[Any] = set()
     deduped: list[dict[str, Any]] = []
     for row in rows:
-        key = tuple(sorted(row.items(), key=lambda kv: kv[0]))
-        if key in seen:
+        line_id = row.get("明細ID")
+        if line_id in seen:
             continue
-        seen.add(key)
+        seen.add(line_id)
         deduped.append(row)
         if limit is not None and len(deduped) >= limit:
             break
@@ -488,17 +490,17 @@ def get_product_detail(product_id: str) -> dict[str, Any] | None:
             )
             sales_rows, sales_cols = _query_all(
                 conn,
-                'SELECT "ID", "得意先名", "営業担当者名", "事務処理担当者名", "経理担当者名", '
-                '"数量pcs", "売上金額", "売上入力日" '
+                'SELECT "ID", "明細ID", "得意先名", "営業担当者名", "事務処理担当者名", "経理担当者名", '
+                '"カラー", "サイズ", "数量pcs", "売上金額", "売上入力日" '
                 'FROM sales WHERE "LOGS_CODE" = %s ORDER BY "売上入力日" DESC',
                 (logs_code,),
             )
             purchase_rows, purchase_cols = _query_all(
                 conn,
-                'SELECT "ID", "仕入先名", '
+                'SELECT "ID", "明細ID", "仕入先名", '
                 'COALESCE(NULLIF("明細営業担当者名", \'\'), "営業担当者名") AS "営業担当者名", '
                 'COALESCE(NULLIF("明細営業事務担当者名", \'\'), "営業事務担当者名") AS "営業事務担当者名", '
-                '"生産管理担当者名", "仕入数量pcs", "仕入金額円", "伝票日", '
+                '"生産管理担当者名", "カラー", "サイズ", "仕入数量pcs", "仕入金額円", "伝票日", '
                 '"経費率", "実際原価", "諸掛込金額円" '
                 'FROM purchases WHERE "LOGS_CODE" = %s ORDER BY "伝票日" DESC',
                 (logs_code,),
@@ -526,7 +528,7 @@ def get_product_detail(product_id: str) -> dict[str, Any] | None:
     # 見つかった値を採用。無ければ仕入履歴を見る。2026-07-09、
     # 営業事務担当者を商品にも紐づけたいという要望への対応）。
     po_dicts = _rows_to_dicts(po_rows, po_cols)
-    purchase_dicts = _dedupe_identical_rows(_rows_to_dicts(purchase_rows, purchase_cols))
+    purchase_dicts = _dedupe_by_line_id(_rows_to_dicts(purchase_rows, purchase_cols))
     sales_admin = next((r["営業事務担当者名"] for r in po_dicts if r.get("営業事務担当者名")), None)
     if not sales_admin:
         sales_admin = next((r["営業事務担当者名"] for r in purchase_dicts if r.get("営業事務担当者名")), None)
@@ -599,7 +601,7 @@ def get_product_detail(product_id: str) -> dict[str, Any] | None:
     return {
         "master": master,
         "purchase_orders": _group_po_dicts_by_po_no(po_dicts),
-        "sales": _dedupe_identical_rows(_rows_to_dicts(sales_rows, sales_cols), limit=5),
+        "sales": _dedupe_by_line_id(_rows_to_dicts(sales_rows, sales_cols), limit=5),
         "purchases": purchase_dicts,
         "samples": sample_rows,
         "status": {

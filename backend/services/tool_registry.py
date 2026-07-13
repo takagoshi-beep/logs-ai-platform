@@ -54,6 +54,13 @@ TOOLS: list[dict[str, Any]] = [
             "（営業担当者・営業事務・経理担当・伝票作成者のいずれかに一致すればヒットする。"
             "架空の担当者名で検索しても0件になるだけなので、実在するか不安な場合は"
             "get_customer_master等で事前確認する必要はない。0件ならそのまま正直に伝えること）。"
+            "「品番」「型番」で絞り込みたい場合はmodel_no_keywordを使うこと"
+            "（2026-07-15、14.115追加。仕入先によっては、メーカー側の品番が"
+            "\"型番\"列に格納されている — 例: NEWHATTAN — LOGS_CODEでの検索とは"
+            "別の軸）。各行には\"型番\"・\"カラー\"・\"サイズ\"・\"売単価\"（明細レベルの"
+            "単価）・\"明細ID\"（明細1行ごとの本当に一意なID。\"得意先ID\"等とは別物で、"
+            "同じ伝票内の複数商品明細で共有される値ではない）が含まれるため、"
+            "色・サイズ別の内訳を聞かれた場合はこれらの列をそのまま使うこと。"
         ),
         "input_schema": {
             "type": "object",
@@ -62,6 +69,7 @@ TOOLS: list[dict[str, Any]] = [
                 "period_end": {"type": "string", "description": "期間終了日（YYYY-MM-DD形式）"},
                 "customer_keyword": {"type": "string", "description": "顧客名の部分一致キーワード"},
                 "sales_rep_keyword": {"type": "string", "description": "担当者名の部分一致キーワード（営業担当者・営業事務・経理担当・伝票作成者のいずれかに一致すればヒット）。0件、または名前の一致が不確かな場合はfind_similar_name（domain=\"staff\"）で正式名称を確認してから呼び直すこと。"},
+                "model_no_keyword": {"type": "string", "description": "品番・型番の部分一致キーワード（sales.\"型番\"列に対する検索）。"},
             },
         },
     },
