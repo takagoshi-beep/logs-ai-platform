@@ -209,11 +209,20 @@ def test_update_field_mappings_raises_for_unknown_format():
         df.update_field_mappings("fmt-does-not-exist", [])
 
 
-def test_editing_out_a_false_positive_creates_a_governed_learning_candidate():
+def test_editing_out_a_false_positive_creates_a_learning_candidate_record(monkeypatch):
     """The Learning Domain integration added 2026-07-06 (docs/
     architecture.md 14.14): a human removing/renaming an AI-detected
     field is exactly the "AI guessed X, human corrected to Y" signal
-    Learning is meant to observe."""
+    Learning is meant to observe.
+
+    2026-07-15（14.103、Noritsuguの指定）: 以前はGOVERNED分類として
+    Governance承認キューに投入していたが、承認してもされなくても
+    Policy Memoryを読んで実際のロジックを変更する消費者が存在せず、
+    承認という儀式に意味が無いと判明したため撤去した。今は
+    create_candidateだけを呼び、単なる記録（Activity Feedに残る）に
+    留める。分類・スコープ付与・Governance承認キューへの投入は行わない
+    （learning_typeはUNCLASSIFIEDのまま、statusはCANDIDATE_CREATEDの
+    まま）。"""
     def build(ws):
         ws["A1"] = "顧客名："
         ws["A3"] = "ゴミ項目"
@@ -223,12 +232,22 @@ def test_editing_out_a_false_positive_creates_a_governed_learning_candidate():
     edited = [m for m in created["field_mappings"] if m["field_name"] != "ゴミ項目"]
     df.update_field_mappings(created["format_id"], edited)
 
-    from learning.repository import get_candidate_repository
-    candidates = get_candidate_repository().list(learning_type="governed")
+    from learning.models import LearningStatus, LearningType
+    from learning.repository import get_activity_feed, get_approval_queue, get_candidate_repository
+
+    candidates = get_candidate_repository().list()
     assert len(candidates) == 1
     assert "学習連携テスト" in candidates[0].title
     assert candidates[0].evidence[0]["change"] == "removed"
     assert candidates[0].evidence[0]["before"]["field_name"] == "ゴミ項目"
+    # 分類・スコープ付与・Governance承認は行われない（単なる記録のまま）
+    assert candidates[0].learning_type == LearningType.UNCLASSIFIED
+    assert candidates[0].status == LearningStatus.CANDIDATE_CREATED
+    assert get_approval_queue().list_pending() == []
+
+    # Activity Feedには「新しい学習候補を観測した」旨が記録として残る
+    activity = get_activity_feed().list(limit=10)
+    assert any("学習連携テスト" in a.summary for a in activity)
 
 
 def test_editing_with_no_actual_changes_creates_no_learning_candidate():

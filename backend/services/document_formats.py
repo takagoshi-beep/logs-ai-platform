@@ -339,10 +339,18 @@ def _record_field_mapping_corrections_as_learning(
     format, that correction is exactly the kind of signal Learning is
     meant to observe — "the AI guessed X, a human corrected it to Y."
 
-    Recorded as a single GOVERNED (human-review-required) candidate per
-    edit action, scoped to the `document_format_structure_inference`
-    Capability — never auto-applied, since changing detection heuristics
-    company-wide deserves a human decision, not a silent self-modification.
+    2026-07-15（14.103、Noritsuguの指定）: 以前は`classify_and_scope`+
+    `apply_candidate`を呼び、GOVERNED分類としてGovernance承認キューに
+    投入していた。しかし、承認してもされなくても、Policy Memory（承認
+    記録）を読んで実際のAIロジック（document_format_structure_inference
+    のヒューリスティック等）を変更する仕組みがどこにも実装されておらず、
+    承認という儀式に実質的な意味が無いと判明した（Learningモジュール
+    全体が「候補を記録する」以上の消費者を持たない設計になっている
+    ため）。承認キューに入れる意味の無い儀式は撤去し、`create_candidate`
+    だけを呼んで「AIの構造推測をこの内容で人間が修正した」という事実を
+    記録する（Activity Feedにも記録される）に留める。分類・スコープ付与・
+    承認は行わない — 実際にAIロジックを見直す消費者ができた時に、改めて
+    設計し直す。
 
     Best-effort only: any failure here (e.g. the optional `learning`
     module being unavailable) is swallowed so a Learning-recording bug
@@ -378,9 +386,9 @@ def _record_field_mapping_corrections_as_learning(
             return
 
         from learning import service as learning_service
-        from learning.models import LearningScopeType, LearningSourceType
+        from learning.models import LearningSourceType
 
-        candidate = learning_service.create_candidate(
+        learning_service.create_candidate(
             title=f"帳票フォーマット構造推測の人間による修正: {original_record.get('name', '')}",
             description=(
                 f"「{original_record.get('name', '')}」のAI構造推測結果を、"
@@ -395,13 +403,6 @@ def _record_field_mapping_corrections_as_learning(
                 "この修正パターン(evidence参照)を踏まえて見直す候補"
             ),
         )
-        candidate = learning_service.classify_and_scope(
-            candidate,
-            requested_scope=LearningScopeType.CAPABILITY,
-            scope_id=DOCUMENT_FORMAT_CAPABILITY.capability_id,
-            affects_business_rule=True,
-        )
-        learning_service.apply_candidate(candidate)
     except Exception:
         pass
 
