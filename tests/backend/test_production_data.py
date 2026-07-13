@@ -146,7 +146,12 @@ def test_list_sample_staff_names_skips_blank_values(monkeypatch):
 
 
 def test_get_ongoing_samples_by_staff_maps_columns_correctly(monkeypatch):
-    row = ("A社", "商品1", "見積No-1", "2nd見積もり", None)
+    """14.106、Noritsuguが実データで発見・確認済み: SP_ETD/SP_ETA
+    （サンプル専用の出荷/到着予定日）は約15〜18%に入力があり実用に
+    耐えると判明したため、sp_planned_etd/sp_planned_etaとして追加した。
+    ETD/ETA/納品日/EX_FTYは引き続き対象外（14.19の判断が今も正しいと
+    確認済み）。"""
+    row = ("A社", "商品1", "見積No-1", "2nd見積もり", None, "2026-08-01", "2026-08-15")
     fake_conn = _FakeConnection([row])
     monkeypatch.setattr(production_data, "get_connection", lambda: fake_conn)
 
@@ -157,7 +162,39 @@ def test_get_ongoing_samples_by_staff_maps_columns_correctly(monkeypatch):
         "quote_no": "見積No-1",
         "request_content": "2nd見積もり",
         "answered_date": None,
+        "sp_planned_etd": "2026-08-01",
+        "sp_planned_eta": "2026-08-15",
     }]
+
+
+def test_get_ongoing_samples_by_staff_filters_by_eta_period(monkeypatch):
+    """14.106: 「今月到着予定のサンプル」のような質問に、sp_planned_eta
+    （SP_ETA列）で絞り込んで答えられるようにした。"""
+    fake_conn = _FakeConnection([])
+    monkeypatch.setattr(production_data, "get_connection", lambda: fake_conn)
+
+    production_data.get_ongoing_samples_by_staff(
+        "林", eta_period_start="2026-07-01", eta_period_end="2026-07-31"
+    )
+
+    sql = fake_conn._cursor.executed_sql
+    params = fake_conn._cursor.executed_params
+    assert '"SP_ETA" >= %s' in sql
+    assert '"SP_ETA" <= %s' in sql
+    assert params == ("林", "2026-07-01", "2026-07-31")
+
+
+def test_get_ongoing_samples_by_staff_without_period_does_not_filter_on_eta(monkeypatch):
+    fake_conn = _FakeConnection([])
+    monkeypatch.setattr(production_data, "get_connection", lambda: fake_conn)
+
+    production_data.get_ongoing_samples_by_staff("林")
+
+    sql = fake_conn._cursor.executed_sql
+    params = fake_conn._cursor.executed_params
+    assert '"SP_ETA" >=' not in sql
+    assert '"SP_ETA" <=' not in sql
+    assert params == ("林",)
 
 
 def test_get_ongoing_samples_by_staff_returns_empty_for_blank_staff_name():

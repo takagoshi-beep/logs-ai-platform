@@ -1038,10 +1038,17 @@ class ProductionProvider:
             )
         if dataset == "ongoing_samples_by_staff":
             staff_name = params.get("staff_name", "")
-            rows = get_ongoing_samples_by_staff(staff_name)
+            rows = get_ongoing_samples_by_staff(
+                staff_name,
+                eta_period_start=params.get("eta_period_start"),
+                eta_period_end=params.get("eta_period_end"),
+            )
             return _evidence(
                 self.name, dataset, "ok",
-                f"{staff_name}が対応中のサンプル {len(rows)}件を取得",
+                f"{staff_name}が対応中のサンプル {len(rows)}件を取得"
+                "（sp_planned_eta＝サンプル専用の到着予定日。約15〜18%の行にしか"
+                "入力が無いため、空欄の行は「到着予定日は未入力」と正直に伝えること。"
+                "ETD/ETA/納品日は別途存在するが実データがほぼ空欄のため取得していない）",
                 rows,
             )
         return _evidence(self.name, dataset, "unavailable", f"未対応のデータセット: {dataset}")

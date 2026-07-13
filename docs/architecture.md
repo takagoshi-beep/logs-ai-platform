@@ -3633,6 +3633,49 @@ web_search`をモックしていたテスト群（`test_proposal_generation.py`
 全てパス。フロントエンドは`npx tsc --noEmit`・`npm run build`両方で
 確認済み。
 
+## 14.106 サンプル対応の到着予定日(SP_ETA)を活用可能に (2026-07-15)
+
+実チャットで発見された実例(Noritsugu、2026-07-15): 「王家さんが対応中の
+サンプル」の到着予定日を聞かれ、chatが「スケジュール情報はこのデータに
+含まれない(生産管理チームがその項目を運用していないため)」と回答した。
+これは14.19時点の調査結果(ETD/ETA/納品日が実データの99%空欄)に基づく、
+当時としては正確な回答だったが、Noritsuguに実際のスプレッドシートの
+全ヘッダーを確認してもらったところ、`_SAMPLE_COLUMNS`が選択していない
+列の中に、14.19では存在に気づかれていなかった**`SP_ETD`・`SP_ETA`
+（サンプル専用の出荷予定日/到着予定日）**があることが判明した。
+
+実データで確認（対応中＝通知未完了の2629件中）:
+- `ETD`: 1件、`ETA`: 0件、`納品日`: 1件、`EX_FTY`: 0件 → 14.19の判断
+  （信頼できないため扱わない）は今も正しい
+- `SP_ETD`: 471件、`SP_ETA`: 394件（約15〜18%）→ 実用に耐えると判断
+
+**対応:**
+- `production_data.py`の`_SAMPLE_COLUMNS`に`SP_ETD`（`sp_planned_etd`）・
+  `SP_ETA`（`sp_planned_eta`）を追加。
+- `get_ongoing_samples_by_staff`にこの2列を返すよう追加し、
+  `eta_period_start`/`eta_period_end`（`SP_ETA`基準）で期間絞り込み
+  できるようにした（「今月到着予定のサンプル」に直接答えられる）。
+  ただし約8割強の行では`sp_planned_eta`が空欄のままなので、期間指定
+  時にはそれらの行が結果から除外される点に注意が必要。
+- `data_providers.py`の`ProductionProvider.fetch`で新パラメータを
+  中継し、evidenceのsummaryにも「約15〜18%にしか入力が無い」旨を明記。
+- `tool_registry.py`の`get_ongoing_samples_by_staff`ツール説明文を、
+  誤りだった「スケジュール情報は一切無い」という記述から、確認済みの
+  実態（`sp_planned_eta`は使えるが不完全、ETD/ETA/納品日/EX_FTYは
+  今も使えない）に修正。
+
+`reasoning_pipeline.py`のQ6固定パターン（`_q6_ongoing_samples_by_staff`）
+は今回変更していない — そちらの「到着予定日は分からない」という文言は
+ETD/ETA/納品日を指しており、その3列については今も正しい記述のまま
+（sp_planned_eta自体には言及していないので誤りではないが、活用も
+していない。決定的な検証用途を目的とする推論エンジンの性質上、今回は
+chat側のみ対応）。
+
+`tests/backend/test_production_data.py`を更新（SP_ETD/SP_ETAを含む
+新しい列構成の確認）、期間フィルタのテストを2件追加。
+`tests/backend/test_reasoning_pipeline.py`の既存モックを新しい関数
+シグネチャに合わせて修正。489件全てパス。
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.

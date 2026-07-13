@@ -50,6 +50,16 @@ _SAMPLE_COLUMNS = {
     "数量": "quantity",
     "価格": "price",
     "回答日": "answered_date",
+    # 2026-07-15（14.106追加、Noritsuguが実データで確認）: "ETD"・"ETA"・
+    # "納品日"・"EX_FTY"は対応中サンプル2629件中1件以下しか入力されて
+    # おらず、14.19の判断（信頼できないため扱わない）は今も正しい。一方、
+    # 同じシートにある別列"SP_ETD"・"SP_ETA"（サンプル専用の予定出荷日/
+    # 到着予定日、14.19時点では存在に気づかず未調査だった）は、それぞれ
+    # 471件・394件（約15〜18%）に入力があり、実用に耐える。ただし全件
+    # 埋まっているわけではない点は呼び出し元（tool_registry.pyの説明文）
+    # で明示する。
+    "SP_ETD": "sp_planned_etd",
+    "SP_ETA": "sp_planned_eta",
     "通知状況": "notification_status",
     "商品名": "product_name",
 }
@@ -137,26 +147,49 @@ def list_sample_staff_names() -> list[str]:
     return [r[0] for r in rows if r[0]]
 
 
-def get_ongoing_samples_by_staff(staff_name: str) -> list[dict[str, Any]]:
+def get_ongoing_samples_by_staff(
+    staff_name: str, eta_period_start: str | None = None, eta_period_end: str | None = None
+) -> list[dict[str, Any]]:
     """指定した生産担当（回答者）が対応中（＝通知状況が「通知完了」以外）の
     サンプル依頼を全件返す。
 
     「通知状況」は実データ上、空欄／「通知完了」の2値のみ（2026-07-06 時点
-    で確認済み）— 空欄を「まだ対応中」とみなす。届く予定日（ETD/ETA等）は
-    実データの99%が空欄で信頼できないため、この関数では扱わない（意図的に
-    範囲外。docs/architecture.md 参照）。
+    で確認済み）— 空欄を「まだ対応中」とみなす。
+
+    2026-07-15（14.106、Noritsuguが実データで発見・確認済み）:
+    「ETD」・「ETA」・「納品日」・「EX_FTY」は対応中サンプル2629件中
+    1件以下しか入力が無く、14.19の判断（信頼できないため扱わない）は
+    今も正しい。一方、同じシートにある「SP_ETD」・「SP_ETA」（サンプル
+    専用の予定出荷日/到着予定日、14.19時点では存在に気づかず未調査
+    だった）は、それぞれ471件・394件（約15〜18%）に入力があり実用に
+    耐えると確認できたため、`sp_planned_eta`として返すようにした。ただし
+    全件埋まっているわけではない（大半は空欄）ため、呼び出し元
+    （tool_registry.pyの説明文）でその旨を明示すること。
+
+    `eta_period_start`/`eta_period_end`を指定すると、SP_ETAでの期間
+    絞り込みができる（「今月到着予定のサンプル」等の質問向け、
+    2026-07-15追加）。SP_ETAが未入力の行は、期間指定時には結果に
+    含まれない点に注意。
     """
     if not staff_name:
         return []
+    where = 'WHERE "回答者" = %s AND ("通知状況" IS NULL OR "通知状況" = \'\')'
+    args: list[Any] = [staff_name]
+    if eta_period_start:
+        where += ' AND "SP_ETA" >= %s'
+        args.append(eta_period_start)
+    if eta_period_end:
+        where += ' AND "SP_ETA" <= %s'
+        args.append(eta_period_end)
+
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                '''SELECT "仕入先名", "商品名", "見積No", "依頼内容", "回答日"
+                f'''SELECT "仕入先名", "商品名", "見積No", "依頼内容", "回答日", "SP_ETD", "SP_ETA"
                    FROM production_samples
-                   WHERE "回答者" = %s
-                     AND ("通知状況" IS NULL OR "通知状況" = '')''',
-                (staff_name,),
+                   {where}''',
+                tuple(args),
             )
             rows = cur.fetchall()
     except Exception as e:
@@ -172,6 +205,8 @@ def get_ongoing_samples_by_staff(staff_name: str) -> list[dict[str, Any]]:
             "quote_no": r[2],
             "request_content": r[3],
             "answered_date": r[4],
+            "sp_planned_etd": r[5],
+            "sp_planned_eta": r[6],
         }
         for r in rows
     ]

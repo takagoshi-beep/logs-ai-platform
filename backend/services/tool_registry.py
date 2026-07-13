@@ -401,14 +401,23 @@ TOOLS: list[dict[str, Any]] = [
         "name": "get_ongoing_samples_by_staff",
         "description": (
             "指定した生産担当が対応中（未通知）のサンプル依頼を、仕入先・商品名とともに取得する。"
-            "到着予定日（ETD/ETA/納品日）などのスケジュール情報はこのデータに含まれない"
-            "（生産管理チームがその項目を運用していないため）。到着日を聞かれても、"
-            "このツールでは分からないと正直に答えること。"
+            "各行の`sp_planned_eta`（サンプル専用の到着予定日）・`sp_planned_etd`（同、出荷予定日）"
+            "は、2026-07-15にNoritsuguが実データで確認済み: 対応中サンプルの約15〜18%にしか"
+            "入力が無いため、多くの行で空欄になる。空欄の場合は「この案件は到着予定日が"
+            "未入力です」と正直に伝え、断定しないこと（ETD・ETA・納品日という別の列も存在するが、"
+            "実データがほぼ空欄（1件以下）のため取得していない — 2026-07-15以前は"
+            "sp_planned_eta/sp_planned_etdの存在に気づいておらず「スケジュール情報は一切無い」と"
+            "誤って回答していた実例がある）。"
+            "「今月到着予定のサンプル」のように期間で絞り込みたい場合はeta_period_start/"
+            "eta_period_endを指定すること（sp_planned_etaが空欄の行は期間指定時に結果から"
+            "除外される点に注意）。"
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "staff_name": {"type": "string", "description": "生産担当の氏名（get_sample_staff_namesで確認した実在の名前）"},
+                "eta_period_start": {"type": "string", "description": "到着予定日(sp_planned_eta)の期間開始（YYYY-MM-DD形式）"},
+                "eta_period_end": {"type": "string", "description": "到着予定日(sp_planned_eta)の期間終了（YYYY-MM-DD形式）"},
             },
             "required": ["staff_name"],
         },

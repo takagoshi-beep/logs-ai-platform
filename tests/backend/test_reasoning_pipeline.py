@@ -134,7 +134,7 @@ def test_q6_routes_on_matched_staff_name_and_returns_supplier_breakdown(monkeypa
     monkeypatch.setattr(production_data, "list_sample_staff_names", lambda: ["林", "森山"])
     monkeypatch.setattr(
         production_data, "get_ongoing_samples_by_staff",
-        lambda staff_name: [
+        lambda staff_name, eta_period_start=None, eta_period_end=None: [
             {"supplier_name": "A社", "product_name": "商品1", "quote_no": "Q1", "request_content": None, "answered_date": None},
             {"supplier_name": "A社", "product_name": "商品2", "quote_no": "Q2", "request_content": None, "answered_date": None},
             {"supplier_name": "B社", "product_name": "商品3", "quote_no": "Q3", "request_content": None, "answered_date": None},
