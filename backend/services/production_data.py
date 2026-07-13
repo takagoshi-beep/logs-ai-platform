@@ -189,9 +189,12 @@ def get_ongoing_samples_by_staff(
     依頼元に伝え終えたという一つの工程の完了を示すだけで、その後の
     サンプル到着自体は引き続き追跡対象でありうる、という業務実態が
     確認できたため、「通知状況」による絞り込みを撤去した — 指定した
-    担当者が関わる全てのサンプル依頼を返す（通知状況そのものは
-    `notification_status`フィールドとして結果に残し、必要なら呼び出し側
-    で参照できるようにしている）。
+    担当者が関わる全てのサンプル依頼を返す。
+
+    2026-07-15（14.109、Noritsuguの指定）: 「通知状況」の運用自体が
+    現在使われていない機能と確認できたため、14.108でいったん結果に
+    残していた`notification_status`フィールド自体も取得・返却を
+    やめた（絞り込みだけでなく、参照する必要も無い）。
 
     2026-07-15（14.106、Noritsuguが実データで発見・確認済み）:
     「ETD」・「ETA」・「納品日」・「EX_FTY」は実データの大半で1件以下
@@ -217,8 +220,7 @@ def get_ongoing_samples_by_staff(
     try:
         with conn.cursor() as cur:
             cur.execute(
-                '''SELECT "仕入先名", "商品名", "見積No", "依頼内容", "回答日",
-                          "SP_ETD", "SP_ETA", "通知状況"
+                '''SELECT "仕入先名", "商品名", "見積No", "依頼内容", "回答日", "SP_ETD", "SP_ETA"
                    FROM production_samples
                    WHERE "回答者" = %s''',
                 (staff_name,),
@@ -252,7 +254,6 @@ def get_ongoing_samples_by_staff(
             "answered_date": r[4],
             "sp_planned_etd": r[5],
             "sp_planned_eta": r[6],
-            "notification_status": r[7],
         })
 
     return results
