@@ -14,6 +14,7 @@ per project.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from services.supabase_client import get_connection
@@ -147,6 +148,33 @@ def list_sample_staff_names() -> list[str]:
     return [r[0] for r in rows if r[0]]
 
 
+def _parse_flexible_date(value: Any) -> datetime | None:
+    """`SP_ETA`等、スプレッドシート由来の自由記述の日付文字列をパースする。
+
+    2026-07-15（14.107、Noritsuguが実チャットで発見）: `SP_ETA`の実際の
+    保存形式は"2026/07/06"（スラッシュ区切り）だった。以前は
+    `eta_period_start`/`eta_period_end`（"2026-07-01"のようなハイフン
+    区切り）とSQL文字列比較（`"SP_ETA" >= %s`）で直接比較していたが、
+    区切り文字が違うと文字列としての大小関係が実際の日付の前後関係と
+    一致しない（'/'(0x2F)は'-'(0x2D)より大きいため、`<=`の比較が
+    ほぼ常に成立せず、期間内のはずの行が全て除外されていた）。これに
+    より「今月到着予定」の絞り込みが常に0件を返すという実例があった。
+    文字列同士の比較ではなく、実際の日付として解釈してから比較する
+    よう修正した。
+    """
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    for fmt in ("%Y/%m/%d", "%Y-%m-%d", "%Y/%m/%d %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
 def get_ongoing_samples_by_staff(
     staff_name: str, eta_period_start: str | None = None, eta_period_end: str | None = None
 ) -> list[dict[str, Any]]:
@@ -168,28 +196,23 @@ def get_ongoing_samples_by_staff(
 
     `eta_period_start`/`eta_period_end`を指定すると、SP_ETAでの期間
     絞り込みができる（「今月到着予定のサンプル」等の質問向け、
-    2026-07-15追加）。SP_ETAが未入力の行は、期間指定時には結果に
-    含まれない点に注意。
+    2026-07-15追加、14.107でSQL文字列比較からPython側の日付パース
+    比較に修正 — 実データの区切り文字（"/"）とフィルタ引数の区切り文字
+    （"-"）が異なり、文字列比較では正しく絞り込めなかったため）。
+    SP_ETAが未入力、または日付としてパースできない行は、期間指定時には
+    結果に含まれない点に注意。
     """
     if not staff_name:
         return []
-    where = 'WHERE "回答者" = %s AND ("通知状況" IS NULL OR "通知状況" = \'\')'
-    args: list[Any] = [staff_name]
-    if eta_period_start:
-        where += ' AND "SP_ETA" >= %s'
-        args.append(eta_period_start)
-    if eta_period_end:
-        where += ' AND "SP_ETA" <= %s'
-        args.append(eta_period_end)
 
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                f'''SELECT "仕入先名", "商品名", "見積No", "依頼内容", "回答日", "SP_ETD", "SP_ETA"
+                '''SELECT "仕入先名", "商品名", "見積No", "依頼内容", "回答日", "SP_ETD", "SP_ETA"
                    FROM production_samples
-                   {where}''',
-                tuple(args),
+                   WHERE "回答者" = %s AND ("通知状況" IS NULL OR "通知状況" = '')''',
+                (staff_name,),
             )
             rows = cur.fetchall()
     except Exception as e:
@@ -198,8 +221,21 @@ def get_ongoing_samples_by_staff(
     finally:
         conn.close()
 
-    return [
-        {
+    period_start_dt = _parse_flexible_date(eta_period_start)
+    period_end_dt = _parse_flexible_date(eta_period_end)
+
+    results = []
+    for r in rows:
+        sp_planned_eta = r[6]
+        if period_start_dt or period_end_dt:
+            eta_dt = _parse_flexible_date(sp_planned_eta)
+            if eta_dt is None:
+                continue  # 期間指定時、パースできない/未入力の行は除外
+            if period_start_dt and eta_dt < period_start_dt:
+                continue
+            if period_end_dt and eta_dt > period_end_dt:
+                continue
+        results.append({
             "supplier_name": r[0],
             "product_name": r[1],
             "quote_no": r[2],
@@ -207,6 +243,6 @@ def get_ongoing_samples_by_staff(
             "answered_date": r[4],
             "sp_planned_etd": r[5],
             "sp_planned_eta": r[6],
-        }
-        for r in rows
-    ]
+        })
+
+    return results

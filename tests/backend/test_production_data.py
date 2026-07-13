@@ -6,6 +6,8 @@ tests verify the SQL/column-mapping logic, not real database behavior
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 from services import production_data
 
 
@@ -167,21 +169,35 @@ def test_get_ongoing_samples_by_staff_maps_columns_correctly(monkeypatch):
     }]
 
 
-def test_get_ongoing_samples_by_staff_filters_by_eta_period(monkeypatch):
-    """14.106: 「今月到着予定のサンプル」のような質問に、sp_planned_eta
-    （SP_ETA列）で絞り込んで答えられるようにした。"""
-    fake_conn = _FakeConnection([])
+def test_get_ongoing_samples_by_staff_filters_by_eta_period_using_slash_format(monkeypatch):
+    """14.107、Noritsuguが実チャットで発見・確認済み: SP_ETAの実際の
+    保存形式は"2026/07/06"のようなスラッシュ区切りだった。以前は
+    "2026-07-01"のようなハイフン区切りとSQL文字列比較していたため、
+    区切り文字の違いにより<=の比較がほぼ常に不成立となり、期間内の
+    はずの行が実際には0件返っていた実例があった（王家さんの案件、
+    2026-07-15）。日付としてパースしてから比較するよう修正。"""
+    rows = [
+        ("A社", "商品1", "Q1", None, None, "2026/06/20", "2026/07/06"),  # 期間内
+        ("B社", "商品2", "Q2", None, None, "2026/06/25", "2026/08/10"),  # 期間外(8月)
+        ("C社", "商品3", "Q3", None, None, None, None),  # SP_ETA未入力
+    ]
+    fake_conn = _FakeConnection(rows)
     monkeypatch.setattr(production_data, "get_connection", lambda: fake_conn)
 
-    production_data.get_ongoing_samples_by_staff(
+    result = production_data.get_ongoing_samples_by_staff(
         "林", eta_period_start="2026-07-01", eta_period_end="2026-07-31"
     )
 
+    # SQLクエリ自体はもう日付で絞り込んでいない（絞り込みはPython側で行う）
     sql = fake_conn._cursor.executed_sql
-    params = fake_conn._cursor.executed_params
-    assert '"SP_ETA" >= %s' in sql
-    assert '"SP_ETA" <= %s' in sql
-    assert params == ("林", "2026-07-01", "2026-07-31")
+    assert '"SP_ETA" >=' not in sql
+    assert '"SP_ETA" <=' not in sql
+    assert fake_conn._cursor.executed_params == ("林",)
+
+    # 実際に期間内の1件だけが返る
+    assert len(result) == 1
+    assert result[0]["supplier_name"] == "A社"
+    assert result[0]["sp_planned_eta"] == "2026/07/06"
 
 
 def test_get_ongoing_samples_by_staff_without_period_does_not_filter_on_eta(monkeypatch):
@@ -195,6 +211,14 @@ def test_get_ongoing_samples_by_staff_without_period_does_not_filter_on_eta(monk
     assert '"SP_ETA" >=' not in sql
     assert '"SP_ETA" <=' not in sql
     assert params == ("林",)
+
+
+def test_parse_flexible_date_handles_slash_and_hyphen_formats():
+    assert production_data._parse_flexible_date("2026/07/06") == datetime(2026, 7, 6)
+    assert production_data._parse_flexible_date("2026-07-06") == datetime(2026, 7, 6)
+    assert production_data._parse_flexible_date(None) is None
+    assert production_data._parse_flexible_date("") is None
+    assert production_data._parse_flexible_date("不明") is None
 
 
 def test_get_ongoing_samples_by_staff_returns_empty_for_blank_staff_name():
