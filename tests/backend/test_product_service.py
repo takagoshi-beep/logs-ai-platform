@@ -439,7 +439,7 @@ def test_get_product_detail_includes_planned_and_actual_cost_fields(monkeypatch)
     assert master["発注単価通貨"] == "USD"
     assert master["予定輸入経費率"] == 1.18
     assert master["予定原価単価"] == 236.0  # 2360.0（売上原価=合計） ÷ 10（発注数量）
-    assert master["予定原価単価通貨"] == "USD"  # 14.84: 発注単価と同じ行・同じ通貨列の値
+    assert master["予定原価単価通貨"] == "円"  # 14.113: 売上原価は常に円換算済みの値と判明
     assert master["実績輸入経費率"] == pytest.approx(3460 / 3000)
     assert master["実績原価単価"] == 173.0  # 3460（諸掛込金額円の合計） ÷ 20（仕入数量pcsの合計）
 
