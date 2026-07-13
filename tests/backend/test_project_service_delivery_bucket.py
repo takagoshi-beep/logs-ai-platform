@@ -385,6 +385,94 @@ def test_attach_existence_data_collects_all_purchase_ids_for_the_same_po(monkeyp
     assert set(po_dicts[0]["purchase_ids"]) == {101, 102}  # 両方のIDが保持される
 
 
+def test_attach_existence_data_deduplicates_purchase_ids(monkeypatch):
+    """14.112、Noritsuguが実データで発見・指定: 明細単位で読み取っている
+    ため、同じ仕入IDが複数回含まれることがあった実例の修正。"""
+    from services.project_service import ProjectService
+
+    class _RoutingConn:
+        def cursor(self):
+            sql_holder = {}
+
+            class _Cur:
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, *a):
+                    return False
+
+                def execute(self_inner, sql, params=None):
+                    sql_holder["sql"] = sql
+
+                def fetchall(self_inner):
+                    sql = sql_holder.get("sql", "")
+                    if "FROM sales" in sql:
+                        return []
+                    if "\"ID\", \"POnum\"" in sql:
+                        return [
+                            (101, "PO-1", datetime(2026, 5, 1)),
+                            (101, "PO-1", datetime(2026, 5, 1)),  # 重複
+                        ]
+                    return []
+
+            return _Cur()
+
+        def close(self):
+            pass
+
+    service = ProjectService()
+    po_dicts = [{"LOGS_CODE": 9999.0, "PO_No": "PO-1"}]
+    service._attach_existence_data(_RoutingConn(), po_dicts)
+
+    assert po_dicts[0]["purchase_ids"] == [101]  # 重複が除去される
+
+
+def test_attach_existence_data_deduplicates_and_caps_sales_ids_to_latest_5(monkeypatch):
+    """14.112、Noritsuguの指定: 売上IDは重複排除した上で、日付が新しい順に
+    最新5件までに絞る（商品によっては売上が大量になりうるため）。"""
+    from services.project_service import ProjectService
+
+    class _RoutingConn:
+        def cursor(self):
+            sql_holder = {}
+
+            class _Cur:
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, *a):
+                    return False
+
+                def execute(self_inner, sql, params=None):
+                    sql_holder["sql"] = sql
+
+                def fetchall(self_inner):
+                    sql = sql_holder.get("sql", "")
+                    if "FROM sales" in sql:
+                        return [
+                            (1, 5145.0, datetime(2026, 1, 1)),
+                            (1, 5145.0, datetime(2026, 1, 1)),  # 重複
+                            (2, 5145.0, datetime(2026, 2, 1)),
+                            (3, 5145.0, datetime(2026, 3, 1)),
+                            (4, 5145.0, datetime(2026, 4, 1)),
+                            (5, 5145.0, datetime(2026, 5, 1)),
+                            (6, 5145.0, datetime(2026, 6, 1)),  # 最新（6件目）
+                        ]
+                    return []
+
+            return _Cur()
+
+        def close(self):
+            pass
+
+    service = ProjectService()
+    po_dicts = [{"LOGS_CODE": 5145.0, "PO_No": "PO-1"}]
+    service._attach_existence_data(_RoutingConn(), po_dicts)
+
+    # 重複(ID=1)を除いた上で、日付が新しい順に最新5件（6,5,4,3,2）だけが残る
+    assert po_dicts[0]["sales_ids"] == [6, 5, 4, 3, 2]
+
+
 def test_po_dict_to_project_data_uses_delivery_column_not_customer_delivery_date():
     """2026-07-10（14.69、Noritsuguの指摘の修正）: 納期判定は以前
     "顧客納品日"を使っていたが、リピート発注の際に営業担当者が前回POの

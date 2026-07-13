@@ -190,7 +190,7 @@ export default function ProductDetailPage({ params }: Params) {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
-          <SectionHeader title="売上履歴" subtitle="この商品の売上明細です。" />
+          <SectionHeader title="売上履歴" subtitle="この商品の売上明細です（最新5件、同一売上IDは1件にまとめています）。" />
           <div className="mt-3 space-y-2">
             {product.sales.length > 0 ? (
               product.sales.map((s, idx) => (
@@ -209,7 +209,7 @@ export default function ProductDetailPage({ params }: Params) {
         </Card>
 
         <Card>
-          <SectionHeader title="仕入履歴" subtitle="この商品の仕入明細です（明細レベルの担当者を優先表示）。" />
+          <SectionHeader title="仕入履歴" subtitle="この商品の仕入明細です（明細レベルの担当者を優先表示、同一仕入IDは1件にまとめています）。" />
           <div className="mt-3 space-y-2">
             {product.purchases.length > 0 ? (
               product.purchases.map((p, idx) => (

@@ -412,14 +412,14 @@ def test_get_product_detail_includes_planned_and_actual_cost_fields(monkeypatch)
         (1, "914-1", "US_LOGS Inc.", "山田太郎", None, None, None, 10, 1000, "2026-01-01", 100.0, 1.10, 1100.0, 1),
     ]
 
-    purchase_cols = ["仕入先名", "営業担当者名", "営業事務担当者名", "生産管理担当者名",
+    purchase_cols = ["ID", "仕入先名", "営業担当者名", "営業事務担当者名", "生産管理担当者名",
                       "仕入数量pcs", "仕入金額円", "伝票日", "経費率", "実際原価", "諸掛込金額円"]
     purchase_rows = [
         # 2件の仕入明細行（カラー違い等）を合算する:
         # 諸掛込金額円 2360+1100=3460, 仕入金額円 2000+1000=3000, 仕入数量pcs 10+10=20
         # → 実績輸入経費率 = 3460/3000 ≒ 1.1533..., 実績原価単価 = 3460/20 = 173.0
-        ("1064STUDIO", "山田太郎", None, "木村美菜", 10, 2000, "2026-02-10", 1.20, 240.0, 2360),
-        ("1064STUDIO", "山田太郎", None, "木村美菜", 10, 1000, "2026-01-15", 1.10, 110.0, 1100),
+        (301, "1064STUDIO", "山田太郎", None, "木村美菜", 10, 2000, "2026-02-10", 1.20, 240.0, 2360),
+        (302, "1064STUDIO", "山田太郎", None, "木村美菜", 10, 1000, "2026-01-15", 1.10, 110.0, 1100),
     ]
 
     monkeypatch.setattr(
@@ -665,6 +665,72 @@ def test_get_product_detail_aggregates_all_sources(monkeypatch):
         "purchase_recorded": True,
         "sample_requested": True,
     }
+
+
+def test_get_product_detail_deduplicates_sales_and_purchases_by_id(monkeypatch):
+    """14.112、Noritsuguが実データで発見・指定: 明細単位で読み取っている
+    ため、同じ売上ID/仕入IDが複数回表示されていた実例の修正。"ID"が
+    同じ行は最初の1件（既に日付の新しい順でソート済みのため最新の1件）
+    だけを残す。"""
+    master_cols = ["ID", "LOGS_CODE", "Sample_CODE", "商品名"]
+    master_rows = [(101, "5145", None, "Baseball Cap")]
+    po_cols = ["ID", "PO_No", "顧客名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "企画担当者名", "発注数量", "発注金額", "PO発行日"]
+
+    sales_cols = ["ID", "得意先名", "営業担当者名", "事務処理担当者名", "経理担当者名", "数量pcs", "売上金額", "売上入力日"]
+    sales_rows = [
+        (5001, "US_LOGS Inc.", "山田太郎", None, None, 10, 2000, "2026-02-01"),
+        (5001, "US_LOGS Inc.", "山田太郎", None, None, 10, 2000, "2026-02-01"),  # 重複
+        (5002, "SHIPS_L", "山田太郎", None, None, 5, 1000, "2026-01-20"),
+    ]
+    purchase_cols = ["ID", "仕入先名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "仕入数量pcs", "仕入金額円", "伝票日"]
+    purchase_rows = [
+        (6001, "1064STUDIO", "山田太郎", None, "木村美菜", 10, 500, "2026-01-15"),
+        (6001, "1064STUDIO", "山田太郎", None, "木村美菜", 10, 500, "2026-01-15"),  # 重複
+    ]
+
+    monkeypatch.setattr(
+        product_service, "get_connection",
+        lambda: _SequentialFakeConnection([
+            (master_rows, master_cols),
+            ([], po_cols),
+            (sales_rows, sales_cols),
+            (purchase_rows, purchase_cols),
+        ]),
+    )
+
+    detail = product_service.get_product_detail("101")
+
+    assert [s["ID"] for s in detail["sales"]] == [5001, 5002]  # 重複が除去される
+    assert [p["ID"] for p in detail["purchases"]] == [6001]
+
+
+def test_get_product_detail_caps_sales_history_to_latest_5(monkeypatch):
+    """14.112、Noritsuguの指定: 売上IDが大量にある商品向けに、売上履歴は
+    最新5件までに絞る（重複排除後の件数）。"""
+    master_cols = ["ID", "LOGS_CODE", "Sample_CODE", "商品名"]
+    master_rows = [(101, "5145", None, "Baseball Cap")]
+    po_cols = ["ID", "PO_No", "顧客名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "企画担当者名", "発注数量", "発注金額", "PO発行日"]
+
+    sales_cols = ["ID", "得意先名", "営業担当者名", "事務処理担当者名", "経理担当者名", "数量pcs", "売上金額", "売上入力日"]
+    sales_rows = [(5000 + i, f"顧客{i}", "山田太郎", None, None, 1, 100, f"2026-01-{i:02d}") for i in range(1, 8)]
+
+    monkeypatch.setattr(
+        product_service, "get_connection",
+        lambda: _SequentialFakeConnection([
+            (master_rows, master_cols),
+            ([], po_cols),
+            (sales_rows, sales_cols),
+            ([], ["ID", "仕入先名"]),
+        ]),
+    )
+
+    detail = product_service.get_product_detail("101")
+
+    assert len(detail["sales"]) == 5
+    # クエリ自体が既に日付の新しい順のため、先頭5件がそのまま残る
+    assert [s["ID"] for s in detail["sales"]] == [5001, 5002, 5003, 5004, 5005]
+    # 上限に絞られていても、実際に売上記録があること自体は正しく判定される
+    assert detail["status"]["sales_recorded"] is True
 
 
 def test_get_product_detail_groups_purchase_orders_by_po_no(monkeypatch):

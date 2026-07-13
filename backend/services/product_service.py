@@ -197,6 +197,29 @@ def _group_po_dicts_by_po_no(po_dicts: list[dict[str, Any]]) -> list[dict[str, A
     return [grouped[po_no] for po_no in order]
 
 
+def _dedupe_by_id(rows: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
+    """"ID"（sales."ID"・purchases."ID"）が同じ行が複数存在する場合、
+    最初に出現したもの（呼び出し元は既に日付の新しい順でソート済みの
+    ため、実質「最新の1件」）だけを残す（2026-07-15、14.112、
+    Noritsuguが実データで発見: 明細単位で読み取っているため、同じ
+    仕入ID/売上IDが複数回表示されていた）。
+
+    `limit`を指定すると、重複排除後の件数をさらに絞り込む（売上履歴が
+    大量になる商品向け、Noritsuguの指定で既定は最新5件）。
+    """
+    seen: set[Any] = set()
+    deduped: list[dict[str, Any]] = []
+    for row in rows:
+        row_id = row.get("ID")
+        if row_id in seen:
+            continue
+        seen.add(row_id)
+        deduped.append(row)
+        if limit is not None and len(deduped) >= limit:
+            break
+    return deduped
+
+
 def get_all_products(limit: int = 50, offset: int = 0, search: str | None = None) -> list[dict[str, Any]]:
     """商品マスタ全件から、Sample_CODE降順でlimit件・offsetオフセットで
     取得する（scope=all、2026-07-09・14.54、Noritsuguの指定：サーバー
@@ -497,7 +520,7 @@ def get_product_detail(product_id: str) -> dict[str, Any] | None:
     # 見つかった値を採用。無ければ仕入履歴を見る。2026-07-09、
     # 営業事務担当者を商品にも紐づけたいという要望への対応）。
     po_dicts = _rows_to_dicts(po_rows, po_cols)
-    purchase_dicts = _rows_to_dicts(purchase_rows, purchase_cols)
+    purchase_dicts = _dedupe_by_id(_rows_to_dicts(purchase_rows, purchase_cols))
     sales_admin = next((r["営業事務担当者名"] for r in po_dicts if r.get("営業事務担当者名")), None)
     if not sales_admin:
         sales_admin = next((r["営業事務担当者名"] for r in purchase_dicts if r.get("営業事務担当者名")), None)
@@ -562,7 +585,7 @@ def get_product_detail(product_id: str) -> dict[str, Any] | None:
     return {
         "master": master,
         "purchase_orders": _group_po_dicts_by_po_no(po_dicts),
-        "sales": _rows_to_dicts(sales_rows, sales_cols),
+        "sales": _dedupe_by_id(_rows_to_dicts(sales_rows, sales_cols), limit=5),
         "purchases": purchase_dicts,
         "samples": sample_rows,
         "status": {

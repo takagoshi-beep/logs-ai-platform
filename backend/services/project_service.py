@@ -361,10 +361,34 @@ class ProjectService:
             # 2026-07-15（14.111、Noritsuguの指定）: 活動履歴の「売上登録」
             # イベントに実際の売上IDを併記できるよう、納期判定に使ったのと
             # 同じ絞り込み後の売上IDを全て保持する（複数件ありうる）。
-            d["sales_ids"] = [sid for _, sid in candidate_records]
+            #
+            # 2026-07-15（14.112、Noritsuguが実データで発見・指定）:
+            # 明細単位で読み取っているため、同じ売上IDが複数回含まれる
+            # ことがあった（重複排除）。また、売上IDは商品によって大量に
+            # なりうるため、日付が新しい順に最新5件までに絞る。
+            candidate_records_sorted = sorted(candidate_records, key=lambda r: r[0], reverse=True)
+            seen_sales_ids: set[Any] = set()
+            deduped_sales_ids: list[Any] = []
+            for _, sid in candidate_records_sorted:
+                if sid in seen_sales_ids:
+                    continue
+                seen_sales_ids.add(sid)
+                deduped_sales_ids.append(sid)
+                if len(deduped_sales_ids) >= 5:
+                    break
+            d["sales_ids"] = deduped_sales_ids
             d["purchase_date"] = purchase_dates_by_po.get(d.get("PO_No"))
-            # 14.111: 同様に、このPO番号に属する仕入IDを全て保持する。
-            d["purchase_ids"] = [pid for _, pid in purchase_records_by_po.get(d.get("PO_No"), [])]
+            # 2026-07-15（14.111・14.112、Noritsuguの指定）: このPO番号に
+            # 属する仕入IDを保持する。同じIDが複数回含まれることがある
+            # ため重複排除する（仕入は件数が少ないため件数の上限は設けない）。
+            seen_purchase_ids: set[Any] = set()
+            deduped_purchase_ids: list[Any] = []
+            for _, pid in purchase_records_by_po.get(d.get("PO_No"), []):
+                if pid in seen_purchase_ids:
+                    continue
+                seen_purchase_ids.add(pid)
+                deduped_purchase_ids.append(pid)
+            d["purchase_ids"] = deduped_purchase_ids
             d["actual_import_cost_ratio"] = actual_import_cost_ratios_by_po.get(d.get("PO_No"))
             d["actual_cost_total"] = actual_cost_totals_by_po.get(d.get("PO_No"))
             d["production_closed"] = d.get("PO_No") in closed_po_numbers

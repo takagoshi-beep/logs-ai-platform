@@ -3849,6 +3849,32 @@ aggregates_all_sources`を、sales/purchasesのfixtureに"ID"列を追加し
 493件全てパス。フロントエンドは`npx tsc --noEmit`・`npm run build`
 両方で確認済み。
 
+## 14.112 売上ID・仕入IDの重複排除、売上IDは最新5件までに制限 (2026-07-15)
+
+14.111デプロイ後、Noritsuguが実際に確認したところ、明細単位で読み取って
+いるため、同じ仕入ID/売上IDが複数回表示される実例が見つかった。
+
+**商品詳細ページ(`product_service.py`)。** `_dedupe_by_id()`を新設し、
+`"ID"`が同じ行は最初の1件（クエリが既に日付の新しい順にソート済みの
+ため、実質「最新の1件」）だけを残すようにした。売上履歴・仕入履歴・
+実績原価/実績輸入経費率の加重平均計算（`purchase_dicts`）全てに適用。
+さらに売上履歴は、商品によっては件数が大量になりうるため、重複排除後の
+上位5件までに絞った（`limit=5`）。
+
+**案件詳細ページの活動履歴(`project_service.py`)。** `attach_existence_
+data`が組み立てる`sales_ids`/`purchase_ids`にも同様に重複排除を適用。
+売上IDは日付が新しい順にソートした上で、重複排除後の最新5件までに
+制限した（仕入IDは1つのPOあたりの件数が少数のため件数上限は設けて
+いない）。
+
+`tests/backend/test_product_service.py`に2件追加（重複排除の確認、
+売上履歴が最新5件に絞られることの確認、既存の実績原価計算テストの
+purchase_cols/purchase_rowsフィクスチャに"ID"列を追加）、
+`tests/backend/test_project_service_delivery_bucket.py`に2件追加
+（仕入IDの重複排除確認、売上IDの重複排除+最新5件への絞り込み確認）。
+497件全てパス。フロントエンドは`npx tsc --noEmit`・`npm run build`
+両方で確認済み。
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.
