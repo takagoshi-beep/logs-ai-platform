@@ -459,14 +459,14 @@ def get_product_detail(product_id: str) -> dict[str, Any] | None:
             )
             sales_rows, sales_cols = _query_all(
                 conn,
-                'SELECT "得意先名", "営業担当者名", "事務処理担当者名", "経理担当者名", '
+                'SELECT "ID", "得意先名", "営業担当者名", "事務処理担当者名", "経理担当者名", '
                 '"数量pcs", "売上金額", "売上入力日" '
                 'FROM sales WHERE "LOGS_CODE" = %s ORDER BY "売上入力日" DESC',
                 (logs_code,),
             )
             purchase_rows, purchase_cols = _query_all(
                 conn,
-                'SELECT "仕入先名", '
+                'SELECT "ID", "仕入先名", '
                 'COALESCE(NULLIF("明細営業担当者名", \'\'), "営業担当者名") AS "営業担当者名", '
                 'COALESCE(NULLIF("明細営業事務担当者名", \'\'), "営業事務担当者名") AS "営業事務担当者名", '
                 '"生産管理担当者名", "仕入数量pcs", "仕入金額円", "伝票日", '

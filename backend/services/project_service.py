@@ -159,6 +159,8 @@ class ProjectService:
                 production_closed=bool(po_dict.get("production_closed", False)),
                 sales_date=self._parse_date(po_dict.get("sales_date")),
                 purchase_date=self._parse_date(po_dict.get("purchase_date")),
+                sales_ids=po_dict.get("sales_ids") or [],
+                purchase_ids=po_dict.get("purchase_ids") or [],
                 project_name=po_dict.get("案件名") or None,
                 planned_import_cost_ratio=float(po_dict["輸入経費率"]) if po_dict.get("輸入経費率") is not None else None,
                 actual_import_cost_ratio=float(po_dict["actual_import_cost_ratio"]) if po_dict.get("actual_import_cost_ratio") is not None else None,
@@ -233,7 +235,8 @@ class ProjectService:
         # 見て「確定済み」と誤判定してしまっていた。個別の売上日を全て
         # 保持しておき、各POのDelivery_納品日（①で信頼できる納期に
         # 変更済み）以降の売上に絞り込んでから判定するよう修正した。
-        sales_dates_by_logs_code: dict[str, list[Any]] = {}
+        sales_records_by_logs_code: dict[str, list[tuple[Any, Any]]] = {}  # key -> [(売上入力日, ID), ...]
+        purchase_records_by_po: dict[str, list[tuple[Any, Any]]] = {}  # PO_No -> [(伝票日, ID), ...]
         purchase_dates_by_po: dict[str, Any] = {}
         actual_import_cost_ratios_by_po: dict[str, Any] = {}
         actual_cost_totals_by_po: dict[str, Any] = {}
@@ -260,35 +263,45 @@ class ProjectService:
 
         try:
             if raw_logs_codes:
+                # 2026-07-15（14.111、Noritsuguの指定）: 活動履歴の「仕入登録」
+                # 「売上登録」イベントに、実際の仕入ID・売上ID（purchases."ID"・
+                # sales."ID"）を併記できるよう、日付だけでなくIDも一緒に取得する。
                 with timed(f"attach_existence_data.sales_query(n={len(raw_logs_codes)})"):
                     with conn.cursor() as cur:
                         if earliest_relevant_delivery_date:
                             cur.execute(
-                                'SELECT "LOGS_CODE", "売上入力日" FROM sales '
+                                'SELECT "ID", "LOGS_CODE", "売上入力日" FROM sales '
                                 'WHERE "LOGS_CODE" = ANY(%s) AND "売上入力日" >= %s',
                                 (raw_logs_codes, earliest_relevant_delivery_date),
                             )
                         else:
                             cur.execute(
-                                'SELECT "LOGS_CODE", "売上入力日" FROM sales '
+                                'SELECT "ID", "LOGS_CODE", "売上入力日" FROM sales '
                                 'WHERE "LOGS_CODE" = ANY(%s)',
                                 (raw_logs_codes,),
                             )
-                        for logs_code, sale_date in cur.fetchall():
+                        for sale_id, logs_code, sale_date in cur.fetchall():
                             key = self._format_logs_code_for_project(logs_code)
-                            sales_dates_by_logs_code.setdefault(key, []).append(sale_date)
+                            sales_records_by_logs_code.setdefault(key, []).append((sale_date, sale_id))
 
             if po_numbers:
                 # 仕入登録（活動履歴・状態バッジ用）はPO単位（14.41）。
+                # 14.111: MAX("伝票日")だけでなく仕入ID自体も活動履歴に
+                # 併記したいため、集計せず明細行のまま取得しPython側で
+                # 最新日付を求める（件数はPOあたり数件程度で軽微）。
                 with timed(f"attach_existence_data.purchase_date_query(n={len(po_numbers)})"):
                     with conn.cursor() as cur:
                         cur.execute(
-                            'SELECT "POnum", MAX("伝票日") FROM purchases '
-                            'WHERE "POnum" = ANY(%s) GROUP BY "POnum"',
+                            'SELECT "ID", "POnum", "伝票日" FROM purchases '
+                            'WHERE "POnum" = ANY(%s)',
                             (po_numbers,),
                         )
-                        for po_no, max_date in cur.fetchall():
-                            purchase_dates_by_po[po_no] = max_date
+                        for purchase_id, po_no, purchase_date in cur.fetchall():
+                            purchase_records_by_po.setdefault(po_no, []).append((purchase_date, purchase_id))
+                            if purchase_date and (
+                                po_no not in purchase_dates_by_po or purchase_date > purchase_dates_by_po[po_no]
+                            ):
+                                purchase_dates_by_po[po_no] = purchase_date
 
                 # 2026-07-09（14.49・14.52修正、Noritsuguの指定）: 実績原価
                 # （予定vs確定の粗利比較用）・実績輸入経費率は、同じPO
@@ -336,12 +349,22 @@ class ProjectService:
             # POは、従来通り全ての売上を対象にする（フォールバック、
             # 納期不明の案件を過度に厳しく扱わないため）。
             delivery_date = self._parse_date(d.get("Delivery_納品日"))
-            candidate_dates = [self._parse_date(dt) for dt in sales_dates_by_logs_code.get(logs_code, [])]
-            candidate_dates = [dt for dt in candidate_dates if dt is not None]
+            sales_records = sales_records_by_logs_code.get(logs_code, [])
+            candidate_records = [
+                (self._parse_date(dt), sid) for dt, sid in sales_records
+            ]
+            candidate_records = [(dt, sid) for dt, sid in candidate_records if dt is not None]
             if delivery_date:
-                candidate_dates = [dt for dt in candidate_dates if dt >= delivery_date]
+                candidate_records = [(dt, sid) for dt, sid in candidate_records if dt >= delivery_date]
+            candidate_dates = [dt for dt, _ in candidate_records]
             d["sales_date"] = max(candidate_dates) if candidate_dates else None
+            # 2026-07-15（14.111、Noritsuguの指定）: 活動履歴の「売上登録」
+            # イベントに実際の売上IDを併記できるよう、納期判定に使ったのと
+            # 同じ絞り込み後の売上IDを全て保持する（複数件ありうる）。
+            d["sales_ids"] = [sid for _, sid in candidate_records]
             d["purchase_date"] = purchase_dates_by_po.get(d.get("PO_No"))
+            # 14.111: 同様に、このPO番号に属する仕入IDを全て保持する。
+            d["purchase_ids"] = [pid for _, pid in purchase_records_by_po.get(d.get("PO_No"), [])]
             d["actual_import_cost_ratio"] = actual_import_cost_ratios_by_po.get(d.get("PO_No"))
             d["actual_cost_total"] = actual_cost_totals_by_po.get(d.get("PO_No"))
             d["production_closed"] = d.get("PO_No") in closed_po_numbers
@@ -450,6 +473,10 @@ class ProjectService:
         event_id += 1
 
         if data.has_purchase and data.purchase_date:
+            # 2026-07-15（14.111、Noritsuguの指定）: 活動履歴の「仕入登録」に
+            # 実際の仕入ID（purchases."ID"）を併記する。1つのPOに複数の
+            # 仕入明細が紐づくことがあるため、複数件ならカンマ区切りで表示。
+            purchase_ids_text = "、".join(str(pid) for pid in data.purchase_ids) if data.purchase_ids else "不明"
             events.add_event(ProjectEvent(
                 event_id=f"evt-{event_id}",
                 project_id=data.project_id,
@@ -457,7 +484,7 @@ class ProjectService:
                 event_time=data.purchase_date,
                 source_table="purchases",
                 business_meaning="仕入登録 - 原価確定",
-                impact_summary="原価が確定し、粗利を計算可能に",
+                impact_summary=f"原価が確定し、粗利を計算可能に（仕入ID: {purchase_ids_text}）",
                 trace_id=trace_id,
                 event_source_type="actual",
                 before_state=ProjectState.INITIATED,
@@ -467,6 +494,8 @@ class ProjectService:
             event_id += 1
 
         if data.has_sales and data.sales_date:
+            # 14.111: 同様に、「売上登録」に実際の売上ID（sales."ID"）を併記する。
+            sales_ids_text = "、".join(str(sid) for sid in data.sales_ids) if data.sales_ids else "不明"
             events.add_event(ProjectEvent(
                 event_id=f"evt-{event_id}",
                 project_id=data.project_id,
@@ -474,7 +503,7 @@ class ProjectService:
                 event_time=data.sales_date,
                 source_table="sales",
                 business_meaning="売上登録 - 納品完了と判断",
-                impact_summary="売上が確定し、納品済みと判断",
+                impact_summary=f"売上が確定し、納品済みと判断（売上ID: {sales_ids_text}）",
                 trace_id=trace_id,
                 event_source_type="actual",
                 after_state=ProjectState.COMPLETED,

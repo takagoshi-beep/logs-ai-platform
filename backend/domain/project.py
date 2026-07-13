@@ -226,6 +226,12 @@ class ProjectData:
     sales_admin_name: Optional[str] = None
     production_staff_name: Optional[str] = None
     planning_staff_name: Optional[str] = None
+    # 2026-07-15（14.111追加、Noritsuguの指定）: 活動履歴の「仕入登録」
+    # 「売上登録」イベントに、実際の仕入ID・売上ID（purchases."ID"・
+    # sales."ID"）を併記できるようにする。1つのPOに複数の仕入/売上明細が
+    # 紐づくことがあるため、単一値ではなくリストで持つ。
+    sales_ids: list[Any] = field(default_factory=list)
+    purchase_ids: list[Any] = field(default_factory=list)
 
     @property
     def days_until_delivery(self) -> int:

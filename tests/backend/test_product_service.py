@@ -626,11 +626,14 @@ def test_get_product_detail_aggregates_all_sources(monkeypatch):
     po_cols = ["ID", "PO_No", "顧客名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "企画担当者名", "発注数量", "発注金額", "PO発行日"]
     po_rows = [(1, "914-1", "US_LOGS Inc.", "山田太郎", None, None, None, 10, 1000, "2026-01-01")]
 
-    sales_cols = ["得意先名", "営業担当者名", "事務処理担当者名", "経理担当者名", "数量pcs", "売上金額", "売上入力日"]
-    sales_rows = [("US_LOGS Inc.", "山田太郎", None, None, 10, 2000, "2026-02-01")]
+    # 2026-07-15（14.111、Noritsuguの指定）: 売上履歴・仕入履歴に売上ID・
+    # 仕入ID（sales."ID"・purchases."ID"）を表示できるよう、SELECT列に
+    # "ID"を追加した。
+    sales_cols = ["ID", "得意先名", "営業担当者名", "事務処理担当者名", "経理担当者名", "数量pcs", "売上金額", "売上入力日"]
+    sales_rows = [(5001, "US_LOGS Inc.", "山田太郎", None, None, 10, 2000, "2026-02-01")]
 
-    purchase_cols = ["仕入先名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "仕入数量pcs", "仕入金額円", "伝票日"]
-    purchase_rows = [("1064STUDIO", "山田太郎", None, "木村美菜", 10, 500, "2026-01-15")]
+    purchase_cols = ["ID", "仕入先名", "営業担当者名", "営業事務担当者名", "生産管理担当者名", "仕入数量pcs", "仕入金額円", "伝票日"]
+    purchase_rows = [(6001, "1064STUDIO", "山田太郎", None, "木村美菜", 10, 500, "2026-01-15")]
 
     sample_cols = ["見積No", "仕入先名", "依頼内容", "カラー", "サイズ", "数量", "回答者", "依頼元", "回答日", "通知状況"]
     sample_rows = [("Q1", "1064STUDIO", "サンプル依頼", "black", "M", 1, "木村美菜", "山田太郎", "2025-12-01", "通知完了")]
@@ -652,7 +655,9 @@ def test_get_product_detail_aggregates_all_sources(monkeypatch):
     assert detail["master"]["商品分類名"] == "帽子"
     assert detail["purchase_orders"][0]["PO_No"] == "914-1"
     assert detail["sales"][0]["得意先名"] == "US_LOGS Inc."
+    assert detail["sales"][0]["ID"] == 5001
     assert detail["purchases"][0]["仕入先名"] == "1064STUDIO"
+    assert detail["purchases"][0]["ID"] == 6001
     assert detail["samples"][0]["回答者"] == "木村美菜"
     assert detail["status"] == {
         "po_issued": True,

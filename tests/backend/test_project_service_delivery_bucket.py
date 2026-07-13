@@ -87,6 +87,37 @@ def test_events_uses_real_purchase_and_sales_dates_not_now():
     assert by_type[ProjectEventType.SALES_REGISTERED].event_time == real_sales_date
 
 
+def test_events_include_purchase_and_sales_ids_in_impact_summary():
+    """14.111、Noritsuguの指定: 活動履歴の「仕入登録」「売上登録」に、
+    実際の仕入ID・売上IDを併記する。"""
+    data = _make_data(
+        has_purchase=True, purchase_date=datetime(2026, 1, 15), purchase_ids=[501, 502],
+        has_sales=True, sales_date=datetime(2026, 2, 1), sales_ids=[9001],
+    )
+
+    events = ProjectService()._generate_project_events(data, "trace-1")
+    by_type = {e.event_type: e for e in events.events}
+
+    assert "501" in by_type[ProjectEventType.PURCHASE_REGISTERED].impact_summary
+    assert "502" in by_type[ProjectEventType.PURCHASE_REGISTERED].impact_summary
+    assert "9001" in by_type[ProjectEventType.SALES_REGISTERED].impact_summary
+
+
+def test_events_show_unknown_when_ids_missing_despite_has_purchase_sales():
+    """仕入/売上ありと判定されているのにID一覧が空の場合（想定外の
+    データ不整合）でも、断定せず「不明」と表示すること。"""
+    data = _make_data(
+        has_purchase=True, purchase_date=datetime(2026, 1, 15), purchase_ids=[],
+        has_sales=True, sales_date=datetime(2026, 2, 1), sales_ids=[],
+    )
+
+    events = ProjectService()._generate_project_events(data, "trace-1")
+    by_type = {e.event_type: e for e in events.events}
+
+    assert "不明" in by_type[ProjectEventType.PURCHASE_REGISTERED].impact_summary
+    assert "不明" in by_type[ProjectEventType.SALES_REGISTERED].impact_summary
+
+
 def test_po_dict_to_project_data_parses_project_name_and_planned_cost_ratio():
     """2026-07-09（14.40、Noritsuguの指定）: 案件名（purchase_orders."案件名"）
     と予定輸入経費率（purchase_orders."輸入経費率"）を取り込む。"""
@@ -236,9 +267,9 @@ def test_attach_existence_data_uses_max_date_not_min(monkeypatch):
                 def fetchall(self_inner):
                     sql = sql_holder.get("sql", "")
                     if "FROM sales" in sql:
-                        return [(5145.0, datetime(2026, 6, 1))]
-                    if "MAX(\"伝票日\")" in sql:
-                        return [("PO-1", datetime(2026, 5, 1))]
+                        return [(1, 5145.0, datetime(2026, 6, 1))]
+                    if "\"ID\", \"POnum\"" in sql:
+                        return [(1, "PO-1", datetime(2026, 5, 1))]
                     if "COALESCE(\"諸掛込金額円\"" in sql:
                         return [("PO-1", 1150.0, 1000.0)]  # 1150/1000 = 1.15
                     return []
@@ -252,11 +283,16 @@ def test_attach_existence_data_uses_max_date_not_min(monkeypatch):
     po_dicts = [{"LOGS_CODE": 5145.0, "PO_No": "PO-1"}]
     service._attach_existence_data(_RoutingConn(), po_dicts)
 
-    assert any("MAX" in sql for sql in calls)
+    # 2026-07-15（14.111）: 仕入日はSQL側のMAX集計からPython側の計算に
+    # 変更した（仕入IDも一緒に取得するため）。「SQLがMAXを使っているか」
+    # という実装詳細ではなく、実際に最新の日付が採用されることそのものを
+    # 検証する。
     assert not any("MIN(" in sql for sql in calls)
     assert po_dicts[0]["actual_import_cost_ratio"] == 1.15
     assert po_dicts[0]["sales_date"] == datetime(2026, 6, 1)
     assert po_dicts[0]["purchase_date"] == datetime(2026, 5, 1)
+    assert po_dicts[0]["sales_ids"] == [1]
+    assert po_dicts[0]["purchase_ids"] == [1]
 
 
 def test_attach_existence_data_matches_purchase_by_po_number_not_logs_code(monkeypatch):
@@ -286,8 +322,8 @@ def test_attach_existence_data_matches_purchase_by_po_number_not_logs_code(monke
                     sql = sql_holder.get("sql", "")
                     if "FROM sales" in sql:
                         return []
-                    if "MAX(\"伝票日\")" in sql:
-                        return [("PO-1", datetime(2026, 5, 1))]  # 同じPOの別商品の仕入
+                    if "\"ID\", \"POnum\"" in sql:
+                        return [(1, "PO-1", datetime(2026, 5, 1))]  # 同じPOの別商品の仕入
                     if "COALESCE(\"諸掛込金額円\"" in sql:
                         return [("PO-1", 1300.0, 1000.0)]
                     return []
@@ -303,6 +339,50 @@ def test_attach_existence_data_matches_purchase_by_po_number_not_logs_code(monke
 
     assert po_dicts[0]["purchase_date"] == datetime(2026, 5, 1)
     assert po_dicts[0]["actual_import_cost_ratio"] == 1.30
+
+
+def test_attach_existence_data_collects_all_purchase_ids_for_the_same_po(monkeypatch):
+    """14.111、Noritsuguの指定: 1つのPOに複数の仕入明細（例: カラー/
+    サイズ違い）が紐づく場合、活動履歴に併記する仕入IDは1件だけに絞らず
+    全て保持する。"""
+    from services.project_service import ProjectService
+
+    class _RoutingConn:
+        def cursor(self):
+            sql_holder = {}
+
+            class _Cur:
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, *a):
+                    return False
+
+                def execute(self_inner, sql, params=None):
+                    sql_holder["sql"] = sql
+
+                def fetchall(self_inner):
+                    sql = sql_holder.get("sql", "")
+                    if "FROM sales" in sql:
+                        return []
+                    if "\"ID\", \"POnum\"" in sql:
+                        return [
+                            (101, "PO-1", datetime(2026, 5, 1)),
+                            (102, "PO-1", datetime(2026, 5, 3)),  # 同じPOの別明細（より新しい日付）
+                        ]
+                    return []
+
+            return _Cur()
+
+        def close(self):
+            pass
+
+    service = ProjectService()
+    po_dicts = [{"LOGS_CODE": 9999.0, "PO_No": "PO-1"}]
+    service._attach_existence_data(_RoutingConn(), po_dicts)
+
+    assert po_dicts[0]["purchase_date"] == datetime(2026, 5, 3)  # 最新日付が採用される
+    assert set(po_dicts[0]["purchase_ids"]) == {101, 102}  # 両方のIDが保持される
 
 
 def test_po_dict_to_project_data_uses_delivery_column_not_customer_delivery_date():
@@ -435,8 +515,8 @@ def test_attach_existence_data_ignores_sales_before_this_pos_delivery_date(monke
                         # 同じ商品の過去の別注文分の売上（古い）と、
                         # 今回の注文分の売上（新しい）が両方存在する。
                         return [
-                            (5145.0, datetime(2024, 1, 10)),  # 過去の別POの売上
-                            (5145.0, datetime(2026, 9, 5)),   # 今回のPO分の売上
+                            (1, 5145.0, datetime(2024, 1, 10)),  # 過去の別POの売上
+                            (2, 5145.0, datetime(2026, 9, 5)),   # 今回のPO分の売上
                         ]
                     return []
 
