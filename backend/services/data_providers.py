@@ -1045,10 +1045,13 @@ class ProductionProvider:
             )
             return _evidence(
                 self.name, dataset, "ok",
-                f"{staff_name}が対応中のサンプル {len(rows)}件を取得"
-                "（sp_planned_eta＝サンプル専用の到着予定日。約15〜18%の行にしか"
+                f"{staff_name}が扱っているサンプル依頼 {len(rows)}件を取得"
+                "（2026-07-15、14.108で「通知状況」による絞り込みを撤去 — 通知完了後も"
+                "到着予定日の追跡が必要なケースがあると確認されたため、通知状況に関わらず"
+                "全件を返す。notification_statusフィールドで各行の通知状況自体は確認できる）。"
+                "sp_planned_eta＝サンプル専用の到着予定日。約15〜18%の行にしか"
                 "入力が無いため、空欄の行は「到着予定日は未入力」と正直に伝えること。"
-                "ETD/ETA/納品日は別途存在するが実データがほぼ空欄のため取得していない）",
+                "ETD/ETA/納品日は別途存在するが実データがほぼ空欄のため取得していない",
                 rows,
             )
         return _evidence(self.name, dataset, "unavailable", f"未対応のデータセット: {dataset}")

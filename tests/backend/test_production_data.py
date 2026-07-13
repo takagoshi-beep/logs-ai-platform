@@ -152,8 +152,9 @@ def test_get_ongoing_samples_by_staff_maps_columns_correctly(monkeypatch):
     （サンプル専用の出荷/到着予定日）は約15〜18%に入力があり実用に
     耐えると判明したため、sp_planned_etd/sp_planned_etaとして追加した。
     ETD/ETA/納品日/EX_FTYは引き続き対象外（14.19の判断が今も正しいと
-    確認済み）。"""
-    row = ("A社", "商品1", "見積No-1", "2nd見積もり", None, "2026-08-01", "2026-08-15")
+    確認済み）。14.108でnotification_status（通知状況）も結果に含める
+    ようにした（絞り込みには使わないが、参照できるようにするため）。"""
+    row = ("A社", "商品1", "見積No-1", "2nd見積もり", None, "2026-08-01", "2026-08-15", "通知完了")
     fake_conn = _FakeConnection([row])
     monkeypatch.setattr(production_data, "get_connection", lambda: fake_conn)
 
@@ -166,6 +167,7 @@ def test_get_ongoing_samples_by_staff_maps_columns_correctly(monkeypatch):
         "answered_date": None,
         "sp_planned_etd": "2026-08-01",
         "sp_planned_eta": "2026-08-15",
+        "notification_status": "通知完了",
     }]
 
 
@@ -175,11 +177,14 @@ def test_get_ongoing_samples_by_staff_filters_by_eta_period_using_slash_format(m
     "2026-07-01"のようなハイフン区切りとSQL文字列比較していたため、
     区切り文字の違いにより<=の比較がほぼ常に不成立となり、期間内の
     はずの行が実際には0件返っていた実例があった（王家さんの案件、
-    2026-07-15）。日付としてパースしてから比較するよう修正。"""
+    2026-07-15）。日付としてパースしてから比較するよう修正。
+
+    14.108: サンプル#1763の実例（通知状況="通知完了"だが到着予定日が
+    今後の日付）を反映し、通知完了の行も期間内なら含まれることを確認。"""
     rows = [
-        ("A社", "商品1", "Q1", None, None, "2026/06/20", "2026/07/06"),  # 期間内
-        ("B社", "商品2", "Q2", None, None, "2026/06/25", "2026/08/10"),  # 期間外(8月)
-        ("C社", "商品3", "Q3", None, None, None, None),  # SP_ETA未入力
+        ("A社", "商品1", "Q1", None, None, "2026/06/20", "2026/07/06", "通知完了"),  # 期間内(通知完了でも対象)
+        ("B社", "商品2", "Q2", None, None, "2026/06/25", "2026/08/10", None),  # 期間外(8月)
+        ("C社", "商品3", "Q3", None, None, None, None, None),  # SP_ETA未入力
     ]
     fake_conn = _FakeConnection(rows)
     monkeypatch.setattr(production_data, "get_connection", lambda: fake_conn)
@@ -188,10 +193,13 @@ def test_get_ongoing_samples_by_staff_filters_by_eta_period_using_slash_format(m
         "林", eta_period_start="2026-07-01", eta_period_end="2026-07-31"
     )
 
-    # SQLクエリ自体はもう日付で絞り込んでいない（絞り込みはPython側で行う）
+    # SQLクエリ自体はもう日付でも通知状況でも絞り込んでいない
+    # （日付の絞り込みはPython側で行う。通知状況は14.108で撤去した。
+    # SELECT句には"通知状況"列自体は含まれる＝取得はするが、絞り込みはしない）
     sql = fake_conn._cursor.executed_sql
     assert '"SP_ETA" >=' not in sql
     assert '"SP_ETA" <=' not in sql
+    assert "通知状況" not in sql.split("WHERE")[1]
     assert fake_conn._cursor.executed_params == ("林",)
 
     # 実際に期間内の1件だけが返る

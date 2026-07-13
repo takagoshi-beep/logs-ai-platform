@@ -105,16 +105,25 @@ def _fallback() -> dict[str, Any]:
 
 
 def _q6_ongoing_samples_by_staff(message: str) -> dict[str, Any]:
-    """生産担当（サンプル依頼の回答者）名からの、対応中サンプル照会。
+    """生産担当（サンプル依頼の回答者）名からの、サンプル依頼照会。
 
     Q5の顧客名マッチングと同じ設計: 質問文と実在の生産担当名を突き合わせ、
     一致すれば production_samples を実データで検索する。
 
     2026-07-06 に確認済みの制約（正直に対象外とする）: 「いつ届くか」に
     あたるETD/ETA/納品日は実データの99%が空欄で信頼できないため、この
-    関数は「対応中かどうか（通知状況が空欄）」と「仕入先・商品」までしか
-    扱わない。到着予定日を尋ねられても答えられない — 生産管理チームが
-    その項目を運用していないという実態を、曖昧にせずそのまま伝える。
+    関数はそれらを扱わない。到着予定日を尋ねられても答えられない —
+    生産管理チームがその項目を運用していないという実態を、曖昧にせず
+    そのまま伝える（chat側は2026-07-15、14.106でSP_ETD/SP_ETAという
+    別列を発見し活用しているが、推論エンジンは決定的な検証用途という
+    性質上、今回は対象を広げていない）。
+
+    2026-07-15（14.108、Noritsuguの指定）: 以前は「通知状況が空欄」の
+    サンプルだけを「対応中」とみなして絞り込んでいたが、通知完了後も
+    到着予定日の追跡が必要なケースがあると確認されたため、
+    `get_ongoing_samples_by_staff`自体がこの絞り込みを撤去した
+    （data_providers.py参照）。この関数もそれに合わせて「対応中」という
+    表現をやめ、単に「生産担当が扱っているサンプル」とする。
     """
     from services.data_providers import ProductionProvider
 
@@ -139,21 +148,21 @@ def _q6_ongoing_samples_by_staff(message: str) -> dict[str, Any]:
         },
         "hypothesis": [
             {
-                "statement": f"質問文に含まれる生産担当名「{matched_staff}」で、対応中（通知未完了）のサンプル依頼を検索すれば回答できる",
+                "statement": f"質問文に含まれる生産担当名「{matched_staff}」で、その担当者が扱っているサンプル依頼を検索すれば回答できる",
                 "confidence": 0.7,
             },
         ],
         "knowledge_used": [],
         "decision_gate": {
             "verdict": "データ取得後に判定",
-            "reason": "対応中サンプルの件数に応じて、回答の作り方が変わる",
+            "reason": "検索結果の件数に応じて、回答の作り方が変わる",
             "proceed_conditions": ["検索結果が0件以上であること"],
             "confidence": 0.7,
         },
         "required_data": [
             {
                 "priority": 1,
-                "item": f"{matched_staff}が対応中のサンプル検索",
+                "item": f"{matched_staff}が扱っているサンプル検索",
                 "provider": "production",
                 "dataset": "ongoing_samples_by_staff",
                 "params": {"staff_name": matched_staff},
@@ -164,12 +173,13 @@ def _q6_ongoing_samples_by_staff(message: str) -> dict[str, Any]:
         ],
         "assumption": [
             {
-                "statement": "「通知状況」が空欄のサンプルを「対応中（オンゴーイング）」とみなす（「通知完了」以外は全て対応中と仮定）",
+                "statement": "「通知状況」による絞り込みは行わない（2026-07-15、14.108 — 通知完了後も"
+                             "到着予定日の追跡が必要なケースがあるため、指定した生産担当が扱う全てのサンプルを対象にする）",
                 "confidence": 0.7,
             },
         ],
         "plan": [
-            {"stage": "情報取得", "action": f"生産担当「{matched_staff}」でproduction_samplesを検索する（通知状況が空欄のもの）"},
+            {"stage": "情報取得", "action": f"生産担当「{matched_staff}」でproduction_samplesを検索する（通知状況は問わない）"},
             {"stage": "回答", "action": "仕入先ごとの件数と、代表的な商品名を回答する"},
         ],
     }

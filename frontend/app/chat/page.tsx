@@ -123,9 +123,19 @@ export default function ChatPage() {
       <Card>
         <div className="space-y-4">
           {messages.length === 0 && (
-            <p className="text-sm text-sub">
-              例: 「今月のOEM事業の粗利を教えて」「林さんが対応中のサンプルは？」
-            </p>
+            <div className="text-sm text-sub">
+              <p className="font-medium text-ink">こんなことが調べられます:</p>
+              <ul className="mt-2 list-disc space-y-1 pl-5">
+                <li>売上・粗利(顧客別、商品分類別、事業分類別、期間別)</li>
+                <li>仕入・原価(輸入コスト、諸掛の内訳)</li>
+                <li>案件(PO)の状況・納期・担当者</li>
+                <li>商品情報、商品ごとの発注・仕入・売上履歴</li>
+                <li>予算・売上予定(担当者別、期間別)</li>
+                <li>サンプル対応状況(担当者別、到着予定日)</li>
+                <li>顧客担当者の連絡先</li>
+                <li>Gmail・Slackの検索(連携している場合)</li>
+              </ul>
+            </div>
           )}
           {messages.map((msg, idx) => (
             <div
@@ -156,7 +166,7 @@ export default function ChatPage() {
                 handleSubmit();
               }
             }}
-            placeholder="例: Fanaticsの納期リスクについて次の対応を相談したい"
+            placeholder="質問を入力してください"
             rows={3}
             className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
           />
