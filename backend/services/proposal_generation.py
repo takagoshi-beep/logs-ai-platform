@@ -183,9 +183,9 @@ def draft_proposal(
     external_sources: list[str] = []
     try:
         if include_external:
-            draft_text, external_sources = generate_text_with_web_search(prompt, max_tokens=3000)
+            draft_text, external_sources = generate_text_with_web_search(prompt, max_tokens=3000, feature="proposal_draft")
         else:
-            draft_text = generate_text(prompt, max_tokens=2000)
+            draft_text = generate_text(prompt, max_tokens=2000, feature="proposal_draft")
     except Exception as e:
         capability_registry.record_execution_result(
             execution_id=execution.execution_id, outputs={},

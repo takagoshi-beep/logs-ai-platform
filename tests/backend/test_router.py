@@ -153,7 +153,7 @@ def test_proposals_draft_via_http(monkeypatch):
     monkeypatch.setattr(pg, "fetch_required_data", lambda required_data: [])
     # ProposalDraftRequest.include_external のデフォルトは True なので、
     # 実際に呼ばれるのは generate_text ではなく generate_text_with_web_search 側。
-    monkeypatch.setattr(pg, "generate_text_with_web_search", lambda prompt, max_tokens=3000: ("ダミードラフト", []))
+    monkeypatch.setattr(pg, "generate_text_with_web_search", lambda prompt, max_tokens=3000, feature=None: ("ダミードラフト", []))
 
     response = _client().post(
         "/api/proposals/draft",

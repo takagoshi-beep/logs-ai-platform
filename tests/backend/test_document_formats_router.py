@@ -111,7 +111,7 @@ def test_parse_instruction_maps_free_text_to_field_values(monkeypatch):
     )
 
     import services.document_formats as df
-    monkeypatch.setattr(df, "generate_text", lambda prompt, max_tokens=1000: '{"顧客名": "US_LOGS Inc."}')
+    monkeypatch.setattr(df, "generate_text", lambda prompt, max_tokens=1000, feature=None: '{"顧客名": "US_LOGS Inc."}')
 
     response = client.post(
         f"/document-formats/{created['format_id']}/parse-instruction",

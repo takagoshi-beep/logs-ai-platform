@@ -20,8 +20,8 @@ def _tool_use_block(name: str, tool_input: dict, block_id: str = "tool-1") -> Si
     return SimpleNamespace(type="tool_use", name=name, input=tool_input, id=block_id)
 
 
-def _response(stop_reason: str, content: list) -> SimpleNamespace:
-    return SimpleNamespace(stop_reason=stop_reason, content=content)
+def _response(stop_reason: str, content: list, usage: SimpleNamespace | None = None) -> SimpleNamespace:
+    return SimpleNamespace(stop_reason=stop_reason, content=content, usage=usage)
 
 
 class _FakeClient:
@@ -127,3 +127,67 @@ def test_generate_with_tools_passes_system_prompt_through(monkeypatch):
     )
     assert fake_client.calls[0]["system"] == "テストシステムプロンプト"
     assert fake_client.calls[0]["tools"] == [{"name": "dummy"}]
+
+
+def _usage(input_tokens: int, output_tokens: int) -> SimpleNamespace:
+    return SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens)
+
+
+def test_generate_with_tools_records_usage_once_per_round(monkeypatch):
+    """14.105: 各ラウンドが実際のAPI呼び出し1回に相当するため、
+    ラウンドごとに利用量を記録する（feature="chat"）。"""
+    fake_client = _FakeClient([
+        _response("tool_use", [_tool_use_block("get_sales_lines", {})], usage=_usage(100, 20)),
+        _response("end_turn", [_text_block("回答")], usage=_usage(150, 30)),
+    ])
+    monkeypatch.setattr(llm_client, "_get_client", lambda: fake_client)
+
+    recorded = []
+    monkeypatch.setattr(
+        "services.usage_tracking.record_usage",
+        lambda feature, model, input_tokens, output_tokens: recorded.append(
+            (feature, model, input_tokens, output_tokens)
+        ),
+    )
+
+    llm_client.generate_with_tools(
+        messages=[{"role": "user", "content": "今月の売上は？"}],
+        tools=[],
+        tool_executor=lambda name, inp: '{"status": "ok"}',
+    )
+
+    assert len(recorded) == 2  # ラウンドごとに1件ずつ
+    assert recorded[0] == ("chat", llm_client.DEFAULT_MODEL, 100, 20)
+    assert recorded[1] == ("chat", llm_client.DEFAULT_MODEL, 150, 30)
+
+
+def test_generate_with_tools_missing_usage_does_not_crash(monkeypatch):
+    """usage属性が無い（テストのフェイクレスポンス等）場合でもクラッシュ
+    しないことの確認。"""
+    fake_client = _FakeClient([_response("end_turn", [_text_block("ok")])])  # usage=None
+    monkeypatch.setattr(llm_client, "_get_client", lambda: fake_client)
+
+    text, _ = llm_client.generate_with_tools(
+        messages=[{"role": "user", "content": "test"}],
+        tools=[],
+        tool_executor=lambda name, inp: "{}",
+    )
+    assert text == "ok"  # 例外を投げず、通常通り応答が返る
+
+
+def test_generate_text_records_usage_with_given_feature(monkeypatch):
+    fake_client = SimpleNamespace(
+        messages=SimpleNamespace(
+            create=lambda **kwargs: _response("end_turn", [_text_block("ドラフト本文")], usage=_usage(50, 10))
+        )
+    )
+    monkeypatch.setattr(llm_client, "_get_client", lambda: fake_client)
+
+    recorded = []
+    monkeypatch.setattr(
+        "services.usage_tracking.record_usage",
+        lambda feature, model, input_tokens, output_tokens: recorded.append(feature),
+    )
+
+    llm_client.generate_text("プロンプト", feature="proposal_draft")
+    assert recorded == ["proposal_draft"]

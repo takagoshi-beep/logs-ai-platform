@@ -35,11 +35,38 @@ def _get_client():
     return _client
 
 
-def generate_text(prompt: str, system: Optional[str] = None, max_tokens: int = 1500) -> str:
+def _record_usage_from_response(feature: str, response) -> None:
+    """レスポンスの`usage`（input_tokens/output_tokens）を利用量ログに
+    記録する（2026-07-15、14.105）。usage属性が無い/壊れている場合でも
+    本来のレスポンス処理を止めないよう、ここで例外を握りつぶす。"""
+    try:
+        from services.usage_tracking import record_usage
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return
+        record_usage(
+            feature=feature,
+            model=DEFAULT_MODEL,
+            input_tokens=getattr(usage, "input_tokens", 0) or 0,
+            output_tokens=getattr(usage, "output_tokens", 0) or 0,
+        )
+    except Exception as e:
+        print(f"[llm_client] Failed to record usage: {e}")
+
+
+def generate_text(
+    prompt: str, system: Optional[str] = None, max_tokens: int = 1500, feature: str = "unknown"
+) -> str:
     """Single-turn text generation. Raises RuntimeError if no API key is
     configured, or whatever the `anthropic` SDK raises on API failure —
     callers must handle both and must never silently substitute a fake
-    response."""
+    response.
+
+    `feature`（2026-07-15、14.105追加）: 利用量ダッシュボード
+    （services/usage_tracking.py）で機能別に内訳を出すためのラベル。
+    呼び出し元ごとに具体的な名前を渡すこと（例: "proposal_draft",
+    "document_format_structure_inference"）。
+    """
     client = _get_client()
     kwargs: dict = {
         "model": DEFAULT_MODEL,
@@ -49,11 +76,12 @@ def generate_text(prompt: str, system: Optional[str] = None, max_tokens: int = 1
     if system:
         kwargs["system"] = system
     response = client.messages.create(**kwargs)
+    _record_usage_from_response(feature, response)
     return response.content[0].text
 
 
 def generate_text_with_web_search(
-    prompt: str, system: Optional[str] = None, max_tokens: int = 3000
+    prompt: str, system: Optional[str] = None, max_tokens: int = 3000, feature: str = "unknown"
 ) -> tuple[str, list[str]]:
     """Text generation with Claude's server-side web search tool enabled,
     for tasks that genuinely need external/current information (e.g.
@@ -64,6 +92,9 @@ def generate_text_with_web_search(
     search actually cited, extracted from the response's citation blocks,
     so callers can show what was actually looked up rather than trusting
     the prose alone.
+
+    `feature`（2026-07-15、14.105追加）: `generate_text`と同じ、利用量
+    ダッシュボード用のラベル。
     """
     client = _get_client()
     kwargs: dict = {
@@ -75,6 +106,7 @@ def generate_text_with_web_search(
     if system:
         kwargs["system"] = system
     response = client.messages.create(**kwargs)
+    _record_usage_from_response(feature, response)
 
     text_parts: list[str] = []
     sources: list[str] = []
@@ -110,6 +142,9 @@ def generate_with_tools(
     `[{"tool": name, "input": input}, ...]` in call order, so callers
     can show what was actually looked up (transparency), not just trust
     the final prose.
+
+    2026-07-15（14.105追加）: 各ラウンドは実際のAPI呼び出し1回に相当
+    するため、ラウンドごとに利用量を記録する（feature="chat"）。
     """
     client = _get_client()
     conversation = list(messages)
@@ -126,6 +161,7 @@ def generate_with_tools(
         if system:
             kwargs["system"] = system
         response = client.messages.create(**kwargs)
+        _record_usage_from_response("chat", response)
 
         if response.stop_reason != "tool_use":
             text_parts = [b.text for b in response.content if getattr(b, "type", None) == "text"]

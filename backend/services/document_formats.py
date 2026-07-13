@@ -521,7 +521,7 @@ def parse_instruction_to_fields(format_id: str, instruction: str) -> dict[str, A
 出力例: {{"顧客名": "US_LOGS Inc.", "数量": "50"}}"""
 
     try:
-        raw_response = generate_text(prompt, max_tokens=1000)
+        raw_response = generate_text(prompt, max_tokens=1000, feature="document_format_instruction_parsing")
     except Exception as e:
         capability_registry.record_execution_result(
             execution_id=execution.execution_id, outputs={},

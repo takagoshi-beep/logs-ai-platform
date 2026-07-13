@@ -22,7 +22,7 @@ def _no_real_internal_history_fetch(monkeypatch):
 
 
 def test_draft_proposal_returns_draft_text_from_mocked_llm(monkeypatch):
-    monkeypatch.setattr(pg, "generate_text", lambda prompt, max_tokens=1500, system=None: "ダミードラフト本文")
+    monkeypatch.setattr(pg, "generate_text", lambda prompt, max_tokens=1500, system=None, feature=None: "ダミードラフト本文")
 
     result = pg.draft_proposal("US_LOGS Inc.", "テスト提案")
     assert result["draft_text"] == "ダミードラフト本文"
@@ -33,7 +33,7 @@ def test_draft_proposal_is_always_queued_for_review_never_auto_approved(monkeypa
     """governance_level=HIGH per the module's own docstring — the
     Blueprint Chapter 11 Approval Levels table says HIGH never
     auto-approves regardless of confidence."""
-    monkeypatch.setattr(pg, "generate_text", lambda prompt, max_tokens=1500, system=None: "テスト")
+    monkeypatch.setattr(pg, "generate_text", lambda prompt, max_tokens=1500, system=None, feature=None: "テスト")
 
     result = pg.draft_proposal("テスト商事", "テスト目的")
     assert result["status"] == "QUEUED_FOR_REVIEW"
@@ -41,7 +41,7 @@ def test_draft_proposal_is_always_queued_for_review_never_auto_approved(monkeypa
 
 
 def test_draft_proposal_reports_no_internal_history_honestly(monkeypatch):
-    monkeypatch.setattr(pg, "generate_text", lambda prompt, max_tokens=1500, system=None: "テスト")
+    monkeypatch.setattr(pg, "generate_text", lambda prompt, max_tokens=1500, system=None, feature=None: "テスト")
     result = pg.draft_proposal("架空の会社", "テスト目的")
     assert "見つかりませんでした" in result["internal_history_used"]
 
@@ -49,7 +49,7 @@ def test_draft_proposal_reports_no_internal_history_honestly(monkeypatch):
 def test_draft_proposal_uses_web_search_when_include_external_true(monkeypatch):
     monkeypatch.setattr(
         pg, "generate_text_with_web_search",
-        lambda prompt, max_tokens=3000: ("web検索込みのドラフト", ["https://example.com/a", "https://example.com/b"]),
+        lambda prompt, max_tokens=3000, feature=None: ("web検索込みのドラフト", ["https://example.com/a", "https://example.com/b"]),
     )
     # include_external=True のときは generate_text ではなく generate_text_with_web_search が呼ばれる。
     # 呼ばれてはいけない方は例外を投げるようにして、誤って呼ばれたら検知できるようにする。
@@ -67,7 +67,7 @@ def test_draft_proposal_without_include_external_does_not_call_web_search(monkey
     def _should_not_be_called(*a, **k):
         raise AssertionError("generate_text_with_web_search should not be called when include_external=False")
     monkeypatch.setattr(pg, "generate_text_with_web_search", _should_not_be_called)
-    monkeypatch.setattr(pg, "generate_text", lambda prompt, max_tokens=1500, system=None: "テスト")
+    monkeypatch.setattr(pg, "generate_text", lambda prompt, max_tokens=1500, system=None, feature=None: "テスト")
 
     result = pg.draft_proposal("US_LOGS Inc.", "テスト提案", include_external=False)
     assert result["external_sources"] == []
@@ -78,7 +78,7 @@ def test_draft_proposal_include_image_has_no_effect(monkeypatch):
     """Image generation was disabled as a business decision (2026-07-05):
     users should use their own generative-AI tools individually. Passing
     include_image=True must have zero effect."""
-    monkeypatch.setattr(pg, "generate_text", lambda prompt, max_tokens=1500, system=None: "テスト")
+    monkeypatch.setattr(pg, "generate_text", lambda prompt, max_tokens=1500, system=None, feature=None: "テスト")
 
     result = pg.draft_proposal("US_LOGS Inc.", "テスト提案", include_image=True)
     assert result["image_path"] is None
@@ -86,7 +86,7 @@ def test_draft_proposal_include_image_has_no_effect(monkeypatch):
 
 
 def test_draft_proposal_failure_marks_execution_failed_and_reraises(monkeypatch):
-    def _boom(prompt, max_tokens=1500, system=None):
+    def _boom(prompt, max_tokens=1500, system=None, feature=None):
         raise RuntimeError("LLM API error")
     monkeypatch.setattr(pg, "generate_text", _boom)
 
@@ -104,7 +104,7 @@ def test_draft_proposal_failure_marks_execution_failed_and_reraises(monkeypatch)
 
 
 def test_draft_proposal_registers_capability_execution_with_customer_and_purpose(monkeypatch):
-    monkeypatch.setattr(pg, "generate_text", lambda prompt, max_tokens=1500, system=None: "テスト")
+    monkeypatch.setattr(pg, "generate_text", lambda prompt, max_tokens=1500, system=None, feature=None: "テスト")
     pg.draft_proposal("US_LOGS Inc.", "来期の追加発注に向けた提案")
 
     from services.capability_instance import registry

@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
-from api.auth_router import require_login
+from api.auth_router import require_login, require_admin
 from api.schemas import ChatRequest, ProductEvent, ProposalDraftRequest
 from business.today_actions import get_home_payload as get_home_payload_business
 from services.proposal_generation import draft_proposal
@@ -111,6 +111,14 @@ def execution(execution_id: str) -> dict:
 @router.get("/evaluation/summary")
 def evaluation_summary() -> dict:
     return get_evaluation_summary()
+
+
+@router.get("/usage/summary")
+def usage_summary(user: dict = Depends(require_admin)) -> dict:
+    """Claude APIの利用量（トークン数・概算コスト）サマリー
+    （2026-07-15、14.105）。管理者のみアクセス可能。"""
+    from services.usage_tracking import get_usage_summary
+    return get_usage_summary()
 
 
 @router.get("/debug/trace/{trace_id}")

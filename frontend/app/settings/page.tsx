@@ -3,7 +3,8 @@
 import { Card, SectionHeader, Button, Badge } from "@/components/design-system";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { getEvaluationSummary } from "@/lib/api-client";
+import { useAuth } from "@/lib/auth-context";
+import { getEvaluationSummary, getUsageSummary } from "@/lib/api-client";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
 
@@ -93,6 +94,103 @@ function AiPerformanceSection() {
   );
 }
 
+interface UsageFeatureBreakdown {
+  feature: string;
+  input_tokens: number;
+  output_tokens: number;
+  calls: number;
+  estimated_cost_usd: number;
+}
+
+interface UsageBucket {
+  total_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost_usd: number;
+  by_feature: UsageFeatureBreakdown[];
+}
+
+interface UsageSummary {
+  pricing_note: string;
+  today: UsageBucket;
+  this_week: UsageBucket;
+  this_month: UsageBucket;
+}
+
+const FEATURE_LABEL: Record<string, string> = {
+  chat: "相談",
+  proposal_draft: "資料作成(提案書ドラフト)",
+  document_format_instruction_parsing: "資料作成(帳票の指示文解析)",
+  unknown: "不明",
+};
+
+function fmtUsd(v: number): string {
+  return `$${v.toFixed(2)}`;
+}
+
+function UsageBucketCard({ label, bucket }: { label: string; bucket: UsageBucket }) {
+  return (
+    <div className="surface-soft p-3">
+      <div className="text-xs text-sub">{label}</div>
+      <div className="mt-1 flex items-baseline gap-3">
+        <span className="text-lg font-semibold text-ink">{fmtUsd(bucket.estimated_cost_usd)}</span>
+        <span className="text-xs text-sub">
+          {bucket.total_calls.toLocaleString()}回・入力{bucket.input_tokens.toLocaleString()}/出力{bucket.output_tokens.toLocaleString()}トークン
+        </span>
+      </div>
+      {bucket.by_feature.length > 0 && (
+        <div className="mt-2 space-y-1">
+          {bucket.by_feature.map((f) => (
+            <div key={f.feature} className="flex items-center justify-between text-xs text-sub">
+              <span>{FEATURE_LABEL[f.feature] ?? f.feature}</span>
+              <span>{fmtUsd(f.estimated_cost_usd)}({f.calls}回)</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 2026-07-15（14.105、Noritsuguの指定）: Claude APIの利用量・概算コスト
+// を可視化する。管理者のみ表示（このコンポーネント自体、呼び出し元の
+// SettingsPageでisAdminがtrueの場合にのみレンダリングされる。バック
+// エンド側もGET /api/usage/summaryをrequire_adminで保護済みなので、
+// 二重に保護されている）。
+function UsageSummarySection() {
+  const [summary, setSummary] = useState<UsageSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getUsageSummary()
+      .then((data: any) => setSummary(data))
+      .catch(() => setError("利用量の取得に失敗しました"))
+      .finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <Card>
+      <SectionHeader
+        title="利用量・コスト(管理者のみ)"
+        subtitle="Claude APIの実際の使用履歴から集計しています。金額は概算です — 単価は参考値のため、正確な請求額はdocs.claude.comで最新の料金を確認してください。"
+      />
+      {loading && <p className="py-4 text-center text-sm text-sub">読み込み中...</p>}
+      {error && <p className="py-4 text-center text-sm text-sub">{error}</p>}
+      {!loading && !error && summary && summary.today.total_calls === 0 && summary.this_month.total_calls === 0 && (
+        <p className="py-4 text-center text-sm text-sub">まだ利用記録がありません</p>
+      )}
+      {!loading && !error && summary && (summary.today.total_calls > 0 || summary.this_month.total_calls > 0) && (
+        <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <UsageBucketCard label="今日" bucket={summary.today} />
+          <UsageBucketCard label="今週" bucket={summary.this_week} />
+          <UsageBucketCard label="今月" bucket={summary.this_month} />
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function IntegrationCard({
   provider,
   connected,
@@ -131,6 +229,7 @@ function IntegrationCard({
 
 export default function SettingsPage() {
   const searchParams = useSearchParams();
+  const { isAdmin } = useAuth();
   const [gmailConnected, setGmailConnected] = useState<boolean | null>(null);
   const [slackConnected, setSlackConnected] = useState<boolean | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -198,6 +297,8 @@ export default function SettingsPage() {
       />
 
       <AiPerformanceSection />
+
+      {isAdmin && <UsageSummarySection />}
     </div>
   );
 }

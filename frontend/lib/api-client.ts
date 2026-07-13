@@ -74,6 +74,14 @@ export async function getEvaluationSummary() {
 }
 
 /**
+ * Get Claude API usage/cost summary (admin only)
+ * (2026-07-15, 14.105: /settingsの利用量・コストセクション用に追加)
+ */
+export async function getUsageSummary() {
+  return apiCall("/api/usage/summary");
+}
+
+/**
  * Get debug trace for a given trace ID
  */
 export async function getDebugTrace(traceId: string) {

@@ -3584,6 +3584,55 @@ Learning・Governed Learning・Policy Memory）は、`learning/service.py`が
 セクション13以降（現行`backend/`構成の全記録）は変更なし。純粋な
 ファイル分割のみのため、コードへの影響は無い。
 
+## 14.105 Claude API利用量・概算コストの可視化(管理者専用) (2026-07-15)
+
+Noritsuguの指定で、Claude API呼び出しのトークン数・概算コストを記録・
+表示する機能を実装した。
+
+**現状把握:** Claude APIを実際に呼んでいるのは`llm_client.py`経由の
+3箇所だけと確認済み: `generate_with_tools`(chat_agent、相談機能。
+ツール呼び出しのラウンドごとに実際のAPI呼び出しが1回発生)、
+`generate_text`・`generate_text_with_web_search`(資料作成のドラフト
+生成、帳票構造推測時の指示文解析)。`推論エンジン`はSQL/Pythonの
+決定的なロジックのみで、Claude APIを一切呼んでいない。
+
+**実装:**
+- 新規`backend/services/usage_tracking.py`: `record_usage()`で1回の
+  API呼び出しごとの記録を追記（既存の`trace_store.py`等と同じ
+  `record_store`ベースのJSONBテーブルパターン、新テーブル
+  `app_api_usage`。`docs/sql/14_105_api_usage.sql`にCREATE TABLE文を
+  用意、Supabaseで一度実行が必要）。`get_usage_summary()`で今日・
+  今週・今月それぞれの合計トークン数・概算コスト・機能別内訳を集計。
+- `llm_client.py`の3呼び出し箇所全てに`_record_usage_from_response`
+  を追加（`generate_with_tools`はラウンドごとに1回、他は呼び出し
+  ごとに1回）。各関数に`feature`パラメータを追加し、呼び出し元
+  （`chat_agent.py`は"chat"固定、`proposal_generation.py`は
+  "proposal_draft"、`document_formats.py`は
+  "document_format_instruction_parsing"）で機能名を渡すことで、
+  ダッシュボード側で機能別の内訳が出せるようにした。
+- **単価は参考値であり要確認**: このプロジェクトの「業務ルールを
+  推測で決め打ちしない」方針に合わせ、コスト計算に使う単価定数
+  （`PLACEHOLDER_INPUT_PRICE_PER_MTOK`等）は学習データ時点の記憶に
+  基づく参考値であり、正確な最新料金はdocs.claude.comで確認するよう
+  コード内・UI双方に明記した。
+- `GET /api/usage/summary`を新設、`require_admin`で保護（管理者のみ
+  アクセス可）。
+- フロントエンド: `/settings`ページに「利用量・コスト(管理者のみ)」
+  セクションを追加。`useAuth()`の`isAdmin`がtrueの場合のみコンポーネント
+  自体をレンダリングする（バックエンド側の`require_admin`と二重に
+  保護）。今日・今週・今月それぞれのカードに、概算コスト・呼び出し
+  回数・入出力トークン数・機能別内訳を表示。
+
+`tests/backend/test_usage_tracking.py`（新規、6件）、
+`tests/backend/test_llm_client.py`に3件追加（ラウンドごとの記録、
+usage欠如時にクラッシュしないこと、featureパラメータの伝播）、
+`tests/backend/test_auth_router.py`に2件追加（管理者以外は403、
+管理者はアクセス可）。既存の`generate_text`/`generate_text_with_
+web_search`をモックしていたテスト群（`test_proposal_generation.py`
+等）は、新しい`feature`引数を受け取れるようシグネチャを更新。487件
+全てパス。フロントエンドは`npx tsc --noEmit`・`npm run build`両方で
+確認済み。
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.
