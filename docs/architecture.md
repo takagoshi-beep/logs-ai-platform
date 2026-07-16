@@ -4107,6 +4107,61 @@ test_router.py`に2件追加（`/home`・`/chat`がBackgroundTasks経由で
 
 文言のみの変更のため、既存テストの構造には影響なし。514件全てパス。
 
+## 14.119 プロンプトキャッシュの導入(相談機能のコスト削減、本命) (2026-07-16)
+
+14.118のツール説明文軽量化は約6%の削減に留まったため、Noritsuguと
+相談の上、より効果が大きい「Anthropicのプロンプトキャッシュ
+（`cache_control`）」を導入した。
+
+**背景:** `generate_with_tools`（chat_agent、相談機能）は、ツール呼び
+出しの往復ラウンドごとに会話全体（system prompt + 全ツール定義 +
+会話履歴）を毎回全量送信する。会話が長く続くほど、履歴が積み重なって
+1回あたりの送信量も増える構造だった。
+
+**対応:** `llm_client.py`の`generate_with_tools`に、Anthropicの
+`cache_control`（`{"type": "ephemeral"}`）を4箇所に付けた（1リクエスト
+あたりの上限が4箇所のため使い切っている）:
+1. system prompt（全チャットで完全に同一の内容）
+2. tools定義（静的、全チャットで完全に同一の内容）
+3. 会話履歴（history、conversation_store由来）の末尾 — ターンを重ねる
+   ごとに増えていくが、増える前の部分は前のターンで書き込まれたキャッシュ
+   がまだ有効なら安く読める（Anthropicの「会話継続時の増分キャッシュ」
+   という標準的な使い方）
+4. 今回の新規質問（messagesの末尾） — 同じターンの中で複数ラウンド
+   （ツール呼び出しの往復）が発生する場合、2ラウンド目以降はこの部分が
+   キャッシュから読み込まれる
+
+ラウンド内で新規に追加されるtool_use/tool_resultメッセージには
+cache_controlを付けない（毎ラウンド変わる部分でキャッシュしても意味が
+無く、4箇所という上限を圧迫するだけのため）。
+
+`_tools_with_cache_control`・`_as_cached_content_blocks`という2つの
+ヘルパーを新設。モジュール定数のTOOLSリスト（全チャットで共有される）
+を直接書き換えないよう、必ずコピーにcache_controlを付けて送る。
+
+**利用量・コスト表示の対応。** キャッシュ導入に合わせ、Anthropicの
+レスポンスに含まれる`cache_creation_input_tokens`（キャッシュ書き込み、
+通常の入力より高い単価）・`cache_read_input_tokens`（キャッシュ読み込み、
+通常の約1/10の単価）を`usage_tracking.py`に別途記録・集計するようにした
+（これらを通常の`input_tokens`と混同すると、キャッシュヒットで実際には
+安く済んでいる分もコスト表示に反映されず、実際より高く見えたままになる
+ため）。`/settings`の「利用量・コスト」セクションにも、キャッシュ読込/
+書込トークン数を表示するようにした。
+
+`tests/backend/test_llm_client.py`に5件追加（history/新規質問の境目への
+cache_control付与確認、最初のターン時の挙動確認、元のTOOLSリストを
+書き換えないことの確認、ラウンド内の新規メッセージにはcache_controlを
+付けないことの確認、キャッシュ関連トークンの記録確認）。
+`tests/backend/test_usage_tracking.py`に3件追加（キャッシュトークンの
+コスト計算・集計確認）。既存の関連テストのモックをキャッシュ形式・
+新しいkwargsに合わせて更新。521件全てパス。フロントエンドは
+`npx tsc --noEmit`・`npm run build`両方で確認済み。
+
+**確認事項:** 実際のキャッシュヒット率・コスト削減効果は、この環境
+（Anthropic APIへのライブ接続が無い）では検証できない。デプロイ後、
+`/settings`の利用量・コスト表示でキャッシュ読込トークンの割合を実際に
+確認してもらう必要がある。
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.

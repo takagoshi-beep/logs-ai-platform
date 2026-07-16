@@ -51,6 +51,44 @@ def test_get_usage_summary_computes_estimated_cost():
     assert summary["today"]["estimated_cost_usd"] == round(expected_cost, 4)
 
 
+def test_get_usage_summary_prices_cache_tokens_separately_from_input_tokens():
+    """14.119、Noritsuguの指定: プロンプトキャッシュ導入後、
+    cache_read_input_tokens（安い）・cache_creation_input_tokens（高い）
+    を通常のinput_tokensと同じ単価で計算してはいけない。混同すると、
+    キャッシュヒットで実際には安く済んでいる分もコスト表示に反映されない
+    （実際より高く見える）ままになる。"""
+    usage_tracking.record_usage(
+        feature="chat", model="claude-sonnet-4-5", input_tokens=0, output_tokens=0,
+        cache_creation_input_tokens=1_000_000, cache_read_input_tokens=1_000_000,
+    )
+
+    summary = usage_tracking.get_usage_summary()
+    expected_cost = (
+        usage_tracking.PLACEHOLDER_CACHE_WRITE_PRICE_PER_MTOK
+        + usage_tracking.PLACEHOLDER_CACHE_READ_PRICE_PER_MTOK
+    )
+    assert summary["today"]["estimated_cost_usd"] == round(expected_cost, 4)
+    # キャッシュ読み込みは通常の入力より明確に安いこと（要確認の参考値でも
+    # 常識的な大小関係は保つ）
+    assert usage_tracking.PLACEHOLDER_CACHE_READ_PRICE_PER_MTOK < usage_tracking.PLACEHOLDER_INPUT_PRICE_PER_MTOK
+    assert usage_tracking.PLACEHOLDER_CACHE_WRITE_PRICE_PER_MTOK > usage_tracking.PLACEHOLDER_INPUT_PRICE_PER_MTOK
+
+
+def test_get_usage_summary_includes_cache_token_totals_in_bucket_and_by_feature():
+    usage_tracking.record_usage(
+        feature="chat", model="claude-sonnet-4-5", input_tokens=100, output_tokens=20,
+        cache_creation_input_tokens=500, cache_read_input_tokens=2000,
+    )
+
+    summary = usage_tracking.get_usage_summary()
+
+    assert summary["today"]["cache_creation_input_tokens"] == 500
+    assert summary["today"]["cache_read_input_tokens"] == 2000
+    chat_feature = next(f for f in summary["today"]["by_feature"] if f["feature"] == "chat")
+    assert chat_feature["cache_creation_input_tokens"] == 500
+    assert chat_feature["cache_read_input_tokens"] == 2000
+
+
 def test_get_usage_summary_excludes_records_before_the_bucket_start(monkeypatch):
     """先週の記録は「今日」「今週」の集計に含まれず、「今月」には含まれる
     （同じ月内であれば）ことの確認。"""

@@ -98,6 +98,8 @@ interface UsageFeatureBreakdown {
   feature: string;
   input_tokens: number;
   output_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
   calls: number;
   estimated_cost_usd: number;
 }
@@ -106,6 +108,8 @@ interface UsageBucket {
   total_calls: number;
   input_tokens: number;
   output_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
   estimated_cost_usd: number;
   by_feature: UsageFeatureBreakdown[];
 }
@@ -138,6 +142,11 @@ function UsageBucketCard({ label, bucket }: { label: string; bucket: UsageBucket
           {bucket.total_calls.toLocaleString()}回・入力{bucket.input_tokens.toLocaleString()}/出力{bucket.output_tokens.toLocaleString()}トークン
         </span>
       </div>
+      {(bucket.cache_read_input_tokens > 0 || bucket.cache_creation_input_tokens > 0) && (
+        <div className="mt-1 text-xs text-sub">
+          キャッシュ読込{bucket.cache_read_input_tokens.toLocaleString()}（割安）・書込{bucket.cache_creation_input_tokens.toLocaleString()}トークン
+        </div>
+      )}
       {bucket.by_feature.length > 0 && (
         <div className="mt-2 space-y-1">
           {bucket.by_feature.map((f) => (

@@ -11,6 +11,14 @@ Claude APIを実際に呼んでいるのは`llm_client.py`経由の3箇所だけ
 `推論エンジン`(reasoning_pipeline.py)はSQL/Pythonの決定的なロジックの
 みで、Claude APIを一切呼んでいないため対象外。
 
+2026-07-16（14.119追加）: `generate_with_tools`にプロンプトキャッシュ
+（`cache_control`）を導入したのに合わせ、`cache_creation_input_tokens`
+（キャッシュへの書き込み）・`cache_read_input_tokens`（キャッシュからの
+読み込み）も別途記録する。これらを`input_tokens`と別に扱わないと、
+キャッシュヒットで実際には安く済んでいる分も通常の入力単価で計算して
+しまい、コスト表示がキャッシュの効果を反映しない（実際より高く見える）
+ままになる。
+
 【重要・要確認】以下の単価は2026年1月時点の学習データに基づく参考値
 であり、正確な最新料金ではない。実際の請求額とは異なる可能性がある
 ため、正確な単価はdocs.claude.comで必ず確認すること（このプロジェクト
@@ -30,9 +38,17 @@ USAGE_TABLE = "app_api_usage"
 # ること。ここでは学習データ時点の記憶に基づく参考値を仮置きしている。
 PLACEHOLDER_INPUT_PRICE_PER_MTOK = 3.0
 PLACEHOLDER_OUTPUT_PRICE_PER_MTOK = 15.0
+# キャッシュ書き込みは通常の入力より高い単価（Anthropicの一般的な倍率
+# にならい約1.25倍）、キャッシュ読み込みは通常の入力より安い単価
+# （約1/10）という参考値。正確な倍率はdocs.claude.comで確認すること。
+PLACEHOLDER_CACHE_WRITE_PRICE_PER_MTOK = PLACEHOLDER_INPUT_PRICE_PER_MTOK * 1.25
+PLACEHOLDER_CACHE_READ_PRICE_PER_MTOK = PLACEHOLDER_INPUT_PRICE_PER_MTOK * 0.1
 
 
-def record_usage(feature: str, model: str, input_tokens: int, output_tokens: int) -> None:
+def record_usage(
+    feature: str, model: str, input_tokens: int, output_tokens: int,
+    cache_creation_input_tokens: int = 0, cache_read_input_tokens: int = 0,
+) -> None:
     """1回の実際のAPI呼び出し（＝1回の`client.messages.create()`）ごとに
     記録する。永続化に失敗してもこの関数自体は例外を投げない
     （呼び出し元でtry/exceptしなくても安全 — trace_store等と同じ方針）。
@@ -43,16 +59,23 @@ def record_usage(feature: str, model: str, input_tokens: int, output_tokens: int
             "model": model,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
+            "cache_creation_input_tokens": cache_creation_input_tokens,
+            "cache_read_input_tokens": cache_read_input_tokens,
             "recorded_at": datetime.now(timezone.utc).isoformat(),
         })
     except Exception as e:
         print(f"[usage_tracking] Failed to record usage: {e}")
 
 
-def _estimate_cost_usd(input_tokens: int, output_tokens: int) -> float:
+def _estimate_cost_usd(
+    input_tokens: int, output_tokens: int,
+    cache_creation_input_tokens: int = 0, cache_read_input_tokens: int = 0,
+) -> float:
     return (
         input_tokens / 1_000_000 * PLACEHOLDER_INPUT_PRICE_PER_MTOK
         + output_tokens / 1_000_000 * PLACEHOLDER_OUTPUT_PRICE_PER_MTOK
+        + cache_creation_input_tokens / 1_000_000 * PLACEHOLDER_CACHE_WRITE_PRICE_PER_MTOK
+        + cache_read_input_tokens / 1_000_000 * PLACEHOLDER_CACHE_READ_PRICE_PER_MTOK
     )
 
 
@@ -68,26 +91,42 @@ def _bucket(records: list[dict[str, Any]], since: datetime) -> dict[str, Any]:
 
     input_tokens = sum(r.get("input_tokens", 0) for r in matched)
     output_tokens = sum(r.get("output_tokens", 0) for r in matched)
+    cache_creation_input_tokens = sum(r.get("cache_creation_input_tokens", 0) for r in matched)
+    cache_read_input_tokens = sum(r.get("cache_read_input_tokens", 0) for r in matched)
 
     by_feature: dict[str, dict[str, int]] = defaultdict(
-        lambda: {"input_tokens": 0, "output_tokens": 0, "calls": 0}
+        lambda: {
+            "input_tokens": 0, "output_tokens": 0,
+            "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "calls": 0,
+        }
     )
     for r in matched:
         f = by_feature[r.get("feature", "unknown")]
         f["input_tokens"] += r.get("input_tokens", 0)
         f["output_tokens"] += r.get("output_tokens", 0)
+        f["cache_creation_input_tokens"] += r.get("cache_creation_input_tokens", 0)
+        f["cache_read_input_tokens"] += r.get("cache_read_input_tokens", 0)
         f["calls"] += 1
 
     return {
         "total_calls": len(matched),
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
-        "estimated_cost_usd": round(_estimate_cost_usd(input_tokens, output_tokens), 4),
+        "cache_creation_input_tokens": cache_creation_input_tokens,
+        "cache_read_input_tokens": cache_read_input_tokens,
+        "estimated_cost_usd": round(
+            _estimate_cost_usd(input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens), 4
+        ),
         "by_feature": [
             {
                 "feature": k,
                 **v,
-                "estimated_cost_usd": round(_estimate_cost_usd(v["input_tokens"], v["output_tokens"]), 4),
+                "estimated_cost_usd": round(
+                    _estimate_cost_usd(
+                        v["input_tokens"], v["output_tokens"],
+                        v["cache_creation_input_tokens"], v["cache_read_input_tokens"],
+                    ), 4,
+                ),
             }
             for k, v in sorted(by_feature.items(), key=lambda kv: -kv[1]["input_tokens"])
         ],

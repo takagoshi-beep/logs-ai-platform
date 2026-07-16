@@ -36,9 +36,19 @@ def _get_client():
 
 
 def _record_usage_from_response(feature: str, response) -> None:
-    """レスポンスの`usage`（input_tokens/output_tokens）を利用量ログに
-    記録する（2026-07-15、14.105）。usage属性が無い/壊れている場合でも
-    本来のレスポンス処理を止めないよう、ここで例外を握りつぶす。"""
+    """レスポンスの`usage`（input_tokens/output_tokens、および14.119で
+    追加したキャッシュ関連トークン）を利用量ログに記録する。usage属性が
+    無い/壊れている場合でも本来のレスポンス処理を止めないよう、ここで
+    例外を握りつぶす。
+
+    2026-07-16（14.119、Noritsuguの指定）: プロンプトキャッシュ導入に
+    合わせ、`cache_creation_input_tokens`（キャッシュへの書き込み、通常の
+    入力より高い単価）・`cache_read_input_tokens`（キャッシュからの読み込み、
+    通常の約1/10の単価）も記録する。これらを`input_tokens`と別に記録
+    しないと、キャッシュヒットで実際には安く済んでいる分も通常の入力
+    単価で計算してしまい、`/settings`の利用量・コスト表示がキャッシュの
+    効果を反映しない（実際より高く見える）ままになってしまう。
+    """
     try:
         from services.usage_tracking import record_usage
         usage = getattr(response, "usage", None)
@@ -49,6 +59,8 @@ def _record_usage_from_response(feature: str, response) -> None:
             model=DEFAULT_MODEL,
             input_tokens=getattr(usage, "input_tokens", 0) or 0,
             output_tokens=getattr(usage, "output_tokens", 0) or 0,
+            cache_creation_input_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
+            cache_read_input_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
         )
     except Exception as e:
         print(f"[llm_client] Failed to record usage: {e}")
@@ -121,6 +133,32 @@ def generate_text_with_web_search(
     return "\n".join(text_parts), sources
 
 
+def _tools_with_cache_control(tools: list[dict]) -> list[dict]:
+    """toolsリストの末尾にcache_controlを付ける（Anthropicのプロンプト
+    キャッシュはcache_controlを付けたブロックまでの内容を累積的に
+    キャッシュするため、末尾に付けるだけでtools全体がキャッシュ対象になる）。
+    元のTOOLSリスト（モジュール定数、全チャットで共有される）を直接
+    書き換えないよう、コピーを作って返す。"""
+    if not tools:
+        return tools
+    copied = [dict(t) for t in tools]
+    copied[-1] = {**copied[-1], "cache_control": {"type": "ephemeral"}}
+    return copied
+
+
+def _as_cached_content_blocks(content) -> list[dict]:
+    """メッセージのcontentを、末尾のブロックにcache_controlを付けた
+    ブロックのリストに変換する。文字列（プレーンテキスト）の場合は
+    1つのtextブロックに包む。既にブロックのリストの場合は末尾の
+    ブロックにcache_controlを追加する。"""
+    if isinstance(content, str):
+        return [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
+    blocks = list(content)
+    if blocks:
+        blocks[-1] = {**blocks[-1], "cache_control": {"type": "ephemeral"}}
+    return blocks
+
+
 def generate_with_tools(
     messages: list[dict],
     tools: list[dict],
@@ -145,9 +183,46 @@ def generate_with_tools(
 
     2026-07-15（14.105追加）: 各ラウンドは実際のAPI呼び出し1回に相当
     するため、ラウンドごとに利用量を記録する（feature="chat"）。
+
+    2026-07-16（14.119、Noritsuguの指定）: Anthropicのプロンプトキャッシュ
+    （`cache_control`）を使い、毎ラウンド・毎ターン同じ内容を繰り返し
+    全額課金されないようにする。
+
+    - system prompt・toolsは全チャットで完全に同一の内容（tools定義は
+      静的、system promptも{today}以外は不変）のため、それぞれの末尾に
+      cache_controlを付ける。
+    - 会話履歴（history、conversation_store由来）は、ターンが進むごとに
+      増えていく——増える前の部分は前のターンで既にキャッシュされている
+      可能性があるため、historyの末尾（＝直前のターンまでの内容）にも
+      cache_controlを付ける。これにより、ターンを重ねるごとに「新しい
+      部分だけ」を実質的な課金対象にできる（Anthropicの「会話継続時の
+      増分キャッシュ」という標準的な使い方）。
+    - 新規の質問（今回のmessagesの末尾）にもcache_controlを付ける。同じ
+      ターンの中で複数ラウンド（ツール呼び出しの往復）が発生する場合、
+      2ラウンド目以降はこの部分がキャッシュから読み込まれる。
+    - Anthropicの仕様上、1リクエストあたりcache_controlは最大4箇所まで
+      （system・tools・history末尾・今回の質問、で合計4箇所を使い切る）。
     """
     client = _get_client()
     conversation = list(messages)
+
+    # 会話履歴の末尾（＝直前のターンまでの内容）と、今回追加された
+    # 新規メッセージ（＝直近1件）の境目にcache_controlを付ける。
+    # messagesは常に「history + 今回の質問1件」という形（chat_agent.py
+    # のanswer()参照）なので、末尾から2番目までがhistory、末尾1件が
+    # 今回の質問になる。
+    if conversation:
+        last_idx = len(conversation) - 1
+        conversation[last_idx] = {
+            **conversation[last_idx],
+            "content": _as_cached_content_blocks(conversation[last_idx]["content"]),
+        }
+        if last_idx - 1 >= 0:
+            conversation[last_idx - 1] = {
+                **conversation[last_idx - 1],
+                "content": _as_cached_content_blocks(conversation[last_idx - 1]["content"]),
+            }
+
     tool_calls_made: list[dict] = []
     response = None
 
@@ -156,10 +231,10 @@ def generate_with_tools(
             "model": DEFAULT_MODEL,
             "max_tokens": max_tokens,
             "messages": conversation,
-            "tools": tools,
+            "tools": _tools_with_cache_control(tools),
         }
         if system:
-            kwargs["system"] = system
+            kwargs["system"] = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
         response = client.messages.create(**kwargs)
         _record_usage_from_response("chat", response)
 

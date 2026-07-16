@@ -116,6 +116,9 @@ def test_generate_with_tools_stops_at_max_rounds_without_hanging(monkeypatch):
 
 
 def test_generate_with_tools_passes_system_prompt_through(monkeypatch):
+    """14.119、Noritsuguの指定: プロンプトキャッシュのため、system prompt・
+    toolsはそのまま渡すのではなく、末尾にcache_controlを付けたブロック
+    /リストに変換して渡す（内容自体は変わらない）。"""
     fake_client = _FakeClient([_response("end_turn", [_text_block("ok")])])
     monkeypatch.setattr(llm_client, "_get_client", lambda: fake_client)
 
@@ -125,12 +128,49 @@ def test_generate_with_tools_passes_system_prompt_through(monkeypatch):
         tool_executor=lambda name, inp: "{}",
         system="テストシステムプロンプト",
     )
-    assert fake_client.calls[0]["system"] == "テストシステムプロンプト"
-    assert fake_client.calls[0]["tools"] == [{"name": "dummy"}]
+    assert fake_client.calls[0]["system"] == [
+        {"type": "text", "text": "テストシステムプロンプト", "cache_control": {"type": "ephemeral"}},
+    ]
+    assert fake_client.calls[0]["tools"] == [
+        {"name": "dummy", "cache_control": {"type": "ephemeral"}},
+    ]
 
 
-def _usage(input_tokens: int, output_tokens: int) -> SimpleNamespace:
-    return SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens)
+def _usage(
+    input_tokens: int, output_tokens: int,
+    cache_creation_input_tokens: int = 0, cache_read_input_tokens: int = 0,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        input_tokens=input_tokens, output_tokens=output_tokens,
+        cache_creation_input_tokens=cache_creation_input_tokens,
+        cache_read_input_tokens=cache_read_input_tokens,
+    )
+
+
+def test_generate_with_tools_records_cache_tokens(monkeypatch):
+    """14.119、Noritsuguの指定: プロンプトキャッシュ導入に合わせ、
+    cache_creation_input_tokens・cache_read_input_tokensも別途記録する
+    （通常のinput_tokensと混ぜると、キャッシュヒットの効果がコスト表示に
+    反映されなくなるため）。"""
+    fake_client = _FakeClient([
+        _response("end_turn", [_text_block("回答")], usage=_usage(100, 20, cache_creation_input_tokens=5000, cache_read_input_tokens=8000)),
+    ])
+    monkeypatch.setattr(llm_client, "_get_client", lambda: fake_client)
+
+    recorded = []
+    monkeypatch.setattr(
+        "services.usage_tracking.record_usage",
+        lambda **kwargs: recorded.append(kwargs),
+    )
+
+    llm_client.generate_with_tools(
+        messages=[{"role": "user", "content": "質問"}],
+        tools=[],
+        tool_executor=lambda name, inp: "{}",
+    )
+
+    assert recorded[0]["cache_creation_input_tokens"] == 5000
+    assert recorded[0]["cache_read_input_tokens"] == 8000
 
 
 def test_generate_with_tools_records_usage_once_per_round(monkeypatch):
@@ -145,7 +185,7 @@ def test_generate_with_tools_records_usage_once_per_round(monkeypatch):
     recorded = []
     monkeypatch.setattr(
         "services.usage_tracking.record_usage",
-        lambda feature, model, input_tokens, output_tokens: recorded.append(
+        lambda feature, model, input_tokens, output_tokens, cache_creation_input_tokens=0, cache_read_input_tokens=0: recorded.append(
             (feature, model, input_tokens, output_tokens)
         ),
     )
@@ -175,6 +215,96 @@ def test_generate_with_tools_missing_usage_does_not_crash(monkeypatch):
     assert text == "ok"  # 例外を投げず、通常通り応答が返る
 
 
+def test_generate_with_tools_marks_history_and_new_question_boundary_with_cache_control(monkeypatch):
+    """14.119、Noritsuguの指定: 会話履歴（history）の末尾と、今回新規に
+    追加された質問（messagesの末尾）の両方にcache_controlを付ける。
+    ターンを重ねるごとに、以前キャッシュ済みの部分は割安に読めるように
+    するため。"""
+    fake_client = _FakeClient([_response("end_turn", [_text_block("ok")])])
+    monkeypatch.setattr(llm_client, "_get_client", lambda: fake_client)
+
+    llm_client.generate_with_tools(
+        messages=[
+            {"role": "user", "content": "前回の質問"},
+            {"role": "assistant", "content": "前回の回答"},
+            {"role": "user", "content": "今回の新しい質問"},
+        ],
+        tools=[],
+        tool_executor=lambda name, inp: "{}",
+    )
+
+    sent_messages = fake_client.calls[0]["messages"]
+    # historyの末尾（前回の回答）と、今回の新規質問の両方にcache_controlが付く
+    assert sent_messages[1]["content"] == [
+        {"type": "text", "text": "前回の回答", "cache_control": {"type": "ephemeral"}},
+    ]
+    assert sent_messages[2]["content"] == [
+        {"type": "text", "text": "今回の新しい質問", "cache_control": {"type": "ephemeral"}},
+    ]
+    # historyの1番目（前回の質問）はcache_controlの対象外（境目ではないため）
+    assert sent_messages[0]["content"] == "前回の質問"
+
+
+def test_generate_with_tools_first_ever_message_only_caches_itself(monkeypatch):
+    """historyが無い（最初のターン）場合、質問1件だけにcache_controlが
+    付く（存在しない「1つ前」を参照してエラーにならないこと）。"""
+    fake_client = _FakeClient([_response("end_turn", [_text_block("ok")])])
+    monkeypatch.setattr(llm_client, "_get_client", lambda: fake_client)
+
+    llm_client.generate_with_tools(
+        messages=[{"role": "user", "content": "最初の質問"}],
+        tools=[],
+        tool_executor=lambda name, inp: "{}",
+    )
+
+    sent_messages = fake_client.calls[0]["messages"]
+    assert sent_messages[0]["content"] == [
+        {"type": "text", "text": "最初の質問", "cache_control": {"type": "ephemeral"}},
+    ]
+
+
+def test_generate_with_tools_does_not_mutate_original_tools_list(monkeypatch):
+    """モジュール定数のTOOLSリスト（全チャットで共有される）を直接
+    書き換えず、コピーにcache_controlを付けて送ること。"""
+    fake_client = _FakeClient([_response("end_turn", [_text_block("ok")])])
+    monkeypatch.setattr(llm_client, "_get_client", lambda: fake_client)
+
+    original_tools = [{"name": "get_sales_lines", "description": "..."}]
+
+    llm_client.generate_with_tools(
+        messages=[{"role": "user", "content": "test"}],
+        tools=original_tools,
+        tool_executor=lambda name, inp: "{}",
+    )
+
+    assert "cache_control" not in original_tools[-1]  # 元のリストは書き換えられない
+    assert "cache_control" in fake_client.calls[0]["tools"][-1]  # 送信されたコピーには付く
+
+
+def test_generate_with_tools_does_not_apply_cache_control_to_tool_result_rounds(monkeypatch):
+    """ラウンド内で新規に追加されるtool_use/tool_resultメッセージには
+    cache_controlを付けない（毎ラウンド変わる部分なのでキャッシュしても
+    意味が無く、4箇所というAnthropicの上限を圧迫するだけのため）。"""
+    fake_client = _FakeClient([
+        _response("tool_use", [_tool_use_block("get_sales_lines", {})]),
+        _response("end_turn", [_text_block("回答")]),
+    ])
+    monkeypatch.setattr(llm_client, "_get_client", lambda: fake_client)
+
+    llm_client.generate_with_tools(
+        messages=[{"role": "user", "content": "質問"}],
+        tools=[],
+        tool_executor=lambda name, inp: '{"status": "ok"}',
+    )
+
+    # 2回目の呼び出し（ツール結果を含む）で、新規追加されたtool_result
+    # メッセージにはcache_controlが付いていないこと
+    second_call_messages = fake_client.calls[1]["messages"]
+    tool_result_message = second_call_messages[-1]
+    assert tool_result_message["role"] == "user"
+    assert "cache_control" not in tool_result_message["content"][-1]
+
+
 def test_generate_text_records_usage_with_given_feature(monkeypatch):
     fake_client = SimpleNamespace(
         messages=SimpleNamespace(
@@ -186,7 +316,7 @@ def test_generate_text_records_usage_with_given_feature(monkeypatch):
     recorded = []
     monkeypatch.setattr(
         "services.usage_tracking.record_usage",
-        lambda feature, model, input_tokens, output_tokens: recorded.append(feature),
+        lambda feature, model, input_tokens, output_tokens, cache_creation_input_tokens=0, cache_read_input_tokens=0: recorded.append(feature),
     )
 
     llm_client.generate_text("プロンプト", feature="proposal_draft")
