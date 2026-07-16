@@ -82,6 +82,15 @@ export async function getUsageSummary() {
 }
 
 /**
+ * Get internal access log summary — who used which feature, and what
+ * questions were asked in chat (admin only)
+ * (2026-07-16, 14.116: /settingsのアクセス状況セクション用に追加)
+ */
+export async function getAccessLogSummary() {
+  return apiCall("/api/access-log/summary");
+}
+
+/**
  * Get debug trace for a given trace ID
  */
 export async function getDebugTrace(traceId: string) {

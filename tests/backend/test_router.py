@@ -107,6 +107,32 @@ def test_home_returns_kpis_and_recent_activity(monkeypatch):
     assert "recent_activity" in body
 
 
+def test_home_records_page_view_via_background_task(monkeypatch):
+    """14.116: ホームページの閲覧をBackgroundTasks経由で記録する。"""
+    from business import today_actions
+    from services import access_log
+
+    monkeypatch.setattr(
+        today_actions, "get_real_kpis",
+        lambda: {
+            "success": True, "table_count": 13, "sales_row_count": 199512,
+            "sales_data_quality_pct": 100.0, "last_updated": "2026-06-28",
+        },
+    )
+    _mock_project_service(monkeypatch, {})
+
+    recorded = []
+    monkeypatch.setattr(
+        access_log, "record_page_view",
+        lambda user_email, user_name, page: recorded.append(page),
+    )
+
+    response = _client().get("/api/home")
+
+    assert response.status_code == 200
+    assert recorded == ["home"]
+
+
 # ---------------------------------------------------------------------------
 # chat / reasoning
 # ---------------------------------------------------------------------------
@@ -120,6 +146,25 @@ def test_chat_returns_conversational_shape(monkeypatch):
     body = response.json()
     assert body["answer"] == "今月のOEM事業の粗利は120万円です"
     assert "session_id" in body
+
+
+def test_chat_records_question_via_background_task(monkeypatch):
+    """14.116、Noritsuguの指定: 相談で実際に送信された質問文を記録する。
+    レスポンスをブロックしないようBackgroundTasks経由で呼ばれること。"""
+    from services import access_log, chat_agent
+
+    recorded = []
+    monkeypatch.setattr(chat_agent, "generate_with_tools", lambda **kwargs: ("回答", []))
+    monkeypatch.setattr(
+        access_log, "record_chat_question",
+        lambda user_email, user_name, question_text: recorded.append((user_email, question_text)),
+    )
+
+    response = _client().post("/api/chat", json={"user_id": "u", "role": "sales", "message": "テスト質問です"})
+
+    assert response.status_code == 200
+    assert len(recorded) == 1
+    assert recorded[0][1] == "テスト質問です"
 
 
 def test_chat_reuses_session_id_across_turns(monkeypatch):

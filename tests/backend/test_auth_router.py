@@ -152,3 +152,30 @@ def test_admin_can_access_usage_summary(real_auth_client, monkeypatch):
     response = real_auth_client.get("/api/usage/summary")
     assert response.status_code == 200
     assert "today" in response.json()
+
+
+def test_member_cannot_access_access_log_summary(real_auth_client, monkeypatch):
+    """14.116: 社内利用状況のサマリーは管理者のみ閲覧可能。"""
+    from api import auth_router as auth_router_module
+    monkeypatch.setattr(
+        auth_router_module, "authenticate",
+        lambda credential: {"email": "member@example.com", "name": "一般社員", "role": "member"},
+    )
+    real_auth_client.post("/api/auth/login", json={"credential": "fake-credential"})
+
+    response = real_auth_client.get("/api/access-log/summary")
+    assert response.status_code == 403
+
+
+def test_admin_can_access_access_log_summary(real_auth_client, monkeypatch):
+    from api import auth_router as auth_router_module
+    monkeypatch.setattr(
+        auth_router_module, "authenticate",
+        lambda credential: {"email": "admin@example.com", "name": "管理者", "role": "admin"},
+    )
+    real_auth_client.post("/api/auth/login", json={"credential": "fake-credential"})
+
+    response = real_auth_client.get("/api/access-log/summary")
+    assert response.status_code == 200
+    assert "users" in response.json()
+    assert "recent_chat_questions" in response.json()

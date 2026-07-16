@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import FileResponse
 
 from api.auth_router import require_login, require_admin
@@ -33,8 +33,15 @@ def health() -> dict:
 
 
 @router.get("/home")
-def home(scope: str = "mine", user: dict = Depends(require_login)) -> dict:
+def home(scope: str = "mine", user: dict = Depends(require_login), background_tasks: BackgroundTasks = None) -> dict:
     """Get home page payload with today's actions and KPIs."""
+    # 2026-07-16（14.116、Noritsuguの指定）: 誰がどの機能を使っているかを
+    # 把握したいという要望への対応。BackgroundTasksで記録するため、
+    # レスポンス速度には影響しない（record_page_view自体もbest-effort
+    # で例外を握りつぶすため、記録に失敗してもホーム表示は止まらない）。
+    if background_tasks is not None:
+        from services.access_log import record_page_view
+        background_tasks.add_task(record_page_view, user.get("email"), user.get("name"), "home")
     owner_name = None
     if scope == "mine":
         from services.auth_service import get_staff_name_by_email
@@ -43,7 +50,7 @@ def home(scope: str = "mine", user: dict = Depends(require_login)) -> dict:
 
 
 @router.post("/chat")
-def chat(req: ChatRequest, user: dict = Depends(require_login)) -> dict:
+def chat(req: ChatRequest, user: dict = Depends(require_login), background_tasks: BackgroundTasks = None) -> dict:
     """`/api/chat` (docs/architecture.md 14.21): Function-Calling powered
     conversation via `chat_agent.answer()` — Claude decides which real
     tools to call (backed entirely by data already built and tested
@@ -57,7 +64,15 @@ def chat(req: ChatRequest, user: dict = Depends(require_login)) -> dict:
     user_email(ログイン中の本人)をchat_agentへ渡すのは、search_gmail
     等「本人自身のデータ」を扱うツールがどのユーザーのものを取得すべきか
     判断するため（14.27, Gmail/Slack連携）。
+
+    2026-07-16（14.116、Noritsuguの指定）: 実際に送信された質問文自体を
+    記録する。社員の質問内容を記録する機能のため、社内での周知・合意の
+    もとで運用すること。BackgroundTasksで記録するため応答速度には
+    影響しない。
     """
+    if background_tasks is not None:
+        from services.access_log import record_chat_question
+        background_tasks.add_task(record_chat_question, user.get("email"), user.get("name"), req.message)
     return chat_agent.answer(req.message, req.session_id, user_email=user.get("email"))
 
 
@@ -121,6 +136,14 @@ def usage_summary(user: dict = Depends(require_admin)) -> dict:
     return get_usage_summary()
 
 
+@router.get("/access-log/summary")
+def access_log_summary(user: dict = Depends(require_admin)) -> dict:
+    """社内利用状況（誰がどの機能をどれだけ使ったか、相談で何を聞いたか）
+    のサマリー（2026-07-16、14.116）。管理者のみアクセス可能。"""
+    from services.access_log import get_access_summary
+    return get_access_summary()
+
+
 @router.get("/debug/trace/{trace_id}")
 def debug_trace(trace_id: str) -> dict:
     return get_trace(trace_id)
@@ -135,7 +158,10 @@ def events(event: ProductEvent) -> dict:
 # ===== NEW: Project Aggregate Endpoints =====
 
 @router.get("/projects")
-def list_projects(limit: int = 10, scope: str = "mine", user: dict = Depends(require_login)) -> dict:
+def list_projects(
+    limit: int = 10, scope: str = "mine", user: dict = Depends(require_login),
+    background_tasks: BackgroundTasks = None,
+) -> dict:
     """Get list of project candidates with summary info.
 
     scope="mine"（既定）: ログイン中の本人が営業担当者・営業事務担当者に
@@ -143,7 +169,12 @@ def list_projects(limit: int = 10, scope: str = "mine", user: dict = Depends(req
     staffテーブルのメールアドレスと一致しない場合は、絞り込みをせず
     全件を返す（表記ゆれで誤って絞り込むより、全件見せる方が安全）。
     scope="all": 常に全件を返す。
+
+    2026-07-16（14.116）: 案件一覧ページの閲覧をBackgroundTasksで記録する。
     """
+    if background_tasks is not None:
+        from services.access_log import record_page_view
+        background_tasks.add_task(record_page_view, user.get("email"), user.get("name"), "workspace")
     from services.timing import timed
 
     try:
@@ -348,12 +379,21 @@ def get_project_trace(project_id: str) -> dict:
 
 
 @router.get("/today-actions")
-def get_today_actions(limit: int = 20, scope: str = "mine", user: dict = Depends(require_login)) -> dict:
+def get_today_actions(
+    limit: int = 20, scope: str = "mine", user: dict = Depends(require_login),
+    background_tasks: BackgroundTasks = None,
+) -> dict:
     """Get today's actions from all projects, sorted by priority.
 
     scope="mine"（既定）: ログイン中の本人が担当する案件のタスクだけに
     絞り込む（docs/architecture.md 14.28）。本人特定できない場合は全件。
+
+    2026-07-16（14.116）: 「今日のタスク」ページの閲覧をBackgroundTasks
+    で記録する。
     """
+    if background_tasks is not None:
+        from services.access_log import record_page_view
+        background_tasks.add_task(record_page_view, user.get("email"), user.get("name"), "tasks")
     from services.timing import timed
 
     try:
@@ -434,6 +474,7 @@ def download_proposal_image(trace_id: str):
 def list_products(
     limit: int = 20, offset: int = 0, search: str | None = None,
     scope: str = "mine", user: dict = Depends(require_login),
+    background_tasks: BackgroundTasks = None,
 ) -> dict:
     """商品一覧を返す。キーは商品ID（products."ID"、常に存在する内部キー）。
     LOGS_CODEは発注フラグが立った時点で初めて払い出されるため、未発注の
@@ -449,7 +490,15 @@ def list_products(
     ページネーション）。searchを指定すると商品名・Sample_CODE・型番・
     LOGS_CODEのいずれかに部分一致する行だけをサーバー側で全件検索する
     （以前は取得済みのlimit件の中だけしか検索できなかった）。
+
+    2026-07-16（14.116）: 商品一覧ページの閲覧をBackgroundTasksで記録
+    する。offset=0（「もっと見る」によるページ送りではない、最初の
+    読み込み）の場合のみ記録する（ページ送りを毎回「新しい閲覧」として
+    数えると記録が増えすぎるため）。
     """
+    if background_tasks is not None and offset == 0:
+        from services.access_log import record_page_view
+        background_tasks.add_task(record_page_view, user.get("email"), user.get("name"), "products")
     from services.product_service import _format_logs_code, get_all_products, get_products_master_batch, get_related_product_ids, sample_code_sort_key
     from services.timing import timed
 

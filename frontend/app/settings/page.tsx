@@ -4,7 +4,7 @@ import { Card, SectionHeader, Button, Badge } from "@/components/design-system";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { getEvaluationSummary, getUsageSummary } from "@/lib/api-client";
+import { getEvaluationSummary, getUsageSummary, getAccessLogSummary } from "@/lib/api-client";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
 
@@ -191,6 +191,114 @@ function UsageSummarySection() {
   );
 }
 
+interface AccessLogUser {
+  user_email: string;
+  user_name: string | null;
+  page_views: Record<string, number>;
+  total_page_views: number;
+  chat_questions: number;
+}
+
+interface AccessLogQuestion {
+  user_email: string;
+  user_name: string | null;
+  question_text: string | null;
+  recorded_at: string | null;
+}
+
+interface AccessLogSummary {
+  users: AccessLogUser[];
+  recent_chat_questions: AccessLogQuestion[];
+}
+
+const PAGE_LABELS: Record<string, string> = {
+  home: "ホーム",
+  products: "商品",
+  workspace: "案件",
+  tasks: "今日のタスク",
+  proposals: "資料作成",
+};
+
+function fmtDateTime(iso: string | null): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleString("ja-JP");
+  } catch {
+    return iso;
+  }
+}
+
+// 2026-07-16（14.116、Noritsuguの指定）: 誰がどの機能を使っているか、
+// 相談で何を聞いているかを可視化する。管理者のみ表示（このコンポーネント
+// 自体、呼び出し元のSettingsPageでisAdminがtrueの場合にのみレンダリング
+// される。バックエンド側もGET /api/access-log/summaryをrequire_adminで
+// 保護済みなので、二重に保護されている）。相談の質問内容を記録・表示する
+// 機能のため、社内での周知・合意のもとで運用すること。
+function AccessLogSection() {
+  const [summary, setSummary] = useState<AccessLogSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getAccessLogSummary()
+      .then((data: any) => setSummary(data))
+      .catch(() => setError("アクセス状況の取得に失敗しました"))
+      .finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <Card>
+      <SectionHeader
+        title="アクセス状況(管理者のみ)"
+        subtitle="誰がどの機能をどれだけ使ったか、相談で実際に何を聞いたかの記録です。社員の質問内容を含むため、取り扱いには注意してください。"
+      />
+      {loading && <p className="py-4 text-center text-sm text-sub">読み込み中...</p>}
+      {error && <p className="py-4 text-center text-sm text-sub">{error}</p>}
+      {!loading && !error && summary && summary.users.length === 0 && (
+        <p className="py-4 text-center text-sm text-sub">まだ利用記録がありません</p>
+      )}
+      {!loading && !error && summary && summary.users.length > 0 && (
+        <>
+          <div className="mt-2 space-y-2">
+            {summary.users.map((u) => (
+              <div key={u.user_email} className="surface-soft p-3 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-ink">{u.user_name ?? u.user_email}</span>
+                  <span className="text-sub">相談: {u.chat_questions}回</span>
+                </div>
+                <div className="mt-1 text-sub">
+                  {Object.entries(u.page_views).length > 0
+                    ? Object.entries(u.page_views)
+                        .map(([page, count]) => `${PAGE_LABELS[page] ?? page}: ${count}回`)
+                        .join(" ・ ")
+                    : "ページ閲覧の記録なし"}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {summary.recent_chat_questions.length > 0 && (
+            <div className="mt-4">
+              <div className="text-xs font-medium text-ink">直近の相談内容</div>
+              <div className="mt-2 space-y-1">
+                {summary.recent_chat_questions.map((q, idx) => (
+                  <div key={idx} className="surface-soft p-2 text-xs">
+                    <div className="flex items-center justify-between text-sub">
+                      <span>{q.user_name ?? q.user_email}</span>
+                      <span>{fmtDateTime(q.recorded_at)}</span>
+                    </div>
+                    <div className="mt-1 text-ink">{q.question_text ?? "—"}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
 function IntegrationCard({
   provider,
   connected,
@@ -299,6 +407,8 @@ export default function SettingsPage() {
       <AiPerformanceSection />
 
       {isAdmin && <UsageSummarySection />}
+
+      {isAdmin && <AccessLogSection />}
     </div>
   );
 }

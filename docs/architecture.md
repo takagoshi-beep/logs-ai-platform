@@ -3998,6 +3998,49 @@ capability gap）を解消できる。
 売単価が結果に含まれることの確認）。500件全てパス。フロントエンドは
 `npx tsc --noEmit`・`npm run build`両方で確認済み。
 
+## 14.116 社内利用状況(ページ閲覧・相談内容)の記録・可視化 (2026-07-16)
+
+Noritsuguの指定で、「誰がどの機能をどれだけ使っているか」（利用頻度）と
+「相談で実際に何を聞いているか」（内容）の両方を可視化する機能を実装
+した。
+
+**性能への配慮:** 記録の書き込みをレスポンスを返す前に同期的に行うと、
+その分だけ画面表示が遅くなる（このシステムはRenderのDB接続に100ms
+前後かかる場面があるため、14.90〜14.92の調査を踏まえて特に注意した
+点）。FastAPIの`BackgroundTasks`（レスポンスを先に返し、その後に裏側
+で処理を実行する仕組み）を使い、記録処理がユーザーの体感速度に影響
+しないようにした。
+
+**実装:**
+- 新規`backend/services/access_log.py`: `record_page_view()`（ページ
+  単位での閲覧を記録。個々のAPI呼び出しや絞り込み等の細かい操作までは
+  記録しない）、`record_chat_question()`（相談で実際に送信された質問文
+  をそのまま記録）、`get_access_summary()`（ユーザーごとのページ別
+  閲覧回数・相談回数と、直近の相談内容一覧を集計）。既存の
+  `usage_tracking.py`（Claude API自体の利用量・コスト）とは別の関心事
+  として分離した。新テーブル`app_access_log`（`docs/sql/14_116_access_
+  log.sql`にCREATE TABLE文を用意、Supabaseで一度実行が必要）。
+- `router.py`の`/home`・`/chat`・`/projects`・`/products`・
+  `/today-actions`エンドポイントに`BackgroundTasks`パラメータを追加し、
+  それぞれページ閲覧（chatのみ質問文そのもの）を記録するようにした。
+  `/products`は「もっと見る」によるページ送り（`offset != 0`）を新しい
+  閲覧として数えないようにしている。
+- `GET /api/access-log/summary`を新設、`require_admin`で保護（管理者
+  のみアクセス可）。
+- フロントエンド: `/settings`ページに「アクセス状況(管理者のみ)」
+  セクションを追加。`isAdmin`がtrueの場合のみコンポーネント自体を
+  レンダリングする（バックエンド側の`require_admin`と二重に保護）。
+  ユーザーごとのページ別閲覧回数・相談回数、直近の相談内容一覧を表示。
+
+**運用上の注意（画面にも明記）:** 相談の質問内容を記録・表示する機能の
+ため、社内での周知・合意のもとで運用すること。
+
+`tests/backend/test_access_log.py`（新規、7件）、`tests/backend/
+test_router.py`に2件追加（`/home`・`/chat`がBackgroundTasks経由で
+正しく記録を呼び出すことの確認）、`tests/backend/test_auth_router.py`
+に2件追加（管理者以外は403、管理者はアクセス可）。511件全てパス。
+フロントエンドは`npx tsc --noEmit`・`npm run build`両方で確認済み。
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.
