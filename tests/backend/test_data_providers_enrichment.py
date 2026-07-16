@@ -239,6 +239,71 @@ def test_sales_by_category_groups_by_product_category(monkeypatch):
     assert result["records"][0]["product_category"] == "バッグ"
 
 
+def test_inventory_lines_filters_by_supplier_and_product_keyword(monkeypatch):
+    """14.117、Noritsuguの指定・確認済み: 棚卸・在庫に関する問い合わせに
+    答えられるようにする。"""
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured.setdefault("sqls", []).append(sql)
+        captured.setdefault("params", []).append(params)
+        return []
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    LogsysProvider()._inventory_lines({"supplier_keyword": "1064STUDIO", "product_keyword": "ビーニー"})
+
+    sql = captured["sqls"][0]
+    assert '"仕入先名" LIKE %s' in sql
+    assert '"商品名" LIKE %s OR "型番" LIKE %s' in sql
+    assert "%1064STUDIO%" in captured["params"][0]
+
+
+def test_inventory_lines_returns_quantity_and_value_fields(monkeypatch):
+    """"論理在庫数量"・"論理在庫金額"・"実際原価"がそのまま返ること
+    （Noritsugu確認済み: 在庫金額は既に実際原価×在庫数量で計算済み）。"""
+    def _fake_query(self, sql, params=()):
+        if "GROUP BY" in sql:
+            return []
+        if "SUM" in sql:
+            return [{"在庫数量合計": 120, "在庫金額合計": 45000, "件数": 3}]
+        return [{
+            "product_id": 101, "LOGS_CODE": "5145", "商品名": "Baseball Cap", "型番": "NH-1234",
+            "色": "black", "サイズ": "F", "仕入先名": "1064STUDIO", "商品分類": 1,
+            "論理在庫数量": 50, "論理在庫金額": 18000, "実際原価": 360.0,
+        }]
+
+    from services.data_providers import LogsysProvider as _LP
+    monkeypatch.setattr(_LP, "_query", _fake_query)
+
+    result = _LP()._inventory_lines({})
+
+    assert result["records"][0]["論理在庫数量"] == 50
+    assert result["records"][0]["論理在庫金額"] == 18000
+    assert result["records"][0]["実際原価"] == 360.0
+    assert result["records"][0]["商品分類名"] == "帽子"
+    assert result["aggregate"]["在庫数量合計"] == 120
+    assert result["aggregate"]["在庫金額合計"] == 45000
+
+
+def test_inventory_by_category_groups_and_sums(monkeypatch):
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured["sql"] = sql
+        return [{"商品分類": 1, "件数": 30, "在庫数量合計": 500, "在庫金額合計": 200000}]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._inventory_by_category({})
+
+    assert "GROUP BY" in captured["sql"]
+    assert '"論理在庫数量"' in captured["sql"]
+    assert '"論理在庫金額"' in captured["sql"]
+    assert result["records"][0]["商品分類名"] == "帽子"
+    assert result["records"][0]["在庫金額合計"] == 200000
+
+
 def test_sales_by_category_supports_customer_category_group_by(monkeypatch):
     captured = {}
 

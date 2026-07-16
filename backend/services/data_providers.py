@@ -677,6 +677,91 @@ class LogsysProvider:
             row["商品分類名"] = _product_category_label(row.get("商品分類"))
         return _evidence(self.name, "product_master", "ok", f"商品マスタ {len(rows)}件を取得", rows)
 
+    def _inventory_lines(self, params: dict[str, Any]) -> dict[str, Any]:
+        """在庫（products."論理在庫数量"・"論理在庫金額"）を商品ごとに
+        取得する（2026-07-16、14.117、Noritsuguの指定・確認済み）。
+
+        - "論理在庫数量"は前回棚卸以降の仕入数量・売上数量の足し引きに
+          よる、システム計算上の在庫数量。これ以外の実測在庫データは
+          この会社のシステムには存在しない（Noritsugu確認済み — 唯一の
+          在庫情報であり、代替手段は無い）。
+        - "論理在庫金額"は既に"実際原価"（仕入確定後の原価単価、複数
+          仕入がある場合は加重平均）×"論理在庫数量"で計算済みの値。
+          「在庫金額（原価）」を聞かれた場合はこの値をそのまま使うこと
+          — Claudeが自分で計算し直す必要は無い。
+        - "論理原価"はPO発行時点の想定原価単価（未確定）であり、在庫
+          金額の計算には使わない（実際原価と紐づかない別の値）。
+        """
+        where = "1=1"
+        args: list[Any] = []
+        if params.get("supplier_keyword"):
+            where += ' AND "仕入先名" LIKE %s'
+            args.append(f"%{params['supplier_keyword']}%")
+        if params.get("product_keyword"):
+            where += ' AND ("商品名" LIKE %s OR "型番" LIKE %s)'
+            kw = f"%{params['product_keyword']}%"
+            args.extend([kw, kw])
+        if params.get("logs_code"):
+            where += ' AND "LOGS_CODE"::text = %s'
+            args.append(str(params["logs_code"]))
+
+        sql = (
+            'SELECT "ID" AS "product_id", "LOGS_CODE", "商品名", "型番", "色", "サイズ", '
+            '"仕入先名", "商品分類", "論理在庫数量", "論理在庫金額", "実際原価" '
+            f'FROM products WHERE {where} ORDER BY ABS(COALESCE("論理在庫金額", 0)) DESC'
+        )
+        rows = self._query(sql, tuple(args))
+        for row in rows:
+            row["商品分類名"] = _product_category_label(row.get("商品分類"))
+
+        agg_sql = (
+            'SELECT COALESCE(SUM("論理在庫数量"), 0) AS "在庫数量合計", '
+            'COALESCE(SUM("論理在庫金額"), 0) AS "在庫金額合計", COUNT(*) AS "件数" '
+            f'FROM products WHERE {where}'
+        )
+        agg_rows = self._query(agg_sql, tuple(args))
+        aggregate = agg_rows[0] if agg_rows else {"件数": len(rows), "在庫数量合計": 0, "在庫金額合計": 0}
+
+        evidence = _evidence(
+            self.name, "inventory_lines", "ok",
+            f"在庫 {len(rows)}件を取得。在庫数量・在庫金額の合計は必ずaggregateフィールドを"
+            f"使うこと（recordsが切り捨てられても、aggregateは正確な合計）。"
+            f"「論理在庫数量」は前回棚卸以降の仕入・売上の入力に基づくシステム上の"
+            f"計算値で、実際の物理的な棚卸数と異なる可能性がある（この会社はこれ以外の"
+            f"実測在庫データを持っていないため、唯一の在庫情報として扱うこと）。"
+            f"「論理在庫金額」は実際原価×論理在庫数量で既に計算済みの値であり、"
+            f"「在庫金額（原価）」を聞かれた場合はこの値をそのまま使うこと。",
+            rows,
+        )
+        evidence["aggregate"] = aggregate
+        return evidence
+
+    def _inventory_by_category(self, params: dict[str, Any]) -> dict[str, Any]:
+        """商品分類ごとに在庫数量・在庫金額をSQL側でGROUP BY集計する
+        （2026-07-16、14.117）。件数が多い商品分類でも200件の壁に
+        引っかからず正確に集計できる。"""
+        where = "1=1"
+        args: list[Any] = []
+        if params.get("supplier_keyword"):
+            where += ' AND "仕入先名" LIKE %s'
+            args.append(f"%{params['supplier_keyword']}%")
+
+        sql = (
+            'SELECT "商品分類", COUNT(*) AS "件数", '
+            'COALESCE(SUM("論理在庫数量"), 0) AS "在庫数量合計", '
+            'COALESCE(SUM("論理在庫金額"), 0) AS "在庫金額合計" '
+            f'FROM products WHERE {where} GROUP BY "商品分類" ORDER BY "在庫金額合計" DESC'
+        )
+        rows = self._query(sql, tuple(args))
+        for row in rows:
+            row["商品分類名"] = _product_category_label(row.get("商品分類"))
+        return _evidence(
+            self.name, "inventory_by_category", "ok",
+            f"商品分類別の在庫を{len(rows)}分類分集計しました（分類数が少ないため全件、"
+            f"切り捨てなし）。在庫金額は実際原価×論理在庫数量で既に計算済みの値です。",
+            rows,
+        )
+
     def _code_master(self, params: dict[str, Any]) -> dict[str, Any]:
         """code_masterテーブルの中身を、列名を決め打ちせず全て取得する。
 

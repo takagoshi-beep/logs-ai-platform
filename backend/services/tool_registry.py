@@ -291,6 +291,53 @@ TOOLS: list[dict[str, Any]] = [
         "input_schema": {"type": "object", "properties": {}},
     },
     {
+        "name": "get_inventory",
+        "description": (
+            "在庫（商品ごとの在庫数量・在庫金額）を取得する（2026-07-16、"
+            "14.117、Noritsuguの指定・確認済み）。"
+            "「棚卸」「在庫」「在庫数量」「在庫金額」に関する質問全てで使うこと。"
+            "【重要】「在庫数量」（`論理在庫数量`フィールド）は前回棚卸以降の仕入・"
+            "売上の入力に基づくシステム上の計算値であり、実際の物理的な棚卸数と"
+            "異なる可能性がある。この会社はこれ以外の実測在庫データを持っていない"
+            "ため、これが唯一の在庫情報である旨を必要に応じて伝えること（不正確だと"
+            "断定してはいけないが、「システム計算上の在庫」であることは明示する）。"
+            "【重要】「在庫金額（原価）」（`論理在庫金額`フィールド）は既に実際原価"
+            "（`実際原価`フィールド）×在庫数量で計算済みの値であり、Claudeが自分で"
+            "計算し直してはいけない。"
+            "supplier_keyword（仕入先名）・product_keyword（商品名・型番）・"
+            "logs_codeで絞り込める。"
+            "【合計金額・件数は必ず結果の`aggregate`フィールドを使うこと。`records`は"
+            "件数が多い場合に先頭200件だけに切り捨てられることがあるが、`aggregate`は"
+            "指定した条件全体に対してSQL側で正確に計算した値】"
+            "商品分類ごとの在庫合計が知りたい場合は、records/aggregateではなく"
+            "get_inventory_by_categoryを使うこと（分類は数種類しかないため200件の"
+            "壁に引っかからず、正確に集計できる）。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "supplier_keyword": {"type": "string", "description": "仕入先名の部分一致キーワード"},
+                "product_keyword": {"type": "string", "description": "商品名・型番の部分一致キーワード"},
+                "logs_code": {"type": "string", "description": "LOGS_CODEの完全一致検索"},
+            },
+        },
+    },
+    {
+        "name": "get_inventory_by_category",
+        "description": (
+            "商品分類ごとの在庫数量・在庫金額をSQL側でGROUP BY集計する"
+            "（2026-07-16、14.117）。「商品分類（帽子・バッグ等）ごとの在庫は"
+            "どれくらいあるか」のような質問に使う。分類は数種類しかないため"
+            "200件の壁に一切引っかからず、常に正確な全件集計が返る。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "supplier_keyword": {"type": "string", "description": "仕入先名の部分一致キーワード"},
+            },
+        },
+    },
+    {
         "name": "get_cancelled_sales",
         "description": "仮出庫（未確定出荷）の売上を取得する。正式な売上集計には含めるべきではないデータ。",
         "input_schema": {
@@ -645,6 +692,10 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
             result = _PROVIDERS["logsys"].fetch("customer_master", tool_input)
         elif tool_name == "get_product_master":
             result = _PROVIDERS["logsys"].fetch("product_master", tool_input)
+        elif tool_name == "get_inventory":
+            result = _PROVIDERS["logsys"].fetch("inventory_lines", tool_input)
+        elif tool_name == "get_inventory_by_category":
+            result = _PROVIDERS["logsys"].fetch("inventory_by_category", tool_input)
         elif tool_name == "get_code_master":
             result = _PROVIDERS["logsys"].fetch("code_master", tool_input)
         elif tool_name == "get_cancelled_sales":

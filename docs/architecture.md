@@ -4041,6 +4041,39 @@ test_router.py`に2件追加（`/home`・`/chat`がBackgroundTasks経由で
 に2件追加（管理者以外は403、管理者はアクセス可）。511件全てパス。
 フロントエンドは`npx tsc --noEmit`・`npm run build`両方で確認済み。
 
+## 14.117 在庫（棚卸）に関する問い合わせに対応 (2026-07-16)
+
+実チャットで`report_capability_gap`が正しく機能した実例（「1064STUIDOの
+在庫商品の数量と在庫金額（原価）」という質問に対し、機能不足を正直に
+記録した）を受け、Noritsuguの指定で在庫問い合わせ機能を実装した。
+
+**業務ルールの確認（Noritsugu確認済み）:**
+- `products."論理在庫数量"`は、前回棚卸以降の仕入数量・売上数量の
+  足し引きによる、システム計算上の在庫数量。これ以外の実測在庫データ
+  はこの会社のシステムには存在しない（唯一の在庫情報であり、代替手段
+  は無い）。
+- `products."論理在庫金額"`は既に`"実際原価"`（仕入確定後の原価単価、
+  複数仕入がある場合は加重平均）×`"論理在庫数量"`で計算済みの値。
+  「在庫金額（原価）」を聞かれた場合はこの値をそのまま使えばよい。
+- `products."論理原価"`はPO発行時点の想定原価単価（未確定）であり、
+  在庫金額の計算には使わない別の値。
+
+**実装:**
+- `data_providers.py`（`LogsysProvider`）に`_inventory_lines`・
+  `_inventory_by_category`を新設。`supplier_keyword`（仕入先名）・
+  `product_keyword`（商品名・型番）・`logs_code`で絞り込める。
+  件数・在庫数量合計・在庫金額合計は`aggregate`フィールドで正確な値を
+  返す（200件の壁の影響を受けない）。
+- `get_inventory_by_category`は商品分類ごとにSQL側でGROUP BY集計する
+  （`get_sales_by_category`と同じ設計）。
+- `tool_registry.py`に`get_inventory`・`get_inventory_by_category`の
+  ツール定義を追加。説明文に、在庫数量が実測ではなくシステム計算上の
+  値であること、在庫金額は既に計算済みで再計算不要であることを明記。
+
+`tests/backend/test_data_providers_enrichment.py`に4件追加
+（supplier_keyword/product_keywordでの絞り込み確認、在庫数量・在庫金額・
+実際原価フィールドの確認、商品分類別集計の確認）。514件全てパス。
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.
