@@ -4074,6 +4074,39 @@ test_router.py`に2件追加（`/home`・`/chat`がBackgroundTasks経由で
 （supplier_keyword/product_keywordでの絞り込み確認、在庫数量・在庫金額・
 実際原価フィールドの確認、商品分類別集計の確認）。514件全てパス。
 
+## 14.118 ツール説明文・system promptの軽量化(コスト削減) (2026-07-16)
+
+`/settings`の「利用量・コスト」を見たNoritsuguから「実際の使用感より
+高い気がする」との指摘。調査したところ、system prompt + 全25ツールの
+説明文を合わせて約1.4万トークン相当あり、これが**chatのツール呼び出し
+ラウンドごとに毎回送信されている**ことが判明した（`generate_with_tools`
+は会話履歴も含めて毎ラウンド全量を再送信するため、会話が続くほど
+1回あたりの送信量も増える構造）。
+
+ツール説明文の多くには、開発時の経緯（「2026-07-14に発見された不具合の
+修正」等の日付・バージョン番号・実例への言及）が詳しく書き込まれていた。
+これは`docs/architecture.md`の記録としては価値があるが、実行時にClaude
+が読む説明文としては不要なため、以下のツールの説明文・system prompt
+本体から、日付・バージョン番号・「〜実例があります」という経緯の記述を
+削除し、「正しい使い方」のルールのみに絞った（ルール自体の意味・挙動は
+一切変更していない、文言の圧縮のみ）: `get_sales_lines`・
+`get_sales_by_category`・`get_import_cost_estimate`・`get_projects`・
+`get_inventory`・`get_inventory_by_category`・`get_budget_forecast`・
+`get_purchase_surcharges`・`get_customer_contacts`・
+`get_ongoing_samples_by_staff`・`get_my_projects`・
+`report_capability_gap`、および`chat_agent.py`のsystem prompt本体。
+
+計測（system prompt + 全ツール定義JSONの文字数）: 22,927文字→21,525
+文字（約6%削減、推定トークン数で約800〜900トークン/呼び出しの削減）。
+
+`get_purchase_lines`は`knowledge/semantic/purchase.md`から動的に読み込む
+輸入経費率の定義（14.62の「knowledge/を唯一の正とする」設計）を含み、
+そちらにも経緯の記述が残っているが、この知識ファイルは他の消費者にも
+再利用される可能性があるため、今回は対象外とした（別途相談の上で対応
+するかどうか判断する）。
+
+文言のみの変更のため、既存テストの構造には影響なし。514件全てパス。
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.
