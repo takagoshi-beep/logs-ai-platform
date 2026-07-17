@@ -73,6 +73,30 @@ def _currency_label(code: Any) -> str | None:
         return str(code)
 
 
+def _parse_date_flexible(value: Any) -> datetime | None:
+    """PO発行日・Delivery_納品日等、スプレッドシート由来の日付を安全に
+    パースする（datetimeオブジェクトのまま返ってくる場合と、"2026/07/06"
+    のようなスラッシュ区切り、"2026-07-06"のようなハイフン区切りの
+    文字列で返ってくる場合の両方に対応する — 14.107で判明した通り、
+    列によって区切り文字が異なることがあるため）。"""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    for fmt in ("%Y/%m/%d", "%Y-%m-%d", "%Y/%m/%d %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
 def _evidence(
     provider: str,
     dataset: str,
@@ -653,6 +677,78 @@ class LogsysProvider:
         )
         evidence["aggregate"] = aggregate
         return evidence
+
+    def _supplier_lead_time(self, params: dict[str, Any]) -> dict[str, Any]:
+        """仕入先（工場）ごとの平均納期（PO発行日→Delivery_納品日の日数）を
+        算出する（2026-07-16、14.120、Noritsuguの指定・確認済み）。
+
+        - 「工場」は`production_mass."工場"`（自由記述、表記ゆれの可能性が
+          ある）ではなく、`purchase_orders."仕入先ID"`/`"仕入先名"`で特定
+          する（Noritsuguの指定）。
+        - 「納期」はPO発行日からDelivery_納品日までの日数（Noritsuguの
+          指定）。"顧客納品日"は14.69でリピート発注時に前回値が残る
+          ことがあり信頼できないと判明済みのため使わない。
+        - 実際に納品が完了した案件（has_sales または production_closed、
+          get_projectsと同じ判定基準）のみを対象にする。未納品・
+          PO未発行の案件は、納期の実績として数えない
+          （Delivery_納品日が暫定値の可能性があるため）。
+        - PO発行日・Delivery_納品日の区切り文字（"/"か"-"か）が列によって
+          異なる可能性があるため（14.107参照）、SQL側の日付比較ではなく
+          Python側でパースしてから日数を計算する。
+        """
+        where = "1=1"
+        args: list[Any] = []
+        if params.get("supplier_keyword"):
+            where += ' AND po."仕入先名" LIKE %s'
+            args.append(f"%{params['supplier_keyword']}%")
+
+        sql = (
+            'SELECT po."仕入先ID", po."仕入先名", po."PO_No", po."PO発行日", po."Delivery_納品日" '
+            'FROM purchase_orders po '
+            f'WHERE {where} '
+            'AND po."PO発行日" IS NOT NULL AND po."Delivery_納品日" IS NOT NULL '
+            'AND (EXISTS(SELECT 1 FROM sales s WHERE s."LOGS_CODE" = po."LOGS_CODE") '
+            '     OR EXISTS(SELECT 1 FROM production_mass pm WHERE pm."POnum" = po."PO_No" AND pm."表示"::text = \'0\'))'
+        )
+        rows = self._query(sql, tuple(args))
+
+        by_supplier: dict[tuple, list[int]] = {}
+        skipped_unparseable = 0
+        for row in rows:
+            issued = _parse_date_flexible(row.get("PO発行日"))
+            delivered = _parse_date_flexible(row.get("Delivery_納品日"))
+            if issued is None or delivered is None:
+                skipped_unparseable += 1
+                continue
+            lead_days = (delivered - issued).days
+            if lead_days < 0:
+                skipped_unparseable += 1  # 発行日より前に納品、という明らかなデータ不整合は除外
+                continue
+            key = (row.get("仕入先ID"), row.get("仕入先名"))
+            by_supplier.setdefault(key, []).append(lead_days)
+
+        records = [
+            {
+                "仕入先ID": sid,
+                "仕入先名": sname,
+                "件数": len(days_list),
+                "平均納期日数": round(sum(days_list) / len(days_list), 1),
+                "最短納期日数": min(days_list),
+                "最長納期日数": max(days_list),
+            }
+            for (sid, sname), days_list in by_supplier.items()
+        ]
+        records.sort(key=lambda r: -r["件数"])
+
+        return _evidence(
+            self.name, "supplier_lead_time", "ok",
+            f"仕入先（工場）別の平均納期を{len(records)}社分算出しました"
+            f"（PO発行日→Delivery_納品日の日数、実際に納品完了した案件のみ対象）。"
+            f"日付が解析できなかった、または発行日より納品日が前という不整合のあった"
+            f"{skipped_unparseable}件は集計から除外しています。件数が少ない仕入先"
+            f"（例: 1〜2件）は平均値のばらつきが大きいため、参考値である旨を伝えること。",
+            records,
+        )
 
     def _customer_master(self, params: dict[str, Any]) -> dict[str, Any]:
         sql = 'SELECT "ID", "顧客名称", "営業担当者名" FROM customers WHERE 1=1'

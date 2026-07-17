@@ -223,6 +223,25 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "get_supplier_lead_time",
+        "description": (
+            "仕入先（工場）ごとの平均納期を算出する。"
+            "「〇〇工場の平均納期は？」「どの仕入先が一番早い/遅い？」のような質問に使う。"
+            "「工場」はproduction_mass等の自由記述列ではなく、purchase_ordersの"
+            "仕入先ID・仕入先名で特定する。「納期」はPO発行日からDelivery_納品日までの"
+            "日数（顧客納品日は使わない — リピート発注時に前回値が残ることがあり"
+            "信頼できないため）。実際に納品が完了した案件のみを対象にしている。"
+            "件数（`件数`フィールド）が少ない仕入先（1〜2件等）は平均値のばらつきが"
+            "大きいため、参考値である旨を必ず伝えること。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "supplier_keyword": {"type": "string", "description": "仕入先名の部分一致キーワード（省略時は全仕入先を集計）"},
+            },
+        },
+    },
+    {
         "name": "get_customer_master",
         "description": (
             "顧客マスタを検索する。顧客名の表記ゆれ確認・名寄せ・営業担当者の確認に使う"
@@ -671,6 +690,8 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], user_email: str | N
             result = _PROVIDERS["logsys"].fetch("find_similar_name", tool_input)
         elif tool_name == "get_projects":
             result = _PROVIDERS["logsys"].fetch("projects", tool_input)
+        elif tool_name == "get_supplier_lead_time":
+            result = _PROVIDERS["logsys"].fetch("supplier_lead_time", tool_input)
         elif tool_name == "get_customer_master":
             result = _PROVIDERS["logsys"].fetch("customer_master", tool_input)
         elif tool_name == "get_product_master":

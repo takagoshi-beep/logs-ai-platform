@@ -916,3 +916,74 @@ def test_customer_contacts_returns_unavailable_when_empty(monkeypatch):
     monkeypatch.setattr(LogsysProvider, "_query", lambda self, sql, params=(): [])
     result = LogsysProvider()._customer_contacts({})
     assert result["status"] == "unavailable"
+
+
+def test_supplier_lead_time_filters_by_supplier_keyword(monkeypatch):
+    """14.120、Noritsuguの指定・確認済み: 「工場」はpurchase_ordersの
+    仕入先ID・仕入先名で特定し、「納期」はPO発行日からDelivery_納品日
+    までの日数で算出する。"""
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured["sql"] = sql
+        captured["params"] = params
+        return []
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    LogsysProvider()._supplier_lead_time({"supplier_keyword": "QINGDAO"})
+
+    assert 'po."仕入先名" LIKE %s' in captured["sql"]
+    assert "%QINGDAO%" in captured["params"]
+    assert 'po."顧客納品日"' not in captured["sql"]  # 顧客納品日は使わない
+    assert 'po."Delivery_納品日"' in captured["sql"]
+    assert 'po."PO発行日"' in captured["sql"]
+    # get_projectsと同じ納品判定基準（has_sales または production_closed）を使う
+    assert 'EXISTS(SELECT 1 FROM sales s' in captured["sql"]
+    assert 'production_mass pm' in captured["sql"]
+
+
+def test_supplier_lead_time_computes_average_by_supplier(monkeypatch):
+    def _fake_query(self, sql, params=()):
+        return [
+            {"仕入先ID": 1029, "仕入先名": "QINGDAO CHUNXIN CO.,LTD.", "PO_No": "PO-1",
+             "PO発行日": "2026/01/01", "Delivery_納品日": "2026/03/01"},  # 59日
+            {"仕入先ID": 1029, "仕入先名": "QINGDAO CHUNXIN CO.,LTD.", "PO_No": "PO-2",
+             "PO発行日": "2026-02-01", "Delivery_納品日": "2026-04-02"},  # 60日（ハイフン区切りでも対応）
+            {"仕入先ID": 1064, "仕入先名": "1064STUDIO", "PO_No": "PO-3",
+             "PO発行日": "2026/05/01", "Delivery_納品日": "2026/05/31"},  # 30日
+        ]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._supplier_lead_time({})
+
+    by_name = {r["仕入先名"]: r for r in result["records"]}
+    assert by_name["QINGDAO CHUNXIN CO.,LTD."]["件数"] == 2
+    assert by_name["QINGDAO CHUNXIN CO.,LTD."]["平均納期日数"] == 59.5
+    assert by_name["QINGDAO CHUNXIN CO.,LTD."]["最短納期日数"] == 59
+    assert by_name["QINGDAO CHUNXIN CO.,LTD."]["最長納期日数"] == 60
+    assert by_name["1064STUDIO"]["件数"] == 1
+    assert by_name["1064STUDIO"]["平均納期日数"] == 30
+
+
+def test_supplier_lead_time_excludes_unparseable_and_negative_lead_times(monkeypatch):
+    """日付がパースできない行や、発行日より納品日が前という明らかな
+    データ不整合の行は集計から除外する。"""
+    def _fake_query(self, sql, params=()):
+        return [
+            {"仕入先ID": 1, "仕入先名": "正常な仕入先", "PO_No": "PO-1",
+             "PO発行日": "2026/01/01", "Delivery_納品日": "2026/02/01"},  # 31日、正常
+            {"仕入先ID": 2, "仕入先名": "日付不正", "PO_No": "PO-2",
+             "PO発行日": "不明", "Delivery_納品日": "2026/02/01"},  # パース不可
+            {"仕入先ID": 3, "仕入先名": "順序が逆", "PO_No": "PO-3",
+             "PO発行日": "2026/03/01", "Delivery_納品日": "2026/01/01"},  # 納品日が発行日より前
+        ]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._supplier_lead_time({})
+
+    supplier_names = {r["仕入先名"] for r in result["records"]}
+    assert supplier_names == {"正常な仕入先"}
+    assert "2件" in result["summary"] or "2" in result["summary"]
