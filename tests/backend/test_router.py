@@ -149,21 +149,26 @@ def test_chat_returns_conversational_shape(monkeypatch):
 
 
 def test_chat_records_question_via_background_task(monkeypatch):
-    """14.116、Noritsuguの指定: 相談で実際に送信された質問文を記録する。
-    レスポンスをブロックしないようBackgroundTasks経由で呼ばれること。"""
+    """14.116・14.122、Noritsuguの指定: 相談で実際に送信された質問文と、
+    AIが実際に返した回答文の両方を記録する。レスポンスをブロックしない
+    ようBackgroundTasks経由で呼ばれること。"""
     from services import access_log, chat_agent
 
     recorded = []
     monkeypatch.setattr(chat_agent, "generate_with_tools", lambda **kwargs: ("回答", []))
     monkeypatch.setattr(
-        access_log, "record_chat_question",
-        lambda user_email, user_name, question_text: recorded.append((user_email, question_text)),
+        access_log, "record_chat_exchange",
+        lambda user_email, user_name, question_text, answer_text=None: recorded.append(
+            (user_email, question_text, answer_text)
+        ),
     )
 
     response = _client().post("/api/chat", json={"user_id": "u", "role": "sales", "message": "テスト質問です"})
 
     assert response.status_code == 200
     assert len(recorded) == 1
+    assert recorded[0][1] == "テスト質問です"
+    assert recorded[0][2] == "回答"
     assert recorded[0][1] == "テスト質問です"
 
 

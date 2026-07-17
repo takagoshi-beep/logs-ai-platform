@@ -50,11 +50,20 @@ def record_page_view(user_email: str, user_name: str | None, page: str) -> None:
         print(f"[access_log] Failed to record page view: {e}")
 
 
-def record_chat_question(user_email: str, user_name: str | None, question_text: str) -> None:
-    """相談（chat）で実際に送信された質問文をそのまま記録する。
+def record_chat_exchange(
+    user_email: str, user_name: str | None, question_text: str, answer_text: str | None = None,
+) -> None:
+    """相談（chat）で実際に送信された質問文と、AIが実際に返した回答文の
+    両方を記録する。
 
-    社員の質問内容を記録するため、社内での周知・合意のもとで運用する
-    こと（Noritsuguの指定で実装、2026-07-16）。
+    2026-07-17（14.122、Noritsuguの指定）: 以前は質問文だけを記録して
+    いたが、実チャットでAIの回答に問題があった疑いが見つかった際、
+    担当者が既に画面を閉じてしまっていて回答内容を確認できなかった実例
+    があった。回答もあわせて記録することで、後から問題を追跡できる
+    ようにする。
+
+    社員の質問内容・AIの回答内容を記録するため、社内での周知・合意の
+    もとで運用すること（Noritsuguの指定で実装、2026-07-16）。
     """
     try:
         record_store.append_record(ACCESS_LOG_TABLE, {
@@ -62,14 +71,16 @@ def record_chat_question(user_email: str, user_name: str | None, question_text: 
             "user_email": user_email,
             "user_name": user_name,
             "question_text": question_text,
+            "answer_text": answer_text,
             "recorded_at": datetime.now(timezone.utc).isoformat(),
         })
     except Exception as e:
-        print(f"[access_log] Failed to record chat question: {e}")
+        print(f"[access_log] Failed to record chat exchange: {e}")
 
 
 def get_access_summary(recent_questions_limit: int = 20) -> dict[str, Any]:
-    """ユーザーごとのページ別閲覧回数と、直近の相談内容一覧を返す。"""
+    """ユーザーごとのページ別閲覧回数と、直近の相談内容（質問・回答の
+    両方）一覧を返す。"""
     records = record_store.read_all_records(ACCESS_LOG_TABLE)
 
     by_user: dict[str, dict[str, Any]] = defaultdict(
@@ -91,6 +102,7 @@ def get_access_summary(recent_questions_limit: int = 20) -> dict[str, Any]:
                 "user_email": email,
                 "user_name": r.get("user_name"),
                 "question_text": r.get("question_text"),
+                "answer_text": r.get("answer_text"),
                 "recorded_at": r.get("recorded_at"),
             })
 

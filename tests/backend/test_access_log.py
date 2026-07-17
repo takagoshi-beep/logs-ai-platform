@@ -24,7 +24,7 @@ def test_record_page_view_and_summary_counts_by_user_and_page():
 
 
 def test_record_chat_question_appears_in_recent_questions_and_counts():
-    access_log.record_chat_question("kimura@logs.co.jp", "木村美菜", "王家さんの今月到着予定のサンプルを教えて")
+    access_log.record_chat_exchange("kimura@logs.co.jp", "木村美菜", "王家さんの今月到着予定のサンプルを教えて")
 
     summary = access_log.get_access_summary()
     user = next(u for u in summary["users"] if u["user_email"] == "kimura@logs.co.jp")
@@ -36,12 +36,35 @@ def test_record_chat_question_appears_in_recent_questions_and_counts():
     )
 
 
+def test_record_chat_exchange_includes_answer_text():
+    """14.122、Noritsuguの指定: 実チャットでAIの回答に問題があった疑いが
+    見つかった際、担当者が既に画面を閉じてしまっていて確認できなかった
+    実例があったため、質問だけでなくAIの回答も記録する。"""
+    access_log.record_chat_exchange(
+        "kimura@logs.co.jp", "木村美菜", "在庫を教えて", "在庫は120個、金額は45,000円です。",
+    )
+
+    summary = access_log.get_access_summary()
+    entry = next(
+        q for q in summary["recent_chat_questions"] if q["question_text"] == "在庫を教えて"
+    )
+    assert entry["answer_text"] == "在庫は120個、金額は45,000円です。"
+
+
+def test_record_chat_exchange_without_answer_defaults_to_none():
+    access_log.record_chat_exchange("kimura@logs.co.jp", "木村美菜", "質問のみ")
+
+    summary = access_log.get_access_summary()
+    entry = next(q for q in summary["recent_chat_questions"] if q["question_text"] == "質問のみ")
+    assert entry["answer_text"] is None
+
+
 def test_recent_chat_questions_sorted_newest_first(monkeypatch):
     import time
 
-    access_log.record_chat_question("a@logs.co.jp", "A", "1つ目の質問")
+    access_log.record_chat_exchange("a@logs.co.jp", "A", "1つ目の質問")
     time.sleep(0.001)
-    access_log.record_chat_question("b@logs.co.jp", "B", "2つ目の質問")
+    access_log.record_chat_exchange("b@logs.co.jp", "B", "2つ目の質問")
 
     summary = access_log.get_access_summary()
     texts = [q["question_text"] for q in summary["recent_chat_questions"]]
@@ -51,7 +74,7 @@ def test_recent_chat_questions_sorted_newest_first(monkeypatch):
 
 def test_recent_chat_questions_respects_limit():
     for i in range(30):
-        access_log.record_chat_question("a@logs.co.jp", "A", f"質問{i}")
+        access_log.record_chat_exchange("a@logs.co.jp", "A", f"質問{i}")
 
     summary = access_log.get_access_summary(recent_questions_limit=5)
     assert len(summary["recent_chat_questions"]) == 5
@@ -60,7 +83,7 @@ def test_recent_chat_questions_respects_limit():
 def test_get_access_summary_orders_users_by_total_activity():
     access_log.record_page_view("busy@logs.co.jp", "多忙な人", "home")
     access_log.record_page_view("busy@logs.co.jp", "多忙な人", "products")
-    access_log.record_chat_question("busy@logs.co.jp", "多忙な人", "質問")
+    access_log.record_chat_exchange("busy@logs.co.jp", "多忙な人", "質問")
     access_log.record_page_view("quiet@logs.co.jp", "静かな人", "home")
 
     summary = access_log.get_access_summary()
@@ -83,4 +106,4 @@ def test_record_functions_never_raise_even_if_persistence_fails(monkeypatch):
     monkeypatch.setattr("services.record_store.append_record", _boom)
 
     access_log.record_page_view("a@logs.co.jp", "A", "home")  # 例外を投げない
-    access_log.record_chat_question("a@logs.co.jp", "A", "質問")  # 例外を投げない
+    access_log.record_chat_exchange("a@logs.co.jp", "A", "質問")  # 例外を投げない

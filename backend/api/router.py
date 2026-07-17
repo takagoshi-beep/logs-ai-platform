@@ -65,15 +65,21 @@ def chat(req: ChatRequest, user: dict = Depends(require_login), background_tasks
     等「本人自身のデータ」を扱うツールがどのユーザーのものを取得すべきか
     判断するため（14.27, Gmail/Slack連携）。
 
-    2026-07-16（14.116、Noritsuguの指定）: 実際に送信された質問文自体を
-    記録する。社員の質問内容を記録する機能のため、社内での周知・合意の
-    もとで運用すること。BackgroundTasksで記録するため応答速度には
-    影響しない。
+    2026-07-16・17（14.116・14.122、Noritsuguの指定）: 実際に送信された
+    質問文と、AIが実際に返した回答文の両方を記録する（回答も記録する
+    ようにしたのは、実チャットでAIの回答に問題があった疑いが見つかった
+    際、担当者が既に画面を閉じてしまっていて確認できなかった実例が
+    あったため）。社員の質問・回答内容を記録する機能のため、社内での
+    周知・合意のもとで運用すること。BackgroundTasksで記録するため
+    応答速度には影響しない。
     """
+    response = chat_agent.answer(req.message, req.session_id, user_email=user.get("email"))
     if background_tasks is not None:
-        from services.access_log import record_chat_question
-        background_tasks.add_task(record_chat_question, user.get("email"), user.get("name"), req.message)
-    return chat_agent.answer(req.message, req.session_id, user_email=user.get("email"))
+        from services.access_log import record_chat_exchange
+        background_tasks.add_task(
+            record_chat_exchange, user.get("email"), user.get("name"), req.message, response.get("answer"),
+        )
+    return response
 
 
 @router.post("/reasoning")

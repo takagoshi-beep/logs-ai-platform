@@ -212,6 +212,7 @@ interface AccessLogQuestion {
   user_email: string;
   user_name: string | null;
   question_text: string | null;
+  answer_text: string | null;
   recorded_at: string | null;
 }
 
@@ -296,7 +297,8 @@ function AccessLogSection() {
                       <span>{q.user_name ?? q.user_email}</span>
                       <span>{fmtDateTime(q.recorded_at)}</span>
                     </div>
-                    <div className="mt-1 text-ink">{q.question_text ?? "—"}</div>
+                    <div className="mt-1 text-ink"><span className="text-sub">Q: </span>{q.question_text ?? "—"}</div>
+                    <div className="mt-1 whitespace-pre-wrap text-ink"><span className="text-sub">A: </span>{q.answer_text ?? "（記録なし）"}</div>
                   </div>
                 ))}
               </div>
