@@ -925,22 +925,50 @@ def test_supplier_lead_time_filters_by_supplier_keyword(monkeypatch):
     captured = {}
 
     def _fake_query(self, sql, params=()):
-        captured["sql"] = sql
-        captured["params"] = params
+        captured.setdefault("sqls", []).append(sql)
+        captured.setdefault("params_list", []).append(params)
         return []
 
     monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
 
     LogsysProvider()._supplier_lead_time({"supplier_keyword": "QINGDAO"})
 
-    assert 'po."仕入先名" LIKE %s' in captured["sql"]
-    assert "%QINGDAO%" in captured["params"]
-    assert 'po."顧客納品日"' not in captured["sql"]  # 顧客納品日は使わない
-    assert 'po."Delivery_納品日"' in captured["sql"]
-    assert 'po."PO発行日"' in captured["sql"]
+    lead_time_sql = captured["sqls"][0]
+    assert 'po."仕入先名" LIKE %s' in lead_time_sql
+    assert "%QINGDAO%" in captured["params_list"][0]
+    assert 'po."顧客納品日"' not in lead_time_sql  # 顧客納品日は使わない
+    assert 'po."Delivery_納品日"' in lead_time_sql
+    assert 'po."PO発行日"' in lead_time_sql
     # get_projectsと同じ納品判定基準（has_sales または production_closed）を使う
-    assert 'EXISTS(SELECT 1 FROM sales s' in captured["sql"]
-    assert 'production_mass pm' in captured["sql"]
+    assert 'EXISTS(SELECT 1 FROM sales s' in lead_time_sql
+    assert 'production_mass pm' in lead_time_sql
+
+
+def test_supplier_lead_time_price_query_filters_by_supplier_keyword_and_groups_by_currency(monkeypatch):
+    """14.121、Noritsuguの指定: 「この工場に頼むといくらくらいか」に
+    答えるための平均発注単価は、通貨ごとにSUM(発注金額)/SUM(発注数量)
+    で加重平均する（異なる通貨を混ぜて平均しない）。納品状況に関わらず
+    全PO行が対象（発注単価はPO発行時点で決まる値のため）。"""
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        captured.setdefault("sqls", []).append(sql)
+        captured.setdefault("params_list", []).append(params)
+        return []
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    LogsysProvider()._supplier_lead_time({"supplier_keyword": "QINGDAO"})
+
+    price_sql = captured["sqls"][1]
+    assert '"仕入先名" LIKE %s' in price_sql
+    assert "%QINGDAO%" in captured["params_list"][1]
+    assert 'GROUP BY "仕入先ID", "仕入先名", "通貨"' in price_sql
+    assert 'SUM("発注金額")' in price_sql
+    assert 'SUM("発注数量")' in price_sql
+    # 納品状況（has_sales/production_closed）は発注単価の集計条件には含めない
+    assert "has_sales" not in price_sql.lower()
+    assert "production_closed" not in price_sql.lower()
 
 
 def test_supplier_lead_time_computes_average_by_supplier(monkeypatch):
@@ -987,3 +1015,28 @@ def test_supplier_lead_time_excludes_unparseable_and_negative_lead_times(monkeyp
     supplier_names = {r["仕入先名"] for r in result["records"]}
     assert supplier_names == {"正常な仕入先"}
     assert "2件" in result["summary"] or "2" in result["summary"]
+
+
+def test_supplier_lead_time_computes_weighted_average_unit_price_per_currency(monkeypatch):
+    """14.121、Noritsuguの指定: 平均発注単価は輸入経費を含まない、工場側の
+    見積もり単価そのもの（SUM(発注金額)/SUM(発注数量)、通貨ごとに分ける）。"""
+    def _fake_query(self, sql, params=()):
+        if "GROUP BY" in sql:  # 発注単価の集計クエリ
+            return [
+                {"仕入先ID": 1029, "仕入先名": "QINGDAO CHUNXIN CO.,LTD.", "通貨": 1,
+                 "発注金額合計": 10000, "発注数量合計": 500, "PO件数": 3},  # USD、平均20.0
+                {"仕入先ID": 1029, "仕入先名": "QINGDAO CHUNXIN CO.,LTD.", "通貨": 2,
+                 "発注金額合計": 300000, "発注数量合計": 1000, "PO件数": 1},  # 円、平均300.0
+            ]
+        return []  # 納期の集計クエリ（今回は空でよい）
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._supplier_lead_time({})
+
+    record = next(r for r in result["records"] if r["仕入先名"] == "QINGDAO CHUNXIN CO.,LTD.")
+    breakdown = {b["通貨"]: b for b in record["平均発注単価内訳"]}
+    assert breakdown["USD"]["平均発注単価"] == 20.0
+    assert breakdown["USD"]["PO件数"] == 3
+    assert breakdown["円"]["平均発注単価"] == 300.0
+    assert breakdown["円"]["PO件数"] == 1

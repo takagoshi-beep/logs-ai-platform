@@ -679,8 +679,9 @@ class LogsysProvider:
         return evidence
 
     def _supplier_lead_time(self, params: dict[str, Any]) -> dict[str, Any]:
-        """仕入先（工場）ごとの平均納期（PO発行日→Delivery_納品日の日数）を
-        算出する（2026-07-16、14.120、Noritsuguの指定・確認済み）。
+        """仕入先（工場）ごとの平均納期（PO発行日→Delivery_納品日の日数）・
+        平均発注単価を算出する（2026-07-16、14.120〜14.121、Noritsuguの
+        指定・確認済み）。
 
         - 「工場」は`production_mass."工場"`（自由記述、表記ゆれの可能性が
           ある）ではなく、`purchase_orders."仕入先ID"`/`"仕入先名"`で特定
@@ -695,6 +696,19 @@ class LogsysProvider:
         - PO発行日・Delivery_納品日の区切り文字（"/"か"-"か）が列によって
           異なる可能性があるため（14.107参照）、SQL側の日付比較ではなく
           Python側でパースしてから日数を計算する。
+
+        2026-07-16（14.121、Noritsuguの指定）:「この工場に頼むといくら
+        くらいか」に答えるため、平均発注単価も算出する。ここでは意図的に
+        `purchase_orders."発注単価"`（工場側の見積もり単価そのもの）を
+        使い、`purchases."実際原価"`（諸掛込＝輸入経費込みの確定原価）は
+        使わない — 輸入経費（輸送方法・為替・関税等）は発注ごとの事情で
+        変動するため、それを含めると「工場自体の単価」という質問の答え
+        としてはノイズになる（Noritsuguの指定）。同じ仕入先でも通貨が
+        複数ありうるため、必ず"仕入先ID"・"仕入先名"に加えて"通貨"単位で
+        分けて加重平均する（異なる通貨の単価を混ぜて平均しない）。
+        納期の集計とは異なり、発注単価はPO発行時点で決まる値のため、
+        納品が完了しているかどうかに関わらず、発注単価・発注数量・通貨が
+        揃っている行は全て対象にする。
         """
         where = "1=1"
         args: list[Any] = []
@@ -727,26 +741,65 @@ class LogsysProvider:
             key = (row.get("仕入先ID"), row.get("仕入先名"))
             by_supplier.setdefault(key, []).append(lead_days)
 
+        # 2026-07-16（14.121）: 平均発注単価（通貨ごとに加重平均 —
+        # SUM(発注金額)/SUM(発注数量)、14.52と同じSUM/SUM加重平均の考え方）。
+        # 納期の集計とは別に、納品状況を問わず全PO行を対象にする。
+        price_where = "1=1"
+        price_args: list[Any] = []
+        if params.get("supplier_keyword"):
+            price_where += ' AND "仕入先名" LIKE %s'
+            price_args.append(f"%{params['supplier_keyword']}%")
+        price_sql = (
+            'SELECT "仕入先ID", "仕入先名", "通貨", '
+            'SUM("発注金額") AS "発注金額合計", SUM("発注数量") AS "発注数量合計", COUNT(*) AS "PO件数" '
+            'FROM purchase_orders '
+            f'WHERE {price_where} AND "発注単価" IS NOT NULL AND "発注数量" IS NOT NULL '
+            'AND "発注数量" != 0 '
+            'GROUP BY "仕入先ID", "仕入先名", "通貨"'
+        )
+        price_rows = self._query(price_sql, tuple(price_args))
+        price_by_supplier: dict[tuple, list[dict[str, Any]]] = {}
+        for row in price_rows:
+            qty_total = row.get("発注数量合計") or 0
+            if not qty_total:
+                continue
+            key = (row.get("仕入先ID"), row.get("仕入先名"))
+            price_by_supplier.setdefault(key, []).append({
+                "通貨": _currency_label(row.get("通貨")),
+                "平均発注単価": round((row.get("発注金額合計") or 0) / qty_total, 2),
+                "PO件数": row.get("PO件数"),
+            })
+
+        all_keys = set(by_supplier.keys()) | set(price_by_supplier.keys())
         records = [
             {
                 "仕入先ID": sid,
                 "仕入先名": sname,
-                "件数": len(days_list),
-                "平均納期日数": round(sum(days_list) / len(days_list), 1),
-                "最短納期日数": min(days_list),
-                "最長納期日数": max(days_list),
+                "件数": len(by_supplier.get((sid, sname), [])),
+                "平均納期日数": (
+                    round(sum(by_supplier[(sid, sname)]) / len(by_supplier[(sid, sname)]), 1)
+                    if by_supplier.get((sid, sname)) else None
+                ),
+                "最短納期日数": min(by_supplier[(sid, sname)]) if by_supplier.get((sid, sname)) else None,
+                "最長納期日数": max(by_supplier[(sid, sname)]) if by_supplier.get((sid, sname)) else None,
+                "平均発注単価内訳": price_by_supplier.get((sid, sname), []),
             }
-            for (sid, sname), days_list in by_supplier.items()
+            for (sid, sname) in all_keys
         ]
         records.sort(key=lambda r: -r["件数"])
 
         return _evidence(
             self.name, "supplier_lead_time", "ok",
-            f"仕入先（工場）別の平均納期を{len(records)}社分算出しました"
-            f"（PO発行日→Delivery_納品日の日数、実際に納品完了した案件のみ対象）。"
+            f"仕入先（工場）別の平均納期・平均発注単価を{len(records)}社分算出しました"
+            f"（納期はPO発行日→Delivery_納品日の日数、実際に納品完了した案件のみ対象）。"
             f"日付が解析できなかった、または発行日より納品日が前という不整合のあった"
-            f"{skipped_unparseable}件は集計から除外しています。件数が少ない仕入先"
-            f"（例: 1〜2件）は平均値のばらつきが大きいため、参考値である旨を伝えること。",
+            f"{skipped_unparseable}件は納期の集計から除外しています。件数が少ない仕入先"
+            f"（例: 1〜2件）は平均値のばらつきが大きいため、参考値である旨を伝えること。"
+            f"`平均発注単価内訳`は輸入経費（輸送方法・為替・関税等）を含まない、"
+            f"工場側の見積もり単価そのもの（発注ごとに変動する輸入経費を含めると"
+            f"「工場自体の単価」という問いの答えとしてノイズになるため、意図的に除外）。"
+            f"通貨が異なる単価を混同して比較・合算してはいけない（`通貨`フィールドを"
+            f"必ず確認すること）。",
             records,
         )
 
