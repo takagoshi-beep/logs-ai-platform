@@ -393,7 +393,7 @@ class LogsysProvider:
             '    AND "伝票日" >= CURRENT_DATE - INTERVAL \'1 year\' '
             '  GROUP BY "伝票番号"'
             ') '
-            'SELECT "伝票番号", "輸送方法", "仕入先名", "合計数量pcs", '
+            'SELECT "伝票番号", "輸送方法", "仕入先名", "合計数量pcs", "合計仕入金額円", '
             '       "合計諸掛込金額円" / "合計仕入金額円" AS "経費率" '
             'FROM voucher_agg '
             'WHERE "合計数量pcs" BETWEEN %s AND %s'

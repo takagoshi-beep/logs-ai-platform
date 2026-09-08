@@ -541,6 +541,55 @@ def test_import_cost_estimate_groups_by_transport_method_with_real_data(monkeypa
     assert "HAEDONG TRADING" in by_transport["FERRY_CFS"]["主な仕入先"]
 
 
+def test_import_cost_estimate_main_query_selects_every_column_the_code_reads(monkeypatch):
+    """2026-09-08（14.127、Noritsuguが実チャットで発見）: 14.124で
+    実績平均単価を算出するコード（`r["合計仕入金額円"]`）を追加した際、
+    メインクエリの外側のSELECT文にはこの列を実際には含めていなかった
+    （CTE内部でのみ計算し、外側のSELECTで返していなかった）。テストは
+    `_query`をモックしており、モックの返り値には直接この列を含めて
+    いたため、この食い違いを検出できず、本番でKeyErrorが発生して
+    ツール全体が"unavailable"（実質的な機能停止）になっていた。
+
+    この回帰を防ぐため、実際のSQL文字列に対して素朴な列抽出を行い、
+    "FROM voucher_agg"以降の外側のSELECT句に含まれる列名が、
+    コードが辞書アクセス（`row["列名"]`、`.get`ではなく）で読んでいる
+    列を全てカバーしていることを確認する。"""
+    import re
+
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        if "為替" in sql and "FROM purchases WHERE" in sql:
+            return [{"為替": 155.0}]
+        captured["sql"] = sql
+        return []
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    LogsysProvider()._import_cost_estimate(
+        {"quantity": 300, "unit_price_usd": 3, "category_code": 7}
+    )
+
+    sql = captured["sql"]
+    # 外側のSELECT句だけを見る（CTEの"GROUP BY"句より後、
+    # "FROM voucher_agg"より前の部分）。
+    outer_select = sql.split("GROUP BY", 1)[1].split("FROM voucher_agg")[0]
+    # "合計仕入金額円"は経費率の計算式（"合計諸掛込金額円" / "合計仕入金額円"）
+    # の中にも登場するため、単純な文字列の有無だけでは「独立した出力列として
+    # 選択されているか」を区別できない。独立した列として選択されていれば
+    # （"合計数量pcs", "合計仕入金額円", "合計諸掛込金額円" / ... のように）
+    # 2回（列として1回、計算式の中で1回）出現するはず。計算式の中だけに
+    # しか無ければ1回しか出現しない。
+    occurrences = outer_select.count('"合計仕入金額円"')
+    assert occurrences >= 2, (
+        f'外側のSELECT句に"合計仕入金額円"が独立した列として含まれていない'
+        f"（出現回数: {occurrences}、計算式の中だけにしか無い可能性がある）— "
+        f'コード側でr["合計仕入金額円"]を読んでいるならKeyErrorになる'
+    )
+    assert '"合計数量pcs"' in outer_select
+    assert '"経費率"' in outer_select
+
+
 def test_import_cost_estimate_includes_assumed_price_and_actual_average_reference(monkeypatch):
     """2026-09-08（14.124、Noritsuguの指摘）: 想定商品原価（仕入金額）が
     結果に含まれておらず、その根拠（想定単価）も明示されないまま提示
