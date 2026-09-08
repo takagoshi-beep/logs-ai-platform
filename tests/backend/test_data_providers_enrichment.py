@@ -497,9 +497,9 @@ def test_import_cost_estimate_groups_by_transport_method_with_real_data(monkeypa
         if calls["n"] == 1:
             return [{"為替": 160.0}]
         return [
-            {"伝票番号": "V1", "輸送方法": 4, "仕入先名": "HAEDONG TRADING", "合計数量pcs": 100, "経費率": 1.20},
-            {"伝票番号": "V2", "輸送方法": 4, "仕入先名": "HAEDONG TRADING", "合計数量pcs": 105, "経費率": 1.30},
-            {"伝票番号": "V3", "輸送方法": 6, "仕入先名": "QINGDAO CHUNXIN", "合計数量pcs": 95, "経費率": 1.15},
+            {"伝票番号": "V1", "輸送方法": 4, "仕入先名": "HAEDONG TRADING", "合計数量pcs": 100, "合計仕入金額円": 50000, "経費率": 1.20},
+            {"伝票番号": "V2", "輸送方法": 4, "仕入先名": "HAEDONG TRADING", "合計数量pcs": 105, "合計仕入金額円": 52000, "経費率": 1.30},
+            {"伝票番号": "V3", "輸送方法": 6, "仕入先名": "QINGDAO CHUNXIN", "合計数量pcs": 95, "合計仕入金額円": 48000, "経費率": 1.15},
         ]
 
     monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
@@ -517,6 +517,41 @@ def test_import_cost_estimate_groups_by_transport_method_with_real_data(monkeypa
     assert "HAEDONG TRADING" in by_transport["FERRY_CFS"]["主な仕入先"]
 
 
+def test_import_cost_estimate_includes_assumed_price_and_actual_average_reference(monkeypatch):
+    """2026-09-08（14.124、Noritsuguの指摘）: 想定商品原価（仕入金額）が
+    結果に含まれておらず、その根拠（想定単価）も明示されないまま提示
+    されていたため、見た人が想定の妥当性を判断できなかった。想定単価・
+    商品原価を各行に含め、同じ条件の実データから算出した実績平均単価
+    （参考値）もあわせて返すことで、想定が実績とかけ離れていないか
+    判断できるようにする。"""
+    calls = {"n": 0}
+
+    def _fake_query(self, sql, params=()):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return [{"為替": 155.0}]
+        return [
+            # 実績: 合計仕入金額46,500円・合計数量300個 → 実績平均単価は155円/個(=1USD/個)
+            {"伝票番号": "V1", "輸送方法": 4, "仕入先名": "GUANGZHOU AITINA", "合計数量pcs": 300, "合計仕入金額円": 46500, "経費率": 1.185},
+        ]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    # 質問では単価3USD/個が明示されていた、という想定
+    result = LogsysProvider()._import_cost_estimate(
+        {"quantity": 300, "unit_price_usd": 3, "category_code": 7}
+    )
+
+    record = result["records"][0]
+    assert record["想定単価USD"] == 3
+    assert record["商品原価円"] == 300 * 3 * 155.0  # 想定単価ベースの商品原価
+    assert record["実績平均単価USD_参考"] == round(155.0 / 155.0, 2)  # 実績: 46500/300/155 = 1.0
+
+    # 想定単価(3USD)と実績平均単価(1USD)が大きく異なる場合、summaryにその旨が含まれること
+    assert "実績平均単価" in result["summary"]
+    assert "乖離" in result["summary"] or "異なる" in result["summary"]
+
+
 def test_import_cost_estimate_excludes_newhattan_by_default(monkeypatch):
     calls = {"n": 0}
 
@@ -525,7 +560,7 @@ def test_import_cost_estimate_excludes_newhattan_by_default(monkeypatch):
         if calls["n"] == 1:
             return [{"為替": 160.0}]
         return [
-            {"伝票番号": "V1", "輸送方法": 4, "仕入先名": "NEWHATTAN JAPAN", "合計数量pcs": 100, "経費率": 1.20},
+            {"伝票番号": "V1", "輸送方法": 4, "仕入先名": "NEWHATTAN JAPAN", "合計数量pcs": 100, "合計仕入金額円": 50000, "経費率": 1.20},
         ]
 
     monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
@@ -545,7 +580,7 @@ def test_import_cost_estimate_includes_newhattan_when_requested(monkeypatch):
         if calls["n"] == 1:
             return [{"為替": 160.0}]
         return [
-            {"伝票番号": "V1", "輸送方法": 4, "仕入先名": "NEWHATTAN JAPAN", "合計数量pcs": 100, "経費率": 1.20},
+            {"伝票番号": "V1", "輸送方法": 4, "仕入先名": "NEWHATTAN JAPAN", "合計数量pcs": 100, "合計仕入金額円": 50000, "経費率": 1.20},
         ]
 
     monkeypatch.setattr(LogsysProvider, "_query", _fake_query)

@@ -405,6 +405,23 @@ class LogsysProvider:
                 f"直近1年の仕入データが見つかりませんでした。架空の推定値を作ってはいけない。",
             )
 
+        # 2026-09-08（14.124、Noritsuguの指摘）: 想定商品原価（仕入金額）が
+        # 結果の表に含まれておらず、その金額の根拠（想定単価）もどこにも
+        # 明示されないまま提示されていたため、見た人が想定の妥当性を判断
+        # できなかった。同じ条件の実データから実績平均単価（1個あたり）を
+        # 算出し、Claudeが渡したunit_price_usd（質問で指定された値、または
+        # Claude自身が推定した値）と並べて示すことで、想定が実績と
+        # かけ離れていないか判断できるようにする。
+        actual_total_qty = sum(r["合計数量pcs"] for r in rows)
+        actual_total_jpy = sum(r["合計仕入金額円"] for r in rows)
+        actual_avg_unit_price_jpy = (
+            round(actual_total_jpy / actual_total_qty, 1) if actual_total_qty else None
+        )
+        actual_avg_unit_price_usd = (
+            round(actual_avg_unit_price_jpy / latest_fx, 2)
+            if actual_avg_unit_price_jpy is not None else None
+        )
+
         by_transport: dict[Any, list[dict[str, Any]]] = {}
         for r in rows:
             by_transport.setdefault(r.get("輸送方法"), []).append(r)
@@ -431,6 +448,9 @@ class LogsysProvider:
                 "対象数量_平均": round(sum(quantities) / len(quantities)),
                 "対象数量_最小": min(quantities),
                 "対象数量_最大": max(quantities),
+                "想定単価USD": unit_price_usd,
+                "商品原価円": round(buy_jpy),
+                "実績平均単価USD_参考": actual_avg_unit_price_usd,
                 "推奨経費率": round(rate_med, 3),
                 "経費率_最小": round(rate_min, 3),
                 "経費率_最大": round(rate_max, 3),
@@ -445,11 +465,25 @@ class LogsysProvider:
 
         results.sort(key=lambda r: r["伝票数"], reverse=True)
 
+        price_note = (
+            f"想定単価{unit_price_usd}USD/個・商品原価{round(buy_jpy)}円（{qty}個分）を基準に計算。"
+        )
+        if actual_avg_unit_price_usd is not None:
+            price_note += (
+                f"参考: 同じ条件の実データ（{len(rows)}伝票）の実績平均単価は約"
+                f"{actual_avg_unit_price_usd}USD/個（約{actual_avg_unit_price_jpy}円/個）。"
+                f"想定単価がこれと大きく異なる場合、見積もりの前提自体が実態とずれている"
+                f"可能性があるため、必ず両方の値を回答に含め、乖離が大きい場合はその旨を伝えること。"
+            )
+
         return _evidence(
             self.name, "import_cost_estimate", "ok",
             f"商品分類={_product_category_label(cat_code)}、数量{int(qty_min)}〜{int(qty_max)}個、"
             f"直近1年の実データを輸送方法別に集計（伝票単位、{len(rows)}伝票、"
             f"適用為替レート{latest_fx}円/USD、実データから取得）。"
+            f"{price_note}"
+            f"想定単価・商品原価（`想定単価USD`・`商品原価円`）は、表や回答文に必ず含めること"
+            f"（質問者が前提の妥当性を判断できるようにするため）。"
             f"各輸送方法の結果をそのまま提示すること（少数の実例を選んで外挿しない）。"
             f"「主な仕入先」に含まれていない属性（国籍等）を作り話してはいけない。"
             f"「データ不足」がTrueの輸送方法は伝票数が3件未満のため、参考値である旨を"
