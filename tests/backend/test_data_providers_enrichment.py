@@ -542,6 +542,48 @@ def test_import_cost_estimate_groups_by_transport_method_with_real_data(monkeypa
     assert "HAEDONG TRADING" in by_transport["FERRY_CFS"]["主な仕入先"]
 
 
+def test_import_cost_estimate_breaks_down_ratio_by_supplier_within_transport(monkeypatch):
+    """2026-09-08（14.129、Noritsuguが実データで発見・指定）: 経費率の
+    最小値が一般的な関税水準より低い伝票を調べたところ、データ不備では
+    なく、DDP（関税・輸送費を仕入先が商品代金に既に含めて請求する取引
+    条件）の仕入先（実例: KAI TRADING、韓国）の正当な実績だったと判明
+    した。FOBの仕入先と混ぜて1つの経費率として平均すると統計として
+    意味を歪めるため、DDP/FOBを判定するハードコードは組み込まず、単純に
+    仕入先ごとの内訳（`仕入先別内訳`）を返すようにした。"""
+    calls = {"n": 0}
+
+    def _fake_query(self, sql, params=()):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return [{"為替": 155.0}]
+        return [
+            # KAI TRADING（DDP、経費率が低い）2件
+            {"伝票番号": "V1", "輸送方法": 8, "仕入先名": "KAI TRADING", "合計数量pcs": 200, "合計仕入金額円": 146000, "経費率": 1.018},
+            {"伝票番号": "V2", "輸送方法": 8, "仕入先名": "KAI TRADING", "合計数量pcs": 210, "合計仕入金額円": 150000, "経費率": 1.025},
+            # GUANGZHOU AITINA（FOB、経費率が通常水準）2件
+            {"伝票番号": "V3", "輸送方法": 8, "仕入先名": "GUANGZHOU AITINA", "合計数量pcs": 207, "合計仕入金額円": 134757, "経費率": 1.185},
+            {"伝票番号": "V4", "輸送方法": 8, "仕入先名": "GUANGZHOU AITINA", "合計数量pcs": 203, "合計仕入金額円": 106575, "経費率": 1.19},
+        ]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._import_cost_estimate(
+        {"quantity": 300, "unit_price_usd": 3, "category_code": 7}
+    )
+
+    fedex_record = result["records"][0]
+    breakdown = {b["仕入先名"]: b for b in fedex_record["仕入先別内訳"]}
+
+    assert breakdown["KAI TRADING"]["伝票数"] == 2
+    assert breakdown["KAI TRADING"]["経費率_平均"] == round((1.018 + 1.025) / 2, 3)
+    assert breakdown["GUANGZHOU AITINA"]["伝票数"] == 2
+    assert breakdown["GUANGZHOU AITINA"]["経費率_平均"] == round((1.185 + 1.19) / 2, 3)
+    # KAI TRADINGの経費率がGUANGZHOU AITINAより明確に低いことが分かる
+    assert breakdown["KAI TRADING"]["経費率_平均"] < breakdown["GUANGZHOU AITINA"]["経費率_平均"]
+
+    assert "仕入先別内訳" in result["summary"]
+
+
 def test_import_cost_estimate_main_query_selects_every_column_the_code_reads(monkeypatch):
     """2026-09-08（14.127、Noritsuguが実チャットで発見）: 14.124で
     実績平均単価を算出するコード（`r["合計仕入金額円"]`）を追加した際、

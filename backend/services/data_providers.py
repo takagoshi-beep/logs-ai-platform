@@ -458,6 +458,31 @@ class LogsysProvider:
             suppliers = [g.get("仕入先名") for g in group if g.get("仕入先名")]
             top_suppliers = [name for name, _ in Counter(suppliers).most_common(3)]
 
+            # 2026-09-08（14.129、Noritsuguの指摘・指定）: 経費率の最小値が
+            # 一般的な関税水準より不自然に低い伝票を調べたところ、データ
+            # 不備ではなく、DDP（関税・輸送費を仕入先が商品代金に含めて
+            # 請求する取引条件）の仕入先（実例: KAI TRADING、韓国）の
+            # 正当な実績だったと判明した。FOBの仕入先と混ぜて1つの経費率
+            # として平均すると、統計として意味を歪めてしまう。DDP/FOBを
+            # 判定するロジック（特定の仕入先名のハードコード等）はメンテ
+            # ナンスが困難になるため組み込まず、単純に仕入先ごとの内訳を
+            # 示すことで、利用者自身が取引条件の違いに気づけるようにする。
+            by_supplier: dict[str, list[float]] = {}
+            for g in group:
+                supplier_name = g.get("仕入先名") or "不明"
+                by_supplier.setdefault(supplier_name, []).append(g["経費率"])
+            supplier_breakdown = [
+                {
+                    "仕入先名": name,
+                    "伝票数": len(supplier_ratios),
+                    "経費率_平均": round(sum(supplier_ratios) / len(supplier_ratios), 3),
+                    "経費率_最小": round(min(supplier_ratios), 3),
+                    "経費率_最大": round(max(supplier_ratios), 3),
+                }
+                for name, supplier_ratios in by_supplier.items()
+            ]
+            supplier_breakdown.sort(key=lambda s: -s["伝票数"])
+
             results.append({
                 "輸送方法": _TRANSPORT_LABELS.get(transport_code, f"不明({transport_code})"),
                 "伝票数": len(group),
@@ -471,6 +496,7 @@ class LogsysProvider:
                 "推奨経費率": round(rate_med, 3),
                 "経費率_最小": round(rate_min, 3),
                 "経費率_最大": round(rate_max, 3),
+                "仕入先別内訳": supplier_breakdown,
                 "推定仕入金額円": round(buy_jpy),
                 "推定輸入経費円": round(est_cost),
                 "推定諸掛込原価円": round(est_landed),
@@ -502,9 +528,19 @@ class LogsysProvider:
             f"想定単価・商品原価（`想定単価USD`・`商品原価円`）は、表や回答文に必ず含めること"
             f"（質問者が前提の妥当性を判断できるようにするため）。"
             f"各輸送方法の結果をそのまま提示すること（少数の実例を選んで外挿しない）。"
-            f"「主な仕入先」に含まれていない属性（国籍等）を作り話してはいけない。"
+            f"「主な仕入先」・「仕入先別内訳」に含まれていない属性（国籍・取引条件の詳細等）を"
+            f"作り話してはいけない。"
+            f"【重要・2026-09-08、Noritsuguの指摘】各行の`仕入先別内訳`は、同じ輸送方法内でも"
+            f"仕入先ごとに経費率が大きく異なりうることを示す（例: 取引条件がDDP＝仕入先が"
+            f"関税・輸送費を商品代金に既に含めて請求する場合、経費率が低く出るのが正常であり、"
+            f"データ不備ではない）。`経費率_最小`〜`経費率_最大`の幅が大きい場合は、必ず"
+            f"`仕入先別内訳`も提示し、幅の理由（仕入先ごとの取引条件の違い等）を示唆すること"
+            f"（仕入先名から国籍・取引条件を作り話してはいけない — `仕入先別内訳`に表れている"
+            f"経費率の違いだけを事実として伝える）。"
             f"「データ不足」がTrueの輸送方法は伝票数が3件未満のため、参考値である旨を"
-            f"必ず伝えること。",
+            f"必ず伝えること。"
+            f"【表示形式・再確認】必ずMarkdownの表形式で提示すること。箇条書きや文章だけで"
+            f"済ませてはいけない。",
             results,
         )
 
