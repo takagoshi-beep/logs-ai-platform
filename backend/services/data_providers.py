@@ -467,15 +467,29 @@ class LogsysProvider:
             suppliers = [g.get("仕入先名") for g in group if g.get("仕入先名")]
             top_suppliers = [name for name, _ in Counter(suppliers).most_common(3)]
 
-            # 2026-09-08（14.130、Noritsuguの指摘）: 経費率という比率だけ
-            # では実際の金額差が分からず、誤った経費率を採用するリスクが
-            # ある。この輸送方法に該当する実際の伝票の、商品原価・諸掛込
-            # 原価・輸入経費（実額、諸掛込金額円－仕入金額円）の合計を
-            # 算出する（想定商品原価{buy_jpy}とは別物 — こちらは実際に
-            # 過去に発生した実績の合計額）。
-            transport_actual_cost_jpy = sum(g["合計仕入金額円"] for g in group)
-            transport_actual_landed_jpy = sum(g["合計諸掛込金額円"] for g in group)
-            transport_actual_import_cost_jpy = transport_actual_landed_jpy - transport_actual_cost_jpy
+            # 2026-09-08（14.131、Noritsuguの指摘）: 規模の異なる複数の
+            # 伝票をそのまま合計しても、今回の見積もり（{qty}個分）との
+            # 比較材料としては意味が薄い（例: 20件合計の商品原価は数百万
+            # 円規模になり、300個分の見積もりと直接比べられない）。伝票
+            # ごとに「1個あたり」に正規化してから、実績の範囲（最小〜
+            # 最大）として示す方が、規模に関わらず比較しやすい。
+            def _per_unit_range(items: list[dict[str, Any]]) -> tuple[float, float, float, float]:
+                # 2026-09-08（14.131）: "合計数量pcs"はbigint列のSUM()の
+                # ため、psycopgはdecimal.Decimalを返す（14.128と同じ理由）。
+                # "合計諸掛込金額円"・"合計仕入金額円"はdouble precision
+                # 列のためfloat。float()で明示的に変換してから割り算する
+                # （14.128で一度踏んだのと同じ落とし穴を、ここでも回避する）。
+                landed_per_unit = [g["合計諸掛込金額円"] / float(g["合計数量pcs"]) for g in items]
+                cost_per_unit = [g["合計仕入金額円"] / float(g["合計数量pcs"]) for g in items]
+                return (
+                    min(cost_per_unit), max(cost_per_unit),
+                    min(landed_per_unit), max(landed_per_unit),
+                )
+
+            (
+                transport_cost_per_unit_min, transport_cost_per_unit_max,
+                transport_landed_per_unit_min, transport_landed_per_unit_max,
+            ) = _per_unit_range(group)
 
             # 2026-09-08（14.129、Noritsuguの指摘・指定）: 経費率の最小値が
             # 一般的な関税水準より不自然に低い伝票を調べたところ、データ
@@ -493,20 +507,23 @@ class LogsysProvider:
             supplier_breakdown = []
             for name, supplier_group in by_supplier.items():
                 supplier_ratios = [g["経費率"] for g in supplier_group]
-                # 2026-09-08（14.130、Noritsuguの指摘）: 仕入先ごとの経費率
-                # だけでなく、その仕入先で実際に発生した商品原価・輸入経費
-                # の実額も一緒に示す。
-                supplier_cost_jpy = sum(g["合計仕入金額円"] for g in supplier_group)
-                supplier_landed_jpy = sum(g["合計諸掛込金額円"] for g in supplier_group)
+                # 2026-09-08（14.130・14.131、Noritsuguの指摘）: 仕入先
+                # ごとの経費率だけでなく、実際に発生した1個あたり原価の
+                # 範囲（合計ではない）も一緒に示す。
+                (
+                    supplier_cost_min, supplier_cost_max,
+                    supplier_landed_min, supplier_landed_max,
+                ) = _per_unit_range(supplier_group)
                 supplier_breakdown.append({
                     "仕入先名": name,
                     "伝票数": len(supplier_ratios),
                     "経費率_平均": round(sum(supplier_ratios) / len(supplier_ratios), 3),
                     "経費率_最小": round(min(supplier_ratios), 3),
                     "経費率_最大": round(max(supplier_ratios), 3),
-                    "実績商品原価円": round(supplier_cost_jpy),
-                    "実績諸掛込原価円": round(supplier_landed_jpy),
-                    "実績輸入経費円": round(supplier_landed_jpy - supplier_cost_jpy),
+                    "実績1個あたり原価_最小円": round(supplier_cost_min),
+                    "実績1個あたり原価_最大円": round(supplier_cost_max),
+                    "実績1個あたり諸掛込原価_最小円": round(supplier_landed_min),
+                    "実績1個あたり諸掛込原価_最大円": round(supplier_landed_max),
                 })
             supplier_breakdown.sort(key=lambda s: -s["伝票数"])
 
@@ -520,10 +537,11 @@ class LogsysProvider:
                 "想定単価USD": unit_price_usd,
                 "商品原価円": round(buy_jpy),
                 "実績平均単価USD_参考": actual_avg_unit_price_usd,
-                "実績商品原価合計円": round(transport_actual_cost_jpy),
-                "実績諸掛込原価合計円": round(transport_actual_landed_jpy),
-                "実績輸入経費合計円": round(transport_actual_import_cost_jpy),
-                "推奨経費率": round(rate_med, 3),
+                "実績1個あたり原価_最小円": round(transport_cost_per_unit_min),
+                "実績1個あたり原価_最大円": round(transport_cost_per_unit_max),
+                "実績1個あたり諸掛込原価_最小円": round(transport_landed_per_unit_min),
+                "実績1個あたり諸掛込原価_最大円": round(transport_landed_per_unit_max),
+                "推定経費率": round(rate_med, 3),
                 "経費率_最小": round(rate_min, 3),
                 "経費率_最大": round(rate_max, 3),
                 "仕入先別内訳": supplier_breakdown,
@@ -532,7 +550,7 @@ class LogsysProvider:
                 "推定諸掛込原価円": round(est_landed),
                 "推定諸掛込原価_最小円": round(est_landed_min),
                 "推定諸掛込原価_最大円": round(est_landed_max),
-                "1個あたり原価円": round(est_landed / qty),
+                "推定1個あたり原価円": round(est_landed / qty),
                 "主な仕入先": top_suppliers,
             })
 
@@ -571,10 +589,16 @@ class LogsysProvider:
             f"必ず伝えること。"
             f"【重要・2026-09-08、Noritsuguの指摘】経費率は運賃・関税等の実額から本来決まる"
             f"ものであり、比率だけを提示すると誤った経費率をそのまま採用してしまうリスクが"
-            f"ある。「輸送方法別」の表には`実績商品原価合計円`・`実績諸掛込原価合計円`・"
-            f"`実績輸入経費合計円`を、「仕入先別内訳」の表には`実績商品原価円`・"
-            f"`実績諸掛込原価円`・`実績輸入経費円`を、必ず経費率と一緒に列として含めること"
-            f"（比率だけを見せて実額を省略してはいけない）。"
+            f"ある。規模の異なる伝票をそのまま合計しても比較材料として意味が薄いため、"
+            f"1個あたりに正規化した実績の範囲（`実績1個あたり原価_最小円`〜`_最大円`・"
+            f"`実績1個あたり諸掛込原価_最小円`〜`_最大円`）を、「輸送方法別」の表にも"
+            f"「仕入先別内訳」の表にも、経費率と一緒に必ず列として含めること"
+            f"（比率だけを見せて実額の範囲を省略してはいけない）。"
+            f"【重要・2026-09-08、Noritsuguの指摘】「推定経費率」・「推定1個あたり原価円」等、"
+            f"`推定`と付いている値は全てあくまで見積もり・試算であり、確定した金額ではない。"
+            f"「推奨」という、能動的に薦めているかのような誤解を招く表現は使わないこと"
+            f"（実データから機械的に算出した中央値であり、この輸送方法を推奨しているわけ"
+            f"ではない）。"
             f"【表示形式・再確認】必ずMarkdownの表形式で提示すること。箇条書きや文章だけで"
             f"済ませてはいけない。",
             results,

@@ -536,7 +536,7 @@ def test_import_cost_estimate_groups_by_transport_method_with_real_data(monkeypa
     assert result["status"] == "ok"
     by_transport = {r["輸送方法"]: r for r in result["records"]}
     assert by_transport["FERRY_CFS"]["伝票数"] == 2
-    assert by_transport["FERRY_CFS"]["推奨経費率"] == 1.25  # 1.20と1.30の中央値
+    assert by_transport["FERRY_CFS"]["推定経費率"] == 1.25  # 1.20と1.30の中央値
     assert by_transport["FERRY_CFS"]["データ不足"] is True  # 2件 < 3件
     assert by_transport["AIR"]["伝票数"] == 1
     assert "HAEDONG TRADING" in by_transport["FERRY_CFS"]["主な仕入先"]
@@ -583,25 +583,31 @@ def test_import_cost_estimate_breaks_down_ratio_by_supplier_within_transport(mon
 
     assert "仕入先別内訳" in result["summary"]
 
-    # 2026-09-08（14.130、Noritsuguの指摘）: 経費率という比率だけでは
-    # 実際の金額差が分からないため、仕入先ごとの実績金額（商品原価・
-    # 諸掛込原価・輸入経費の実額）も含まれること。
-    assert breakdown["KAI TRADING"]["実績商品原価円"] == 146000 + 150000
-    assert breakdown["KAI TRADING"]["実績諸掛込原価円"] == round(148628.0 + 153750.0)
-    assert breakdown["KAI TRADING"]["実績輸入経費円"] == round(
-        (148628.0 + 153750.0) - (146000 + 150000)
-    )
+    # 2026-09-08（14.131、Noritsuguの指摘）: 経費率という比率だけでは
+    # 実際の金額差が分からないため、仕入先ごとの実績1個あたり原価の
+    # 範囲（合計ではない — 規模の異なる伝票を合計しても比較材料として
+    # 意味が薄いため）も含まれること。
+    # KAI TRADING: V1(200個,146000円)→730円/個、V2(210個,150000円)→約714.3円/個
+    assert breakdown["KAI TRADING"]["実績1個あたり原価_最小円"] == round(150000 / 210)
+    assert breakdown["KAI TRADING"]["実績1個あたり原価_最大円"] == round(146000 / 200)
+    # 諸掛込原価: V1(148628円/200個)→743.14円/個、V2(153750円/210個)→732.14円/個
+    assert breakdown["KAI TRADING"]["実績1個あたり諸掛込原価_最小円"] == round(153750.0 / 210)
+    assert breakdown["KAI TRADING"]["実績1個あたり諸掛込原価_最大円"] == round(148628.0 / 200)
 
 
 def test_import_cost_estimate_includes_actual_amounts_at_transport_level(monkeypatch):
-    """2026-09-08（14.130、Noritsuguの指摘）: 「輸送方法別」の集計にも、
-    経費率の比率だけでなく、実際に発生した商品原価・諸掛込原価・輸入
-    経費の合計額（実績）を含める。経費率だけでは誤った前提をそのまま
+    """2026-09-08（14.130・14.131、Noritsuguの指摘）: 「輸送方法別」の
+    集計にも、経費率の比率だけでなく、実際に発生した1個あたり原価の
+    範囲（実績）を含める。規模の異なる伝票をそのまま合計しても比較
+    材料としては意味が薄いため、1個あたりに正規化してから範囲
+    （最小〜最大）として示す。経費率だけでは誤った前提をそのまま
     採用してしまうリスクがあるため。"""
     def _fake_query(self, sql, params=()):
         if "為替" in sql and "FROM purchases WHERE" in sql:
             return [{"為替": 155.0}]
         return [
+            # 1個あたり商品原価: V1=134757/207=651円、V2=106575/203=525円
+            # 1個あたり諸掛込原価: V1=159687/207≒771.43円、V2=126824/203≒624.75円
             {"伝票番号": "V1", "輸送方法": 8, "仕入先名": "GUANGZHOU AITINA",
              "合計数量pcs": 207, "合計仕入金額円": 134757.0, "合計諸掛込金額円": 159687.0, "経費率": 1.185},
             {"伝票番号": "V2", "輸送方法": 8, "仕入先名": "GUANGZHOU AITINA",
@@ -615,12 +621,11 @@ def test_import_cost_estimate_includes_actual_amounts_at_transport_level(monkeyp
     )
 
     record = result["records"][0]
-    expected_cost = 134757.0 + 106575.0
-    expected_landed = 159687.0 + 126824.0
-    assert record["実績商品原価合計円"] == round(expected_cost)
-    assert record["実績諸掛込原価合計円"] == round(expected_landed)
-    assert record["実績輸入経費合計円"] == round(expected_landed - expected_cost)
-    assert "実績商品原価合計円" in result["summary"] or "実績輸入経費合計円" in result["summary"]
+    assert record["実績1個あたり原価_最小円"] == round(106575.0 / 203)
+    assert record["実績1個あたり原価_最大円"] == round(134757.0 / 207)
+    assert record["実績1個あたり諸掛込原価_最小円"] == round(126824.0 / 203)
+    assert record["実績1個あたり諸掛込原価_最大円"] == round(159687.0 / 207)
+    assert "実績1個あたり原価_最小円" in result["summary"] or "実績1個あたり諸掛込原価" in result["summary"]
 
 
 def test_import_cost_estimate_main_query_selects_every_column_the_code_reads(monkeypatch):
