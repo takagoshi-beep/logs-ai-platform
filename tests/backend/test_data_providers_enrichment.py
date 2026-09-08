@@ -438,6 +438,30 @@ def test_import_cost_estimate_requires_all_params():
     assert result["status"] == "unavailable"
 
 
+def test_import_cost_estimate_filters_to_confirmed_purchases_only(monkeypatch):
+    """2026-09-08（14.125、Noritsuguが実チャットで発見・確認済み）:
+    経費率の下限が1.018倍のように、一般的な関税・輸送費を考えると
+    現実的に低すぎる値が混ざっていた。"諸掛込金額円" > "仕入金額円"
+    （経費率>1.0）というチェックだけでは、諸掛（輸入経費）の入力が
+    途中の伝票を除外できていなかった。"仕入確定フラグ"=1（諸掛の入力が
+    完了したことを意味する、Noritsugu確認済み）で絞り込むよう修正した。"""
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        if "為替" in sql and "FROM purchases WHERE" in sql:
+            return [{"為替": 155.0}]
+        captured["sql"] = sql
+        return []
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    LogsysProvider()._import_cost_estimate(
+        {"quantity": 100, "unit_price_usd": 5, "category_code": 2}
+    )
+
+    assert '"仕入確定フラグ" = 1' in captured["sql"]
+
+
 def test_import_cost_estimate_uses_real_recent_fx_rate_not_a_fabricated_one(monkeypatch):
     """2026-07-10（14.63、Noritsuguの指定）: 架空の為替レートを仮定して
     計算してはいけない。実際の直近の仕入データから為替レートを取得し、
