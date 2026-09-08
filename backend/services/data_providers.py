@@ -420,8 +420,17 @@ class LogsysProvider:
         # 算出し、Claudeが渡したunit_price_usd（質問で指定された値、または
         # Claude自身が推定した値）と並べて示すことで、想定が実績と
         # かけ離れていないか判断できるようにする。
-        actual_total_qty = sum(r["合計数量pcs"] for r in rows)
-        actual_total_jpy = sum(r["合計仕入金額円"] for r in rows)
+        # 2026-09-08（14.128、Noritsuguが実チャットで発見。Renderの実際の
+        # ログでTypeErrorのtracebackを確認して特定）: "仕入数量pcs"は
+        # bigint列のため、SQL側のSUM()はnumeric型を返し、psycopgはこれを
+        # Python の decimal.Decimal に変換する。一方"仕入金額円"は
+        # double precision列のためfloatになる。Decimalとfloatを直接
+        # 割り算するとTypeErrorになる（"仕入数量pcs" BETWEEN %s AND %s
+        # のようなSQL側の比較や、Decimal同士の演算では問題が起きないため、
+        # 14.124でこの行を追加するまで表面化していなかった）。float()で
+        # 明示的に変換してから計算する。
+        actual_total_qty = float(sum(r["合計数量pcs"] for r in rows))
+        actual_total_jpy = float(sum(r["合計仕入金額円"] for r in rows))
         actual_avg_unit_price_jpy = (
             round(actual_total_jpy / actual_total_qty, 1) if actual_total_qty else None
         )

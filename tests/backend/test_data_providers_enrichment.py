@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 from services.data_providers import LogsysProvider, _product_category_label
 
@@ -590,7 +591,38 @@ def test_import_cost_estimate_main_query_selects_every_column_the_code_reads(mon
     assert '"経費率"' in outer_select
 
 
-def test_import_cost_estimate_includes_assumed_price_and_actual_average_reference(monkeypatch):
+def test_import_cost_estimate_handles_decimal_quantity_from_bigint_sum(monkeypatch):
+    """2026-09-08（14.128、Noritsuguが実チャットで発見。Renderの実際の
+    ログでTypeErrorのtracebackを確認して特定）: "仕入数量pcs"はbigint列
+    のため、SQL側のSUM()はnumeric型を返し、psycopgはこれをPythonの
+    decimal.Decimalに変換する（int/floatではない）。一方"仕入金額円"は
+    double precision列のためfloatになる。14.124で追加した実績平均単価の
+    計算（Decimal / float）が、この型の組み合わせで実際に本番の
+    TypeErrorを引き起こしていた。この回帰テストはpsycopgの実際の返り値
+    型を模倣するため、"合計数量pcs"にDecimalを使う（他のテストのように
+    素のintを使うと、この型不一致を検出できない）。"""
+    def _fake_query(self, sql, params=()):
+        if "為替" in sql and "FROM purchases WHERE" in sql:
+            return [{"為替": 155.0}]
+        return [
+            {
+                "伝票番号": "V1", "輸送方法": 8, "仕入先名": "GUANGZHOU AITINA",
+                "合計数量pcs": Decimal("274"), "合計仕入金額円": 46500.0, "経費率": 1.185,
+            },
+        ]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    # 修正前はここでTypeError（'float' と 'decimal.Decimal'）が発生していた
+    result = LogsysProvider()._import_cost_estimate(
+        {"quantity": 300, "unit_price_usd": 3, "category_code": 7}
+    )
+
+    assert result["status"] == "ok"
+    assert result["records"][0]["実績平均単価USD_参考"] is not None
+
+
+
     """2026-09-08（14.124、Noritsuguの指摘）: 想定商品原価（仕入金額）が
     結果に含まれておらず、その根拠（想定単価）も明示されないまま提示
     されていたため、見た人が想定の妥当性を判断できなかった。想定単価・

@@ -4392,6 +4392,46 @@ FEDEX実績を返していたにも関わらず、である。
 
 532件全てパス。
 
+## 14.128 輸入経費見積もり、Decimal/float型不一致によるTypeErrorを修正 (2026-09-08)
+
+14.127デプロイ後も同じ症状が再発。今回はRenderの実際のログ
+（`[ERROR] LogsysProvider.fetch(...)`のtracebackが14.67の設計通り
+出力されていた）から、正確な例外を特定できた:
+
+```
+TypeError: unsupported operand type(s) for /: 'float' and 'decimal.Decimal'
+```
+
+**原因:** `purchases."仕入数量pcs"`はbigint列のため、SQL側の
+`SUM("仕入数量pcs")`はPostgreSQLの仕様上`numeric`型を返し、psycopgは
+これをPythonの`decimal.Decimal`に変換する（int/floatではない）。一方
+`"仕入金額円"`は`double precision`列のため、そのSUMはfloatになる。
+14.124で追加した実績平均単価の計算（`actual_total_jpy /
+actual_total_qty`）が、この異なる数値型同士の除算を行っており、
+PythonではDecimalとfloatを直接演算できないためTypeErrorになっていた。
+`"合計数量pcs" BETWEEN %s AND %s`のようなSQL側の比較や、他の箇所での
+Decimal同士の演算（`sum(quantities) / len(quantities)`等、int型との
+演算はDecimalが許容する）では問題が起きないため、14.124でこの行を
+追加するまで表面化していなかった。
+
+これで直近3回連続（14.126の指示文の曖昧さ、14.127の未選択列による
+KeyError、今回のDecimal/float型不一致）、いずれも14.124由来の新規
+コードに起因する不具合だったことになる。1回の変更で複数の見落としが
+重なっていたことを踏まえ、今後同種の集計コードを追加する際は、
+psycopgが返す実際の型（bigint→Decimal、double precision→float等）を
+先に確認してから実装する。
+
+**対応:** `float()`で明示的に変換してから計算するよう修正した。
+
+**再発防止:** `tests/backend/test_data_providers_enrichment.py`に、
+psycopgの実際の返り値型を模倣するため`decimal.Decimal`を使った回帰
+テストを追加した（既存テストは素の`int`を使っており、この型不一致を
+検出できなかった）。この回帰テストも、修正前のコードに対して実際に
+失敗することを確認済み（バグを一時的に再現させてテストし、正しく
+検出できることを検証してから元に戻した）。
+
+532件全てパス。
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.
