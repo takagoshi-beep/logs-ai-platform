@@ -4245,6 +4245,32 @@ exchange`に改名し、質問文に加えてAIの実際の回答文（`answer_t
 合わせて更新。528件全てパス。フロントエンドは`npx tsc --noEmit`・
 `npm run build`両方で確認済み。
 
+## 14.123 輸入経費見積もりの為替レートが通貨を区別していなかった不具合修正 (2026-09-08)
+
+Noritsuguが実チャットの記録（14.122で回答内容も記録するようにした
+おかげで確認できた）を見て発見: 「広州からチェーンベルト300本をFEDEX
+の輸入経費」という質問への回答で、「適用為替レート: 23.0円/USD」と
+なっていた。これは現実的なUSD/JPYレートとして有り得ない値で、実際には
+RMB（人民元）の対円レート水準（`_CURRENCY_LABELS`: 1=USD, 2=円,
+3=RMB）だった。
+
+**原因:** `_import_cost_estimate`の為替レート取得SQLが、通貨で絞り込ま
+ずに「`purchases`テーブルの直近の仕入データの為替」を1件だけ取得して
+いた:
+```sql
+SELECT "為替" FROM purchases WHERE "為替" > 1 ORDER BY "ID" DESC LIMIT 1
+```
+このツールは常にUSD建ての単価（`unit_price_usd`）を受け取る前提だが、
+直近の仕入がたまたまRMB建てだった場合、そのRMBレートがそのままUSD向け
+の計算に使われてしまっていた。常に起きるわけではなく、直近の仕入データ
+の通貨に左右される不安定な不具合だった（同じ記録内の別のやり取りでは
+155円/USDという正常な値が使われていた）。
+
+**対応:** `"通貨" = 1`（USD）に限定して取得するよう修正した。
+
+`tests/backend/test_data_providers_enrichment.py`に1件追加（為替レート
+取得SQLがUSD限定であることの確認）。529件全てパス。
+
 ## Constraints
 
 - Confidential business data remains local and must not be committed.

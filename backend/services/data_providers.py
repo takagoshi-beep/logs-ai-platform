@@ -338,6 +338,16 @@ class LogsysProvider:
         為替レートは、実際の直近の仕入データから取得する（架空の為替
         レートを仮定しない、Noritsuguの指定）。直近データが無い場合は
         推定を行わずunavailableを返す。
+
+        2026-09-08（14.123、Noritsuguが実チャットで発見）: 以前は
+        "通貨"列で絞り込まずに「直近の仕入データの為替」を取得していた
+        ため、直近の仕入がたまたまRMB建て（"通貨"=3、対円レートは
+        USDよりずっと低い水準）だった場合、そのRMBレート（実例:
+        23.0円）をUSD向けの単価計算（このツールは常にunit_price_usd
+        という名前の通りUSD建て入力を前提にしている）にそのまま
+        使ってしまい、明らかに不自然な結果（例: 適用為替レート23.0円/
+        USD）になる不具合があった。"通貨"=1（USD）に限定して取得する
+        よう修正した。
         """
         qty = params.get("quantity")
         unit_price_usd = params.get("unit_price_usd")
@@ -352,12 +362,12 @@ class LogsysProvider:
             )
 
         fx_rows = self._query(
-            'SELECT "為替" FROM purchases WHERE "為替" > 1 ORDER BY "ID" DESC LIMIT 1'
+            'SELECT "為替" FROM purchases WHERE "為替" > 1 AND "通貨" = 1 ORDER BY "ID" DESC LIMIT 1'
         )
         if not fx_rows or not fx_rows[0].get("為替"):
             return _evidence(
                 self.name, "import_cost_estimate", "unavailable",
-                "直近の為替レートが実データから取得できなかったため、推定できません。"
+                "直近のUSD建て仕入データから為替レートが取得できなかったため、推定できません。"
                 "架空の為替レートを仮定して計算してはいけない。",
             )
         latest_fx = float(fx_rows[0]["為替"])

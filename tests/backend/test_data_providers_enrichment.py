@@ -460,6 +460,30 @@ def test_import_cost_estimate_uses_real_recent_fx_rate_not_a_fabricated_one(monk
     assert "為替" in result["summary"]
 
 
+def test_import_cost_estimate_fx_query_filters_to_usd_currency(monkeypatch):
+    """2026-09-08（14.123、Noritsuguが実チャットで発見）: 通貨で絞り込まずに
+    「直近の仕入データの為替」を取得していたため、直近の仕入がたまたま
+    RMB建てだった場合、そのRMBレート（対円レートはUSDよりずっと低い、
+    実例: 23.0円）をUSD向けの単価計算にそのまま使ってしまい、明らかに
+    不自然な結果になる不具合があった。"通貨"=1（USD）に限定して取得する
+    よう修正した。"""
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        if "為替" in sql and "FROM purchases WHERE" in sql:
+            captured["fx_sql"] = sql
+            return [{"為替": 155.0}]
+        return []
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    LogsysProvider()._import_cost_estimate(
+        {"quantity": 100, "unit_price_usd": 5, "category_code": 2}
+    )
+
+    assert '"通貨" = 1' in captured["fx_sql"]
+
+
 def test_import_cost_estimate_groups_by_transport_method_with_real_data(monkeypatch):
     """2026-07-10（14.63、別チャットのapp.py::run_import_cost_estimate()
     を移植）: 伝票単位に集計してから輸送方法別にグループ化し、件数・
