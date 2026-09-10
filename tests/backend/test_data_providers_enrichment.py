@@ -1224,7 +1224,7 @@ def test_purchase_surcharges_joins_with_purchases_and_filters(monkeypatch):
     })
 
     assert "JOIN purchases pu" in captured["sql"]
-    assert 'ps."仕入ID" = pu."明細ID"' in captured["sql"]
+    assert 'ps."仕入ID" = pu."ID"' in captured["sql"]
     assert 'pu."伝票日" >= %s' in captured["sql"]
     assert 'pu."POnum" = %s' in captured["sql"]
     assert 'pu."LOGS_CODE" = %s' in captured["sql"]
@@ -1263,7 +1263,7 @@ def test_import_cost_estimate_tariff_join_filters_by_correct_category_id(monkeyp
     誤りをそのまま引き継いでいたため、実際には「国内手数料（税抜）」を
     関税として集計してしまっていた（FEDEX×ベルトの全伝票で関税額が
     0円という不自然な結果になっていた）。実際の関税はID=6であるため、
-    SQLのJOIN条件がID=6でフィルタしていることを確認する。"""
+    SQLのフィルタ条件がID=6でフィルタしていることを確認する。"""
     captured = {}
 
     def _fake_query(self, sql, params=()):
@@ -1278,13 +1278,19 @@ def test_import_cost_estimate_tariff_join_filters_by_correct_category_id(monkeyp
         {"quantity": 300, "unit_price_usd": 3, "category_code": 7}
     )
 
-    assert 'ps."諸掛区分ID" = 6' in captured["sql"]
-    assert 'ps."諸掛区分ID" = 1' not in captured["sql"]
-    # 2026-09-09（14.136、Noritsuguが実データで発見）: JOIN条件は
-    # purchases."ID"（伝票内で複数明細に共有される値）ではなく、
-    # purchases."明細ID"（真に一意な識別子）を使うこと。
-    assert 'ps."仕入ID" = p."明細ID"' in captured["sql"]
-    assert 'ps."仕入ID" = p."ID"' not in captured["sql"]
+    assert '"諸掛区分ID" = 6' in captured["sql"]
+    assert '"諸掛区分ID" = 1' not in captured["sql"]
+    # 2026-09-09（14.138、Noritsuguが実データで発見・訂正）: 14.136で
+    # 「purchases."明細ID"が正しいJOINキーのはず」と類推して変更したが
+    # 誤りだった。purchase_surcharges."仕入ID"は実際にはpurchases."ID"
+    # （伝票内で複数明細に共有される値）と対応していた。真の問題は
+    # 「伝票単位の値を明細単位の行に直接JOINしてからSUMすると、明細数
+    # 分だけ重複してしまう」ことだったため、purchase_surchargesを先に
+    # 独立したCTE（tariff_agg）で"仕入ID"単位に集計してから、1伝票に
+    # つき1回だけJOINする構造に修正した。
+    assert 'tariff_agg' in captured["sql"]
+    assert 'v."仕入ID" = t."仕入ID"' in captured["sql"]
+    assert 'p."明細ID"' not in captured["sql"]
 
 
 def test_import_cost_estimate_does_not_duplicate_tariff_across_line_items(monkeypatch):

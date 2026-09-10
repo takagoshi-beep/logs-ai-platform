@@ -404,24 +404,46 @@ class LogsysProvider:
         # （14.133の教訓）。この2つの性質の違いを反映するため、
         # purchase_surchargesから実際の関税額（諸掛区分ID=6）を伝票
         # ごとに集計し、関税とその他の諸掛を分けて扱う。
+        #
+        # 2026-09-09（14.138、Noritsuguが実データで発見・訂正）: 14.136で
+        # 「purchase_surcharges."仕入ID"はpurchases."明細ID"（明細ごとに
+        # 一意な値）と対応するはず」と類推しJOINキーを変更したが、これは
+        # 誤りだった。実際にはpurchase_surcharges."仕入ID"は
+        # purchases."ID"（伝票内で複数明細に共有される値）と対応して
+        # いた（関税・運賃等は「明細(商品)ごと」ではなく「伝票(輸送1回分)
+        # ごと」に発生する費用のため、業務的にも筋が通る）。真の問題は
+        # 「JOINキーが違う」ことではなく、「伝票単位の値であるpurchase_
+        # surchargesを、明細単位の行を持つpurchasesに直接JOINしてから
+        # SUMしていたため、その伝票の明細数分だけ同じ関税額が重複して
+        # 積算されてしまう」ことだった（実例: 7明細の伝票で、1件・
+        # 87,200円の関税が7回重複し610,400円に膨れ上がっていた）。
+        # 正しい対処は、purchase_surchargesを先に"仕入ID"単位で
+        # （重複なく）集計してから、1伝票につき1回だけJOINすること。
+        # そのため別CTE（tariff_agg）に分離した。
         sql = (
             'WITH voucher_agg AS ('
-            '  SELECT p."伝票番号", MIN(p."輸送方法") AS "輸送方法", MIN(p."仕入先名") AS "仕入先名", '
+            '  SELECT p."伝票番号", MIN(p."ID") AS "仕入ID", MIN(p."輸送方法") AS "輸送方法", '
+            '         MIN(p."仕入先名") AS "仕入先名", '
             '         SUM(p."仕入数量pcs") AS "合計数量pcs", SUM(p."仕入金額円") AS "合計仕入金額円", '
-            '         SUM(p."諸掛込金額円") AS "合計諸掛込金額円", '
-            '         COALESCE(SUM(ps."金額円"), 0) AS "関税合計円" '
+            '         SUM(p."諸掛込金額円") AS "合計諸掛込金額円" '
             '  FROM purchases p '
-            '  LEFT JOIN purchase_surcharges ps ON ps."仕入ID" = p."明細ID" AND ps."諸掛区分ID" = 6 '
             '  WHERE p."ステータス" IN (2, 3) AND p."商品分類" = %s AND p."仕入金額円" > 0 '
             '    AND p."諸掛込金額円" > p."仕入金額円" AND p."仕入確定フラグ" = 1 '
             '    AND p."伝票日" >= CURRENT_DATE - INTERVAL \'1 year\' '
             '  GROUP BY p."伝票番号"'
+            '), '
+            'tariff_agg AS ('
+            '  SELECT "仕入ID", SUM("金額円") AS "関税合計円" '
+            '  FROM purchase_surcharges '
+            '  WHERE "諸掛区分ID" = 6 '
+            '  GROUP BY "仕入ID"'
             ') '
-            'SELECT "伝票番号", "輸送方法", "仕入先名", "合計数量pcs", "合計仕入金額円", '
-            '       "合計諸掛込金額円", "関税合計円", '
-            '       "合計諸掛込金額円" / "合計仕入金額円" AS "経費率" '
-            'FROM voucher_agg '
-            'WHERE "合計数量pcs" BETWEEN %s AND %s'
+            'SELECT v."伝票番号", v."輸送方法", v."仕入先名", v."合計数量pcs", v."合計仕入金額円", '
+            '       v."合計諸掛込金額円", COALESCE(t."関税合計円", 0) AS "関税合計円", '
+            '       v."合計諸掛込金額円" / v."合計仕入金額円" AS "経費率" '
+            'FROM voucher_agg v '
+            'LEFT JOIN tariff_agg t ON v."仕入ID" = t."仕入ID" '
+            'WHERE v."合計数量pcs" BETWEEN %s AND %s'
         )
         rows = self._query(sql, (cat_code, qty_min, qty_max))
 
@@ -1376,14 +1398,24 @@ class LogsysProvider:
         済み（_SURCHARGE_CATEGORY_LABELS、14.135）。消費税に該当する
         区分は2・7・8。
 
-        2026-09-09（14.136、Noritsuguが実データで発見）: JOIN条件が
-        `ps."仕入ID" = pu."ID"`になっていたが、`purchases."ID"`は
-        伝票内の複数明細で共有される値（14.111・14.115で判明済みの
-        「伝票ID」に相当）であり、明細ごとに一意ではない。真の一意
-        識別子は`purchases."明細ID"`。この誤ったJOINキーのため、1つの
-        伝票に複数の明細行がある場合、同じ諸掛レコードがその明細行数
-        だけ重複して返っていた（実例: 7明細の伝票で、1件の関税
-        レコードが7回重複）。`ps."仕入ID" = pu."明細ID"`に修正した。
+        2026-09-09（14.136、Noritsuguが実データで発見。14.138で訂正）:
+        当初、1つの伝票に複数の明細行がある場合、同じ諸掛レコードが
+        その明細行数だけ重複して返る不具合を発見し（実例: 7明細の伝票
+        で、1件の関税レコードが7回重複）、原因を「JOIN条件が
+        `purchases.\"ID\"`（伝票内の複数明細で共有される値）になって
+        いるため」と判断し、`purchases.\"明細ID\"`（明細ごとに一意な
+        値）にJOINキーを変更した。しかしこれは誤りだった。14.138で
+        `purchase_surcharges."仕入ID"`の実際の対応関係を直接確認した
+        ところ、`purchases.\"ID\"`（伝票内共有ID）の方が正しい対応先
+        だった（関税・運賃等は「明細(商品)ごと」ではなく「伝票(輸送
+        1回分)ごと」に発生する費用のため、業務的にも筋が通る）。
+        `ps.\"仕入ID\" = pu.\"ID\"`に戻した。
+        重複表示そのもの（1つの伝票に複数の明細行がある場合、同じ諸掛
+        レコードがその明細行数だけ繰り返し表示される）は、この関数が
+        「明細単位で一覧表示する」設計のままである限り残る既知の挙動
+        だが、金額を合計するような使い方（get_import_cost_estimateの
+        ような）でなければ実害は無い（この関数自体はSUM等の集計をせず、
+        生のレコードをそのまま返す一覧表示用のツールのため）。
         """
         where = 'pu."ステータス" IN (2, 3)'
         args: list[Any] = []
@@ -1403,7 +1435,7 @@ class LogsysProvider:
         sql = (
             'SELECT ps.*, pu."伝票日", pu."POnum", pu."LOGS_CODE", pu."仕入先名" '
             "FROM purchase_surcharges ps "
-            'JOIN purchases pu ON ps."仕入ID" = pu."明細ID" '
+            'JOIN purchases pu ON ps."仕入ID" = pu."ID" '
             f'WHERE {where} ORDER BY pu."伝票日" DESC'
         )
         rows = self._query(sql, tuple(args))
