@@ -713,6 +713,40 @@ def test_import_cost_estimate_excludes_zero_tariff_vouchers_from_tariff_rate(mon
     assert record["関税データあり伝票数"] == 2  # V1・V2のみ（V3は除外）
 
 
+def test_import_cost_estimate_includes_import_cost_rate_alone(monkeypatch):
+    """2026-09-09（14.141、Noritsuguの指定）: 見積もりツールで使うため、
+    「推定経費率」（諸掛込原価÷商品原価、商品原価を含んだ倍率）とは別に、
+    輸入経費だけを商品原価に対する比率として取り出した`推定輸入経費率`
+    を独立したフィールドとして返す。"""
+    def _fake_query(self, sql, params=()):
+        if "為替" in sql and "FROM purchases WHERE" in sql:
+            return [{"為替": 150.0}]
+        return [
+            {"伝票番号": "V1", "輸送方法": 8, "仕入先名": "SUPPLIER_A",
+             "合計数量pcs": 100, "合計仕入金額円": 50000.0, "合計諸掛込金額円": 60000.0,
+             "関税合計円": 0.0, "商品分類が単一": True, "経費率": 1.20},
+        ]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._import_cost_estimate(
+        {"quantity": 100, "unit_price_usd": 10, "category_code": 2}
+    )
+
+    record = result["records"][0]
+    # 商品原価 = 100個×10USD×150円 = 150,000円
+    # 関税データ無しのため、輸入経費全額が「その他諸掛」扱い
+    # （1個あたり実額の中央値 = (60000-50000-0)/100 = 100円/個）
+    # 推定輸入経費 = 100円×100個 = 10,000円
+    # 推定輸入経費率 = 10,000円 / 150,000円 = 0.0667(約6.67%)
+    assert record["推定輸入経費円"] == 10000
+    assert record["推定仕入金額円"] == 150000
+    assert record["推定輸入経費率"] == round(10000 / 150000, 3)
+    # 推定経費率(諸掛込原価÷商品原価) = (150000+10000)/150000 = 1.067
+    # と推定輸入経費率(0.067)の差が、ちょうど1.0であることも確認する
+    assert round(record["推定経費率"] - record["推定輸入経費率"], 3) == 1.0
+
+
 def test_import_cost_estimate_uses_actual_import_cost_amount_not_ratio(monkeypatch):
     """2026-09-09（14.133、Noritsuguの指摘）: 以前は「想定商品原価×実績の
     経費率（比率）」で諸掛込原価を算出していたため、想定単価が実績データの
