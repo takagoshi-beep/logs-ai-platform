@@ -705,7 +705,7 @@ def test_import_cost_estimate_excludes_mixed_category_vouchers_from_other_cost_t
     record = result["records"][0]
     # 混在伝票（V2相当）が除外され、単一分類のV1だけを対象にするため、
     # 「その他諸掛」はプラスの妥当な値になる（マイナスにならない）
-    assert record["推定その他諸掛円"] >= 0
+    assert record["推定運賃等円"] >= 0
 
 
 def test_import_cost_estimate_excludes_zero_tariff_vouchers_from_tariff_rate(monkeypatch):
@@ -1437,7 +1437,7 @@ def test_import_cost_estimate_does_not_duplicate_tariff_across_line_items(monkey
     # 610400/648365 ≒ 0.941（94%）という非現実的な値になっていた。
     assert 0 < record["関税率_平均"] < 0.3
     # その他諸掛が正しくプラスになること（修正前はマイナスになっていた）
-    other_cost = record["推定その他諸掛円"]
+    other_cost = record["推定運賃等円"]
     assert other_cost >= 0
 
 
