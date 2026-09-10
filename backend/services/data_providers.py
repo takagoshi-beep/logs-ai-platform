@@ -456,12 +456,41 @@ class LogsysProvider:
         results = []
         for transport_code, group in by_transport.items():
             ratios = [g["経費率"] for g in group]
-            rate_med = statistics.median(ratios)
             rate_min, rate_max = min(ratios), max(ratios)
-            est_landed = buy_jpy * rate_med
-            est_cost = est_landed - buy_jpy
-            est_landed_min = buy_jpy * rate_min
-            est_landed_max = buy_jpy * rate_max
+
+            # 2026-09-09（14.133、Noritsuguの指摘）: 以前は「想定商品原価
+            # ×実績の経費率（比率）」で諸掛込原価を算出していたが、これは
+            # 「輸入経費は商品価値に比例する」という暗黙の前提を置いて
+            # いた。実際には関税・運賃・通関手数料等には、商品価値に
+            # ほとんど左右されない固定的な部分が含まれる。想定単価が実績
+            # データの単価と大きく異なる場合（例: 同じ数量でも単価が
+            # 10倍違う場合）、比率をそのまま掛けると輸入経費の推定額が
+            # 不自然に拡大・縮小してしまう。
+            #
+            # 正しくは、実績データから「輸入経費の実額（1個あたり）」を
+            # 算出し、それを想定数量にそのまま当てはめる（単価には依存
+            # しない）方が実態に近い。想定商品原価はユーザーの前提
+            # （想定単価×数量×為替）をそのまま使い、そこに実績ベースで
+            # 推定した輸入経費（実額）を足し合わせて諸掛込原価とする。
+            # 「推定経費率」は、この結果から逆算した参考表示用の値に
+            # 位置づけを変える（計算の起点ではない）。
+            import_cost_per_unit_list = [
+                (g["合計諸掛込金額円"] - g["合計仕入金額円"]) / float(g["合計数量pcs"])
+                for g in group
+            ]
+            import_cost_per_unit_med = statistics.median(import_cost_per_unit_list)
+            import_cost_per_unit_min = min(import_cost_per_unit_list)
+            import_cost_per_unit_max = max(import_cost_per_unit_list)
+
+            est_cost = import_cost_per_unit_med * qty
+            est_landed = buy_jpy + est_cost
+            est_cost_min = import_cost_per_unit_min * qty
+            est_cost_max = import_cost_per_unit_max * qty
+            est_landed_min = buy_jpy + est_cost_min
+            est_landed_max = buy_jpy + est_cost_max
+            # 推定経費率は、実額ベースで算出した結果を分かりやすく伝える
+            # ための逆算値（buy_jpyが0の場合は算出不能でNone）。
+            rate_med = est_landed / buy_jpy if buy_jpy else None
 
             quantities = [g["合計数量pcs"] for g in group]
             suppliers = [g.get("仕入先名") for g in group if g.get("仕入先名")]
@@ -541,12 +570,14 @@ class LogsysProvider:
                 "実績1個あたり原価_最大円": round(transport_cost_per_unit_max),
                 "実績1個あたり諸掛込原価_最小円": round(transport_landed_per_unit_min),
                 "実績1個あたり諸掛込原価_最大円": round(transport_landed_per_unit_max),
-                "推定経費率": round(rate_med, 3),
+                "推定経費率": round(rate_med, 3) if rate_med is not None else None,
                 "経費率_最小": round(rate_min, 3),
                 "経費率_最大": round(rate_max, 3),
                 "仕入先別内訳": supplier_breakdown,
                 "推定仕入金額円": round(buy_jpy),
                 "推定輸入経費円": round(est_cost),
+                "推定輸入経費_最小円": round(est_cost_min),
+                "推定輸入経費_最大円": round(est_cost_max),
                 "推定諸掛込原価円": round(est_landed),
                 "推定諸掛込原価_最小円": round(est_landed_min),
                 "推定諸掛込原価_最大円": round(est_landed_max),
@@ -576,6 +607,15 @@ class LogsysProvider:
             f"想定単価・商品原価（`想定単価USD`・`商品原価円`）は、表や回答文に必ず含めること"
             f"（質問者が前提の妥当性を判断できるようにするため）。"
             f"各輸送方法の結果をそのまま提示すること（少数の実例を選んで外挿しない）。"
+            f"【重要・2026-09-09、Noritsuguの指摘】`推定輸入経費円`・`推定諸掛込原価円`は、"
+            f"「想定商品原価×実績の経費率（比率）」ではなく、「実績データの輸入経費の実額"
+            f"（1個あたり、商品分類・数量帯が近い伝票の中央値）×想定数量」を想定商品原価に"
+            f"加算する方式で算出している（関税・運賃・通関手数料等には商品価値にほとんど"
+            f"左右されない固定的な部分が含まれるため、想定単価が実績データの単価と大きく"
+            f"異なる場合に、比率をそのまま掛けると輸入経費の推定額が不自然に拡大・縮小して"
+            f"しまう不具合があったため、14.133で算出方式を変更した）。`推定経費率`は、この"
+            f"実額ベースの計算結果を分かりやすく伝えるための逆算した参考値であり、計算の"
+            f"起点ではない（想定単価が0円等で算出できない場合はnullになる）。"
             f"「主な仕入先」・「仕入先別内訳」に含まれていない属性（国籍・取引条件の詳細等）を"
             f"作り話してはいけない。"
             f"【重要・2026-09-08、Noritsuguの指摘】各行の`仕入先別内訳`は、同じ輸送方法内でも"

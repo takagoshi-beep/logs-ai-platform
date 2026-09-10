@@ -536,7 +536,14 @@ def test_import_cost_estimate_groups_by_transport_method_with_real_data(monkeypa
     assert result["status"] == "ok"
     by_transport = {r["輸送方法"]: r for r in result["records"]}
     assert by_transport["FERRY_CFS"]["伝票数"] == 2
-    assert by_transport["FERRY_CFS"]["推定経費率"] == 1.25  # 1.20と1.30の中央値
+    # 2026-09-09（14.133、Noritsuguの指摘）: 「推定経費率」はもはや実績の
+    # 経費率（比率）の中央値そのものではなく、実額ベースで算出した推定
+    # 諸掛込原価から逆算した参考値になった。
+    # V1: 輸入経費実額/個=(60000-50000)/100=100円、V2: (67600-52000)/105≒148.57円
+    # 中央値=124.29円 → 推定輸入経費=124.29×100(質問の数量)=12428.57円
+    # 商品原価=100個×5USD×160円=80000円 → 諸掛込原価=92428.57円
+    # 逆算した推定経費率=92428.57/80000≒1.155
+    assert by_transport["FERRY_CFS"]["推定経費率"] == 1.155
     assert by_transport["FERRY_CFS"]["データ不足"] is True  # 2件 < 3件
     assert by_transport["AIR"]["伝票数"] == 1
     assert "HAEDONG TRADING" in by_transport["FERRY_CFS"]["主な仕入先"]
@@ -626,6 +633,51 @@ def test_import_cost_estimate_includes_actual_amounts_at_transport_level(monkeyp
     assert record["実績1個あたり諸掛込原価_最小円"] == round(126824.0 / 203)
     assert record["実績1個あたり諸掛込原価_最大円"] == round(159687.0 / 207)
     assert "実績1個あたり原価_最小円" in result["summary"] or "実績1個あたり諸掛込原価" in result["summary"]
+
+
+def test_import_cost_estimate_uses_actual_import_cost_amount_not_ratio(monkeypatch):
+    """2026-09-09（14.133、Noritsuguの指摘）: 以前は「想定商品原価×実績の
+    経費率（比率）」で諸掛込原価を算出していたため、想定単価が実績データの
+    単価と大きく異なる場合（例: 同じ数量でも単価が10倍違う）、輸入経費の
+    推定額が不自然に拡大・縮小してしまっていた。関税・運賃等には商品価値に
+    左右されない固定的な部分があるため、実績データの輸入経費の実額
+    （1個あたり、中央値）を想定数量にそのまま当てはめる方式に変更した。
+    単価が異なっても、推定輸入経費（実額）自体は変わらないことを確認する。"""
+    def _fake_query(self, sql, params=()):
+        if "為替" in sql and "FROM purchases WHERE" in sql:
+            return [{"為替": 150.0}]
+        return [
+            # 実績: 100個で仕入金額50000円・諸掛込金額60000円
+            # → 輸入経費実額 = (60000-50000)/100 = 100円/個
+            {"伝票番号": "V1", "輸送方法": 8, "仕入先名": "SUPPLIER_A",
+             "合計数量pcs": 100, "合計仕入金額円": 50000.0, "合計諸掛込金額円": 60000.0, "経費率": 1.20},
+        ]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    # 単価1USDの場合
+    result_cheap = LogsysProvider()._import_cost_estimate(
+        {"quantity": 100, "unit_price_usd": 1, "category_code": 2}
+    )
+    # 単価10USDの場合（同じ数量、単価は10倍）
+    result_expensive = LogsysProvider()._import_cost_estimate(
+        {"quantity": 100, "unit_price_usd": 10, "category_code": 2}
+    )
+
+    cheap_record = result_cheap["records"][0]
+    expensive_record = result_expensive["records"][0]
+
+    # 輸入経費の実額（推定輸入経費円）は、単価が10倍になっても変わらない
+    # （商品価値に比例するのではなく、実績の1個あたり実額×数量で決まるため）
+    assert cheap_record["推定輸入経費円"] == expensive_record["推定輸入経費円"]
+    assert cheap_record["推定輸入経費円"] == round(100 * 100)  # 100円/個 × 100個
+
+    # 一方、商品原価は単価に応じて正しく10倍になる
+    assert expensive_record["推定仕入金額円"] == cheap_record["推定仕入金額円"] * 10
+
+    # 逆算された「推定経費率」は、単価が高いほど1.0に近づく
+    # （固定的な輸入経費が、より大きい商品原価に対して相対的に薄まるため）
+    assert expensive_record["推定経費率"] < cheap_record["推定経費率"]
 
 
 def test_import_cost_estimate_main_query_selects_every_column_the_code_reads(monkeypatch):
