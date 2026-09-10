@@ -411,7 +411,7 @@ class LogsysProvider:
             '         SUM(p."諸掛込金額円") AS "合計諸掛込金額円", '
             '         COALESCE(SUM(ps."金額円"), 0) AS "関税合計円" '
             '  FROM purchases p '
-            '  LEFT JOIN purchase_surcharges ps ON ps."仕入ID" = p."ID" AND ps."諸掛区分ID" = 6 '
+            '  LEFT JOIN purchase_surcharges ps ON ps."仕入ID" = p."明細ID" AND ps."諸掛区分ID" = 6 '
             '  WHERE p."ステータス" IN (2, 3) AND p."商品分類" = %s AND p."仕入金額円" > 0 '
             '    AND p."諸掛込金額円" > p."仕入金額円" AND p."仕入確定フラグ" = 1 '
             '    AND p."伝票日" >= CURRENT_DATE - INTERVAL \'1 year\' '
@@ -506,6 +506,17 @@ class LogsysProvider:
             # いたため、FEDEX×ベルトの全伝票で関税額が0円という不自然な
             # 結果になっていた。実際の関税はID=6であり、ID=6に修正した後、
             # 正しくデータが取得できることを確認した。
+            #
+            # 2026-09-09（14.136、Noritsuguが実データで発見）: ID=6に修正
+            # した直後も、一部の伝票で「その他の諸掛」がマイナスになる
+            # 不具合が発生した。原因はJOIN条件`ps."仕入ID" = p."ID"`。
+            # `purchases."ID"`は伝票内の複数明細で共有される値（14.111・
+            # 14.115で判明済みの「伝票ID」に相当）であり、明細ごとに一意
+            # ではない。真の一意識別子は`purchases."明細ID"`。この誤った
+            # JOINキーのため、1つの伝票に複数の明細行がある場合、同じ関税
+            # レコードがその明細行数だけ重複してSUMされていた（実例:
+            # 7明細の伝票で、1件・87,200円の関税が7回重複し610,400円に
+            # 膨れ上がっていた）。`ps."仕入ID" = p."明細ID"`に修正した。
             #
             # 関税率は、実際に関税額が記録されている伝票（"関税合計円">0）
             # だけを対象に平均を取る。DDP（関税・輸送費を仕入先が商品代金
@@ -1359,6 +1370,15 @@ class LogsysProvider:
         画面（仕入伝票の諸掛一覧）と実データを突き合わせて対応表を確定
         済み（_SURCHARGE_CATEGORY_LABELS、14.135）。消費税に該当する
         区分は2・7・8。
+
+        2026-09-09（14.136、Noritsuguが実データで発見）: JOIN条件が
+        `ps."仕入ID" = pu."ID"`になっていたが、`purchases."ID"`は
+        伝票内の複数明細で共有される値（14.111・14.115で判明済みの
+        「伝票ID」に相当）であり、明細ごとに一意ではない。真の一意
+        識別子は`purchases."明細ID"`。この誤ったJOINキーのため、1つの
+        伝票に複数の明細行がある場合、同じ諸掛レコードがその明細行数
+        だけ重複して返っていた（実例: 7明細の伝票で、1件の関税
+        レコードが7回重複）。`ps."仕入ID" = pu."明細ID"`に修正した。
         """
         where = 'pu."ステータス" IN (2, 3)'
         args: list[Any] = []
@@ -1378,7 +1398,7 @@ class LogsysProvider:
         sql = (
             'SELECT ps.*, pu."伝票日", pu."POnum", pu."LOGS_CODE", pu."仕入先名" '
             "FROM purchase_surcharges ps "
-            'JOIN purchases pu ON ps."仕入ID" = pu."ID" '
+            'JOIN purchases pu ON ps."仕入ID" = pu."明細ID" '
             f'WHERE {where} ORDER BY pu."伝票日" DESC'
         )
         rows = self._query(sql, tuple(args))

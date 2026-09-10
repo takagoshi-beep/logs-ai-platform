@@ -1224,7 +1224,7 @@ def test_purchase_surcharges_joins_with_purchases_and_filters(monkeypatch):
     })
 
     assert "JOIN purchases pu" in captured["sql"]
-    assert 'ps."仕入ID" = pu."ID"' in captured["sql"]
+    assert 'ps."仕入ID" = pu."明細ID"' in captured["sql"]
     assert 'pu."伝票日" >= %s' in captured["sql"]
     assert 'pu."POnum" = %s' in captured["sql"]
     assert 'pu."LOGS_CODE" = %s' in captured["sql"]
@@ -1280,6 +1280,47 @@ def test_import_cost_estimate_tariff_join_filters_by_correct_category_id(monkeyp
 
     assert 'ps."諸掛区分ID" = 6' in captured["sql"]
     assert 'ps."諸掛区分ID" = 1' not in captured["sql"]
+    # 2026-09-09（14.136、Noritsuguが実データで発見）: JOIN条件は
+    # purchases."ID"（伝票内で複数明細に共有される値）ではなく、
+    # purchases."明細ID"（真に一意な識別子）を使うこと。
+    assert 'ps."仕入ID" = p."明細ID"' in captured["sql"]
+    assert 'ps."仕入ID" = p."ID"' not in captured["sql"]
+
+
+def test_import_cost_estimate_does_not_duplicate_tariff_across_line_items(monkeypatch):
+    """2026-09-09（14.136、Noritsuguが実データで発見）: JOIN条件が
+    `ps."仕入ID" = p."ID"`になっていたため、1つの伝票に複数の明細行が
+    ある場合、同じ関税レコードがその明細行数だけ重複して合計されて
+    いた（実例: 7明細の伝票で、1件・87,200円の関税が7回重複し
+    610,400円に膨れ上がっていた）。このテストでは、SQL自体は
+    "明細ID"でJOINされる前提でモックし、正しくPythonの集計ロジック
+    （伝票単位でSUM済みの値をそのまま使う）が機能することを確認する
+    （実際のJOINの正しさ自体はSQL文字列の検証で担保する、別テスト）。
+    """
+    def _fake_query(self, sql, params=()):
+        if "為替" in sql and "FROM purchases WHERE" in sql:
+            return [{"為替": 155.0}]
+        # 正しくJOINされた場合、1件の伝票につき関税合計は1回分のみ
+        # （例: 87,200円、7回の重複無し）になっているはず。
+        return [
+            {"伝票番号": "V1", "輸送方法": 8, "仕入先名": "GUANGZHOU AITINA",
+             "合計数量pcs": 810, "合計仕入金額円": 648365.0, "合計諸掛込金額円": 773871.0,
+             "関税合計円": 87200.0, "経費率": 1.194},
+        ]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._import_cost_estimate(
+        {"quantity": 300, "unit_price_usd": 3, "category_code": 7}
+    )
+
+    record = result["records"][0]
+    # 関税率 = 87200/648365 ≒ 0.1345（13.45%）。修正前の7倍重複だと
+    # 610400/648365 ≒ 0.941（94%）という非現実的な値になっていた。
+    assert 0 < record["関税率_平均"] < 0.3
+    # その他諸掛が正しくプラスになること（修正前はマイナスになっていた）
+    other_cost = record["推定その他諸掛円"]
+    assert other_cost >= 0
 
 
 def test_purchase_surcharges_returns_unavailable_when_empty(monkeypatch):
