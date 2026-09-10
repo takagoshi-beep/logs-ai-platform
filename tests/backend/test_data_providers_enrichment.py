@@ -522,9 +522,9 @@ def test_import_cost_estimate_groups_by_transport_method_with_real_data(monkeypa
         if calls["n"] == 1:
             return [{"為替": 160.0}]
         return [
-            {"伝票番号": "V1", "輸送方法": 4, "仕入先名": "HAEDONG TRADING", "合計数量pcs": 100, "合計仕入金額円": 50000, "合計諸掛込金額円": 60000.0, "関税合計円": 0, "経費率": 1.20},
-            {"伝票番号": "V2", "輸送方法": 4, "仕入先名": "HAEDONG TRADING", "合計数量pcs": 105, "合計仕入金額円": 52000, "合計諸掛込金額円": 67600.0, "関税合計円": 0, "経費率": 1.30},
-            {"伝票番号": "V3", "輸送方法": 6, "仕入先名": "QINGDAO CHUNXIN", "合計数量pcs": 95, "合計仕入金額円": 48000, "合計諸掛込金額円": 55200.0, "関税合計円": 0, "経費率": 1.15},
+            {"伝票番号": "V1", "輸送方法": 4, "仕入先名": "HAEDONG TRADING", "合計数量pcs": 100, "合計仕入金額円": 50000, "合計諸掛込金額円": 60000.0, "関税合計円": 0, "商品分類が単一": True, "経費率": 1.20},
+            {"伝票番号": "V2", "輸送方法": 4, "仕入先名": "HAEDONG TRADING", "合計数量pcs": 105, "合計仕入金額円": 52000, "合計諸掛込金額円": 67600.0, "関税合計円": 0, "商品分類が単一": True, "経費率": 1.30},
+            {"伝票番号": "V3", "輸送方法": 6, "仕入先名": "QINGDAO CHUNXIN", "合計数量pcs": 95, "合計仕入金額円": 48000, "合計諸掛込金額円": 55200.0, "関税合計円": 0, "商品分類が単一": True, "経費率": 1.15},
         ]
 
     monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
@@ -565,11 +565,11 @@ def test_import_cost_estimate_breaks_down_ratio_by_supplier_within_transport(mon
             return [{"為替": 155.0}]
         return [
             # KAI TRADING（DDP、経費率が低い）2件
-            {"伝票番号": "V1", "輸送方法": 8, "仕入先名": "KAI TRADING", "合計数量pcs": 200, "合計仕入金額円": 146000, "合計諸掛込金額円": 148628.0, "関税合計円": 0, "経費率": 1.018},
-            {"伝票番号": "V2", "輸送方法": 8, "仕入先名": "KAI TRADING", "合計数量pcs": 210, "合計仕入金額円": 150000, "合計諸掛込金額円": 153750.0, "関税合計円": 0, "経費率": 1.025},
+            {"伝票番号": "V1", "輸送方法": 8, "仕入先名": "KAI TRADING", "合計数量pcs": 200, "合計仕入金額円": 146000, "合計諸掛込金額円": 148628.0, "関税合計円": 0, "商品分類が単一": True, "経費率": 1.018},
+            {"伝票番号": "V2", "輸送方法": 8, "仕入先名": "KAI TRADING", "合計数量pcs": 210, "合計仕入金額円": 150000, "合計諸掛込金額円": 153750.0, "関税合計円": 0, "商品分類が単一": True, "経費率": 1.025},
             # GUANGZHOU AITINA（FOB、経費率が通常水準）2件
-            {"伝票番号": "V3", "輸送方法": 8, "仕入先名": "GUANGZHOU AITINA", "合計数量pcs": 207, "合計仕入金額円": 134757, "合計諸掛込金額円": 159687.0, "関税合計円": 0, "経費率": 1.185},
-            {"伝票番号": "V4", "輸送方法": 8, "仕入先名": "GUANGZHOU AITINA", "合計数量pcs": 203, "合計仕入金額円": 106575, "合計諸掛込金額円": 126824.2, "関税合計円": 0, "経費率": 1.19},
+            {"伝票番号": "V3", "輸送方法": 8, "仕入先名": "GUANGZHOU AITINA", "合計数量pcs": 207, "合計仕入金額円": 134757, "合計諸掛込金額円": 159687.0, "関税合計円": 0, "商品分類が単一": True, "経費率": 1.185},
+            {"伝票番号": "V4", "輸送方法": 8, "仕入先名": "GUANGZHOU AITINA", "合計数量pcs": 203, "合計仕入金額円": 106575, "合計諸掛込金額円": 126824.2, "関税合計円": 0, "商品分類が単一": True, "経費率": 1.19},
         ]
 
     monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
@@ -616,9 +616,9 @@ def test_import_cost_estimate_includes_actual_amounts_at_transport_level(monkeyp
             # 1個あたり商品原価: V1=134757/207=651円、V2=106575/203=525円
             # 1個あたり諸掛込原価: V1=159687/207≒771.43円、V2=126824/203≒624.75円
             {"伝票番号": "V1", "輸送方法": 8, "仕入先名": "GUANGZHOU AITINA",
-             "合計数量pcs": 207, "合計仕入金額円": 134757.0, "合計諸掛込金額円": 159687.0, "関税合計円": 0, "経費率": 1.185},
+             "合計数量pcs": 207, "合計仕入金額円": 134757.0, "合計諸掛込金額円": 159687.0, "関税合計円": 0, "商品分類が単一": True, "経費率": 1.185},
             {"伝票番号": "V2", "輸送方法": 8, "仕入先名": "GUANGZHOU AITINA",
-             "合計数量pcs": 203, "合計仕入金額円": 106575.0, "合計諸掛込金額円": 126824.0, "関税合計円": 0, "経費率": 1.19},
+             "合計数量pcs": 203, "合計仕入金額円": 106575.0, "合計諸掛込金額円": 126824.0, "関税合計円": 0, "商品分類が単一": True, "経費率": 1.19},
         ]
 
     monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
@@ -633,6 +633,43 @@ def test_import_cost_estimate_includes_actual_amounts_at_transport_level(monkeyp
     assert record["実績1個あたり諸掛込原価_最小円"] == round(126824.0 / 203)
     assert record["実績1個あたり諸掛込原価_最大円"] == round(159687.0 / 207)
     assert "実績1個あたり原価_最小円" in result["summary"] or "実績1個あたり諸掛込原価" in result["summary"]
+
+
+def test_import_cost_estimate_excludes_mixed_category_vouchers_from_tariff_rate(monkeypatch):
+    """2026-09-09（14.140、Noritsuguが実データで発見・指定）: 関税は
+    購買品ではなく伝票単位の値として記録されているため、1つの伝票に
+    複数の商品分類の明細が混在する場合、絞り込み後の"合計仕入金額円"
+    （この商品分類だけの明細の合計）を分母にすると、実際には他の商品
+    分類の仕入分も含めて課された関税を、この商品分類だけにかかった
+    ものと誤認してしまう（実例: 本来1割程度のはずが63%になっていた）。
+    "商品分類が単一"=Falseの伝票は、関税額が記録されていても関税率の
+    計算対象から除外する。"""
+    def _fake_query(self, sql, params=()):
+        if "為替" in sql and "FROM purchases WHERE" in sql:
+            return [{"為替": 150.0}]
+        return [
+            # 商品分類が単一の伝票（正常、関税率10%として計算対象に含める）
+            {"伝票番号": "V1", "輸送方法": 8, "仕入先名": "PURE_SUPPLIER",
+             "合計数量pcs": 100, "合計仕入金額円": 100000.0, "合計諸掛込金額円": 115000.0,
+             "関税合計円": 10000.0, "商品分類が単一": True, "経費率": 1.15},
+            # 商品分類が混在する伝票（この商品分類以外の仕入も含めて関税が
+            # 計上されているため、関税率が異常に高く見える。除外すべき）
+            {"伝票番号": "V2", "輸送方法": 8, "仕入先名": "MIXED_SUPPLIER",
+             "合計数量pcs": 247, "合計仕入金額円": 153140.0, "合計諸掛込金額円": 177465.7875,
+             "関税合計円": 96900.0, "商品分類が単一": False, "経費率": 1.159},
+        ]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._import_cost_estimate(
+        {"quantity": 100, "unit_price_usd": 10, "category_code": 7}
+    )
+
+    record = result["records"][0]
+    # 関税率の平均は、商品分類が単一なV1（10%）だけから算出され、
+    # 混在伝票のV2（63%相当、異常値）は除外されるため、ちょうど10%になる
+    assert record["関税率_平均"] == 0.1
+    assert record["関税データあり伝票数"] == 1  # V1のみ（V2は除外）
 
 
 def test_import_cost_estimate_excludes_zero_tariff_vouchers_from_tariff_rate(monkeypatch):
@@ -653,14 +690,14 @@ def test_import_cost_estimate_excludes_zero_tariff_vouchers_from_tariff_rate(mon
             # 関税率: V1=10000/100000=10%, V2=9000/90000=10%
             {"伝票番号": "V1", "輸送方法": 8, "仕入先名": "NORMAL_SUPPLIER",
              "合計数量pcs": 100, "合計仕入金額円": 100000.0, "合計諸掛込金額円": 115000.0,
-             "関税合計円": 10000.0, "経費率": 1.15},
+             "関税合計円": 10000.0, "商品分類が単一": True, "経費率": 1.15},
             {"伝票番号": "V2", "輸送方法": 8, "仕入先名": "NORMAL_SUPPLIER",
              "合計数量pcs": 90, "合計仕入金額円": 90000.0, "合計諸掛込金額円": 103500.0,
-             "関税合計円": 9000.0, "経費率": 1.15},
+             "関税合計円": 9000.0, "商品分類が単一": True, "経費率": 1.15},
             # DDPの仕入先（関税0円と明示的に記録）1件 → 関税率平均には含めない
             {"伝票番号": "V3", "輸送方法": 8, "仕入先名": "KAI TRADING",
              "合計数量pcs": 200, "合計仕入金額円": 146000.0, "合計諸掛込金額円": 148628.0,
-             "関税合計円": 0.0, "経費率": 1.018},
+             "関税合計円": 0.0, "商品分類が単一": True, "経費率": 1.018},
         ]
 
     monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
@@ -691,7 +728,7 @@ def test_import_cost_estimate_uses_actual_import_cost_amount_not_ratio(monkeypat
             # 実績: 100個で仕入金額50000円・諸掛込金額60000円
             # → 輸入経費実額 = (60000-50000)/100 = 100円/個
             {"伝票番号": "V1", "輸送方法": 8, "仕入先名": "SUPPLIER_A",
-             "合計数量pcs": 100, "合計仕入金額円": 50000.0, "合計諸掛込金額円": 60000.0, "関税合計円": 0, "経費率": 1.20},
+             "合計数量pcs": 100, "合計仕入金額円": 50000.0, "合計諸掛込金額円": 60000.0, "関税合計円": 0, "商品分類が単一": True, "経費率": 1.20},
         ]
 
     monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
@@ -799,7 +836,7 @@ def test_import_cost_estimate_handles_decimal_quantity_from_bigint_sum(monkeypat
         return [
             {
                 "伝票番号": "V1", "輸送方法": 8, "仕入先名": "GUANGZHOU AITINA",
-                "合計数量pcs": Decimal("274"), "合計仕入金額円": 46500.0, "合計諸掛込金額円": 55102.5, "関税合計円": 0, "経費率": 1.185,
+                "合計数量pcs": Decimal("274"), "合計仕入金額円": 46500.0, "合計諸掛込金額円": 55102.5, "関税合計円": 0, "商品分類が単一": True, "経費率": 1.185,
             },
         ]
 
@@ -829,7 +866,7 @@ def test_import_cost_estimate_handles_decimal_quantity_from_bigint_sum(monkeypat
             return [{"為替": 155.0}]
         return [
             # 実績: 合計仕入金額46,500円・合計数量300個 → 実績平均単価は155円/個(=1USD/個)
-            {"伝票番号": "V1", "輸送方法": 4, "仕入先名": "GUANGZHOU AITINA", "合計数量pcs": 300, "合計仕入金額円": 46500, "合計諸掛込金額円": 55102.5, "関税合計円": 0, "経費率": 1.185},
+            {"伝票番号": "V1", "輸送方法": 4, "仕入先名": "GUANGZHOU AITINA", "合計数量pcs": 300, "合計仕入金額円": 46500, "合計諸掛込金額円": 55102.5, "関税合計円": 0, "商品分類が単一": True, "経費率": 1.185},
         ]
 
     monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
@@ -857,7 +894,7 @@ def test_import_cost_estimate_excludes_newhattan_by_default(monkeypatch):
         if calls["n"] == 1:
             return [{"為替": 160.0}]
         return [
-            {"伝票番号": "V1", "輸送方法": 4, "仕入先名": "NEWHATTAN JAPAN", "合計数量pcs": 100, "合計仕入金額円": 50000, "合計諸掛込金額円": 60000.0, "関税合計円": 0, "経費率": 1.20},
+            {"伝票番号": "V1", "輸送方法": 4, "仕入先名": "NEWHATTAN JAPAN", "合計数量pcs": 100, "合計仕入金額円": 50000, "合計諸掛込金額円": 60000.0, "関税合計円": 0, "商品分類が単一": True, "経費率": 1.20},
         ]
 
     monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
@@ -877,7 +914,7 @@ def test_import_cost_estimate_includes_newhattan_when_requested(monkeypatch):
         if calls["n"] == 1:
             return [{"為替": 160.0}]
         return [
-            {"伝票番号": "V1", "輸送方法": 4, "仕入先名": "NEWHATTAN JAPAN", "合計数量pcs": 100, "合計仕入金額円": 50000, "合計諸掛込金額円": 60000.0, "関税合計円": 0, "経費率": 1.20},
+            {"伝票番号": "V1", "輸送方法": 4, "仕入先名": "NEWHATTAN JAPAN", "合計数量pcs": 100, "合計仕入金額円": 50000, "合計諸掛込金額円": 60000.0, "関税合計円": 0, "商品分類が単一": True, "経費率": 1.20},
         ]
 
     monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
@@ -1291,6 +1328,11 @@ def test_import_cost_estimate_tariff_join_filters_by_correct_category_id(monkeyp
     assert 'tariff_agg' in captured["sql"]
     assert 'v."仕入ID" = t."仕入ID"' in captured["sql"]
     assert 'p."明細ID"' not in captured["sql"]
+    # 2026-09-09（14.140、Noritsuguが実データで発見）: 商品分類が混在
+    # する伝票を関税率の計算から除外するため、"voucher_purity"という
+    # CTEでCOUNT(DISTINCT "商品分類")=1かどうかを判定していることを確認。
+    assert 'voucher_purity' in captured["sql"]
+    assert '"商品分類が単一"' in captured["sql"]
 
 
 def test_import_cost_estimate_does_not_duplicate_tariff_across_line_items(monkeypatch):
@@ -1311,7 +1353,7 @@ def test_import_cost_estimate_does_not_duplicate_tariff_across_line_items(monkey
         return [
             {"伝票番号": "V1", "輸送方法": 8, "仕入先名": "GUANGZHOU AITINA",
              "合計数量pcs": 810, "合計仕入金額円": 648365.0, "合計諸掛込金額円": 773871.0,
-             "関税合計円": 87200.0, "経費率": 1.194},
+             "関税合計円": 87200.0, "商品分類が単一": True, "経費率": 1.194},
         ]
 
     monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
