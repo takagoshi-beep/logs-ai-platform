@@ -672,6 +672,42 @@ def test_import_cost_estimate_excludes_mixed_category_vouchers_from_tariff_rate(
     assert record["関税データあり伝票数"] == 1  # V1のみ（V2は除外）
 
 
+def test_import_cost_estimate_excludes_mixed_category_vouchers_from_other_cost_too(monkeypatch):
+    """2026-09-10（14.144、Noritsuguが実データで発見）: 14.140では商品
+    分類混在の伝票を"関税率"の計算からは除外していたが、「その他の
+    諸掛」（1個あたり実額）の計算には適用し忘れていた。そのため、実際の
+    伝票（S54126607E101、商品分類3と7が混在、関税96,900円は両分類の
+    合計仕入金額に対してかかったもの）の、按分されていない関税額が
+    「その他諸掛」の計算からそのまま差し引かれ、大きくマイナスの値
+    （実例: -72,574円）になっていた。商品分類が単一の伝票が1件でも
+    あれば、その他諸掛の計算も同じ絞り込みを適用し、混在伝票を除外する
+    ことを確認する。"""
+    def _fake_query(self, sql, params=()):
+        if "為替" in sql and "FROM purchases WHERE" in sql:
+            return [{"為替": 150.0}]
+        return [
+            # 商品分類が単一の伝票（正常）
+            {"伝票番号": "V1", "輸送方法": 4, "仕入先名": "PURE_SUPPLIER",
+             "合計数量pcs": 394, "合計仕入金額円": 425914.0, "合計諸掛込金額円": 554751.0001,
+             "関税合計円": 37700.0, "商品分類が単一": True, "経費率": 1.302},
+            # 商品分類混在の伝票（実データそのもの: S54126607E101）
+            {"伝票番号": "S54126607E101", "輸送方法": 4, "仕入先名": "MIXED_SUPPLIER",
+             "合計数量pcs": 247, "合計仕入金額円": 153140.0, "合計諸掛込金額円": 177465.7875,
+             "関税合計円": 96900.0, "商品分類が単一": False, "経費率": 1.159},
+        ]
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    result = LogsysProvider()._import_cost_estimate(
+        {"quantity": 300, "unit_price_usd": 3, "category_code": 7}
+    )
+
+    record = result["records"][0]
+    # 混在伝票（V2相当）が除外され、単一分類のV1だけを対象にするため、
+    # 「その他諸掛」はプラスの妥当な値になる（マイナスにならない）
+    assert record["推定その他諸掛円"] >= 0
+
+
 def test_import_cost_estimate_excludes_zero_tariff_vouchers_from_tariff_rate(monkeypatch):
     """2026-09-09（14.134、Noritsuguの指定）: 関税は商品の申告価格に
     比例する性質があるため、実際に記録された関税額（purchase_surcharges）

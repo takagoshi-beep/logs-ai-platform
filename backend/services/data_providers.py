@@ -583,10 +583,24 @@ class LogsysProvider:
             # 誤認してしまい、関税率が異常に高く算出される（実例:
             # 本来1割程度のはずが63%になっていた）。商品分類が単一の
             # 伝票（"商品分類が単一"=True）だけを対象にする。
+            #
+            # 2026-09-10（14.144、Noritsuguが実データで発見）: 14.140では
+            # この絞り込みを`tariff_rates`にしか適用しておらず、「その他
+            # の諸掛」（`other_cost_per_unit_list`）には適用し忘れて
+            # いた。そのため、商品分類混在の伝票（実例: S54126607E101、
+            # 商品分類3と7が混在、関税96,900円は両分類の合計仕入金額に
+            # 対してかかったもの）の、按分されていない関税額が「その他
+            # 諸掛」の計算からそのまま差し引かれてしまい、大きくマイナス
+            # の値になっていた（実例: -72,574円）。商品分類が単一の伝票
+            # が1件でもあれば、その他諸掛の計算も同じ絞り込みを適用する。
+            # 全伝票が混在している場合のみ、フォールバックとして全伝票を
+            # 対象にする（参考値としての性質がより強くなる旨は、別途
+            # 「データ不足」の警告で伝わる想定）。
+            pure_group = [g for g in group if g.get("商品分類が単一")]
             tariff_rates = [
                 float(g["関税合計円"]) / g["合計仕入金額円"]
-                for g in group
-                if g["関税合計円"] > 0 and g.get("商品分類が単一")
+                for g in pure_group
+                if g["関税合計円"] > 0
             ]
             if tariff_rates:
                 tariff_rate_avg = sum(tariff_rates) / len(tariff_rates)
@@ -599,10 +613,12 @@ class LogsysProvider:
 
             # 「その他の諸掛」= 合計諸掛込金額円 － 合計仕入金額円 － 関税分。
             # 14.133と同じく、1個あたりの実額（商品価値に依存しない）で
-            # 推定し、中央値・最小・最大を算出する。
+            # 推定し、中央値・最小・最大を算出する。関税率と同じ理由で、
+            # 商品分類が単一の伝票だけを対象にする（14.144）。
+            other_cost_source = pure_group if pure_group else group
             other_cost_per_unit_list = [
                 (g["合計諸掛込金額円"] - g["合計仕入金額円"] - float(g["関税合計円"])) / float(g["合計数量pcs"])
-                for g in group
+                for g in other_cost_source
             ]
             other_cost_per_unit_med = statistics.median(other_cost_per_unit_list)
             other_cost_per_unit_min = min(other_cost_per_unit_list)
