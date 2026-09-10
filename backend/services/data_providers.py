@@ -391,19 +391,30 @@ class LogsysProvider:
         # ようにする（14.127で"合計仕入金額円"を同じ理由で追加した際と
         # 同じ教訓 — 経費率の計算式の中で参照されているだけでは、外側で
         # 独立した列として選択したことにはならない点に注意）。
+        # 2026-09-09（14.134、Noritsuguの指摘）: 経費率(比率)を単純に
+        # 中央値・平均だけで決めると、外れ値（極端に低い/高い実績）の
+        # 扱いが難しい。関税は本来、商品の申告価格に比例する性質を持つ
+        # （ad valorem）一方、運賃・通関料・燃料サーチャージ等の「その他
+        # の諸掛」は商品価値にほとんど左右されない固定的な性質を持つ
+        # （14.133の教訓）。この2つの性質の違いを反映するため、
+        # purchase_surchargesから実際の関税額（諸掛区分ID=1）を伝票
+        # ごとに集計し、関税とその他の諸掛を分けて扱う。
         sql = (
             'WITH voucher_agg AS ('
-            '  SELECT "伝票番号", MIN("輸送方法") AS "輸送方法", MIN("仕入先名") AS "仕入先名", '
-            '         SUM("仕入数量pcs") AS "合計数量pcs", SUM("仕入金額円") AS "合計仕入金額円", '
-            '         SUM("諸掛込金額円") AS "合計諸掛込金額円" '
-            '  FROM purchases '
-            '  WHERE "ステータス" IN (2, 3) AND "商品分類" = %s AND "仕入金額円" > 0 '
-            '    AND "諸掛込金額円" > "仕入金額円" AND "仕入確定フラグ" = 1 '
-            '    AND "伝票日" >= CURRENT_DATE - INTERVAL \'1 year\' '
-            '  GROUP BY "伝票番号"'
+            '  SELECT p."伝票番号", MIN(p."輸送方法") AS "輸送方法", MIN(p."仕入先名") AS "仕入先名", '
+            '         SUM(p."仕入数量pcs") AS "合計数量pcs", SUM(p."仕入金額円") AS "合計仕入金額円", '
+            '         SUM(p."諸掛込金額円") AS "合計諸掛込金額円", '
+            '         COALESCE(SUM(ps."金額円"), 0) AS "関税合計円" '
+            '  FROM purchases p '
+            '  LEFT JOIN purchase_surcharges ps ON ps."仕入ID" = p."ID" AND ps."諸掛区分ID" = 1 '
+            '  WHERE p."ステータス" IN (2, 3) AND p."商品分類" = %s AND p."仕入金額円" > 0 '
+            '    AND p."諸掛込金額円" > p."仕入金額円" AND p."仕入確定フラグ" = 1 '
+            '    AND p."伝票日" >= CURRENT_DATE - INTERVAL \'1 year\' '
+            '  GROUP BY p."伝票番号"'
             ') '
             'SELECT "伝票番号", "輸送方法", "仕入先名", "合計数量pcs", "合計仕入金額円", '
-            '       "合計諸掛込金額円", "合計諸掛込金額円" / "合計仕入金額円" AS "経費率" '
+            '       "合計諸掛込金額円", "関税合計円", '
+            '       "合計諸掛込金額円" / "合計仕入金額円" AS "経費率" '
             'FROM voucher_agg '
             'WHERE "合計数量pcs" BETWEEN %s AND %s'
         )
@@ -474,18 +485,56 @@ class LogsysProvider:
             # 推定した輸入経費（実額）を足し合わせて諸掛込原価とする。
             # 「推定経費率」は、この結果から逆算した参考表示用の値に
             # 位置づけを変える（計算の起点ではない）。
-            import_cost_per_unit_list = [
-                (g["合計諸掛込金額円"] - g["合計仕入金額円"]) / float(g["合計数量pcs"])
+            # 2026-09-09（14.134、Noritsuguの指摘）: 14.133で「輸入経費は
+            # 実額（1個あたり）で推定する」方式に変えたが、関税だけは
+            # 例外的に商品の申告価格に比例する性質（ad valorem）を持つ。
+            # 一方、運賃・通関料・燃料サーチャージ等の「その他の諸掛」は
+            # 商品価値にほとんど左右されない固定的な性質を持つ（14.133の
+            # 教訓、そのまま維持）。そこで、実際に記録された関税額
+            # （purchase_surchargesの諸掛区分ID=1、"関税合計円"）を使い、
+            # 関税とその他の諸掛を分けて算出する。
+            #
+            # 関税率は、実際に関税額が記録されている伝票（"関税合計円">0）
+            # だけを対象に平均を取る。DDP（関税・輸送費を仕入先が商品代金
+            # に含めて請求する取引条件、実例: KAI TRADING）の伝票は、
+            # purchase_surchargesに関税の行自体はあるが金額が明示的に0円
+            # と記録されており、これを含めると関税率の平均が不当に低く
+            # なってしまうため除外する（Noritsuguが実データで確認済み）。
+            # 2026-09-09（14.134）: "関税合計円"はCOALESCE(SUM(ps."金額円"), 0)
+            # で計算しており、purchase_surcharges."金額円"の実際の型が
+            # bigint/numericだった場合、psycopgはdecimal.Decimalを返す
+            # 可能性がある（14.128・14.131で"仕入数量pcs"について踏んだ
+            # のと同じ落とし穴）。float()で明示的に変換してから演算する。
+            tariff_rates = [
+                float(g["関税合計円"]) / g["合計仕入金額円"] for g in group if g["関税合計円"] > 0
+            ]
+            if tariff_rates:
+                tariff_rate_avg = sum(tariff_rates) / len(tariff_rates)
+                tariff_rate_min, tariff_rate_max = min(tariff_rates), max(tariff_rates)
+            else:
+                # 関税額が記録されている伝票が1件も無い場合は、関税分を
+                # 0として扱う（従来通り、諸掛込金額円と仕入金額円の差額
+                # 全体を「その他の諸掛」として扱うことになる）。
+                tariff_rate_avg = tariff_rate_min = tariff_rate_max = 0.0
+
+            # 「その他の諸掛」= 合計諸掛込金額円 － 合計仕入金額円 － 関税分。
+            # 14.133と同じく、1個あたりの実額（商品価値に依存しない）で
+            # 推定し、中央値・最小・最大を算出する。
+            other_cost_per_unit_list = [
+                (g["合計諸掛込金額円"] - g["合計仕入金額円"] - float(g["関税合計円"])) / float(g["合計数量pcs"])
                 for g in group
             ]
-            import_cost_per_unit_med = statistics.median(import_cost_per_unit_list)
-            import_cost_per_unit_min = min(import_cost_per_unit_list)
-            import_cost_per_unit_max = max(import_cost_per_unit_list)
+            other_cost_per_unit_med = statistics.median(other_cost_per_unit_list)
+            other_cost_per_unit_min = min(other_cost_per_unit_list)
+            other_cost_per_unit_max = max(other_cost_per_unit_list)
 
-            est_cost = import_cost_per_unit_med * qty
+            est_tariff = tariff_rate_avg * buy_jpy
+            est_other = other_cost_per_unit_med * qty
+            est_cost = est_tariff + est_other
             est_landed = buy_jpy + est_cost
-            est_cost_min = import_cost_per_unit_min * qty
-            est_cost_max = import_cost_per_unit_max * qty
+
+            est_cost_min = (tariff_rate_min * buy_jpy) + (other_cost_per_unit_min * qty)
+            est_cost_max = (tariff_rate_max * buy_jpy) + (other_cost_per_unit_max * qty)
             est_landed_min = buy_jpy + est_cost_min
             est_landed_max = buy_jpy + est_cost_max
             # 推定経費率は、実額ベースで算出した結果を分かりやすく伝える
@@ -573,8 +622,12 @@ class LogsysProvider:
                 "推定経費率": round(rate_med, 3) if rate_med is not None else None,
                 "経費率_最小": round(rate_min, 3),
                 "経費率_最大": round(rate_max, 3),
+                "関税率_平均": round(tariff_rate_avg, 4) if tariff_rates else None,
+                "関税データあり伝票数": len(tariff_rates),
                 "仕入先別内訳": supplier_breakdown,
                 "推定仕入金額円": round(buy_jpy),
+                "推定関税円": round(est_tariff),
+                "推定その他諸掛円": round(est_other),
                 "推定輸入経費円": round(est_cost),
                 "推定輸入経費_最小円": round(est_cost_min),
                 "推定輸入経費_最大円": round(est_cost_max),
@@ -608,14 +661,18 @@ class LogsysProvider:
             f"（質問者が前提の妥当性を判断できるようにするため）。"
             f"各輸送方法の結果をそのまま提示すること（少数の実例を選んで外挿しない）。"
             f"【重要・2026-09-09、Noritsuguの指摘】`推定輸入経費円`・`推定諸掛込原価円`は、"
-            f"「想定商品原価×実績の経費率（比率）」ではなく、「実績データの輸入経費の実額"
-            f"（1個あたり、商品分類・数量帯が近い伝票の中央値）×想定数量」を想定商品原価に"
-            f"加算する方式で算出している（関税・運賃・通関手数料等には商品価値にほとんど"
-            f"左右されない固定的な部分が含まれるため、想定単価が実績データの単価と大きく"
-            f"異なる場合に、比率をそのまま掛けると輸入経費の推定額が不自然に拡大・縮小して"
-            f"しまう不具合があったため、14.133で算出方式を変更した）。`推定経費率`は、この"
-            f"実額ベースの計算結果を分かりやすく伝えるための逆算した参考値であり、計算の"
-            f"起点ではない（想定単価が0円等で算出できない場合はnullになる）。"
+            f"単純な「想定商品原価×実績の経費率（比率）」ではなく、関税とその他の諸掛を分けて"
+            f"算出している: (1) 関税（`推定関税円`）は商品の申告価格に比例する性質があるため、"
+            f"実際に関税額が記録されている伝票（purchase_surchargesの実データ、"
+            f"DDP等で関税0円と記録されている伝票は除く）から算出した`関税率_平均`×想定商品原価。"
+            f"(2) 運賃・通関手数料等の「その他の諸掛」（`推定その他諸掛円`）は商品価値に"
+            f"ほとんど左右されない固定的な部分のため、実績データの1個あたり実額（中央値）×"
+            f"想定数量。想定単価が実績データの単価と大きく異なる場合でも、この2つを分けて"
+            f"扱うことで、輸入経費の推定額が不自然に歪むことを防ぐ（14.133・14.134）。"
+            f"`推定経費率`は、この計算結果を分かりやすく伝えるための逆算した参考値であり、"
+            f"計算の起点ではない（想定単価が0円等で算出できない場合はnullになる）。"
+            f"`関税データあり伝票数`が0の場合、関税分は0として扱われ、輸入経費の全額が"
+            f"「その他の諸掛」扱いになっている旨を伝えること。"
             f"「主な仕入先」・「仕入先別内訳」に含まれていない属性（国籍・取引条件の詳細等）を"
             f"作り話してはいけない。"
             f"【重要・2026-09-08、Noritsuguの指摘】各行の`仕入先別内訳`は、同じ輸送方法内でも"
