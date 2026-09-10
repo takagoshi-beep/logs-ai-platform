@@ -1206,14 +1206,15 @@ def test_budget_forecast_returns_aggregate_independent_of_records(monkeypatch):
 
 
 def test_purchase_surcharges_joins_with_purchases_and_filters(monkeypatch):
-    """14.85: purchase_surchargesテーブルへの新規アクセス。14.86で
-    諸掛区分IDのラベル変換をcode_masterの実データに基づき確定。"""
+    """14.85: purchase_surchargesテーブルへの新規アクセス。14.86で一度
+    区分ラベルを確定したが誤りだったと判明し、14.135で実際のシステム
+    画面と実データを突き合わせて訂正した。"""
     captured = {}
 
     def _fake_query(self, sql, params=()):
         captured["sql"] = sql
         captured["params"] = params
-        return [{"諸掛区分ID": 3, "金額円": 5000, "POnum": "914-1"}]
+        return [{"諸掛区分ID": 2, "金額円": 5000, "POnum": "914-1"}]
 
     monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
 
@@ -1228,8 +1229,8 @@ def test_purchase_surcharges_joins_with_purchases_and_filters(monkeypatch):
     assert 'pu."POnum" = %s' in captured["sql"]
     assert 'pu."LOGS_CODE" = %s' in captured["sql"]
     assert result["status"] == "ok"
-    assert result["records"][0]["諸掛区分ID"] == 3  # 生のIDも残す
-    assert result["records"][0]["諸掛区分名"] == "国内手数料消費税額"  # 14.86でラベル変換確定
+    assert result["records"][0]["諸掛区分ID"] == 2  # 生のIDも残す
+    assert result["records"][0]["諸掛区分名"] == "国内手数料消費税額"  # 14.135で訂正確定
 
 
 def test_purchase_surcharges_labels_unknown_category_as_other(monkeypatch):
@@ -1239,6 +1240,46 @@ def test_purchase_surcharges_labels_unknown_category_as_other(monkeypatch):
     )
     result = LogsysProvider()._purchase_surcharges({})
     assert result["records"][0]["諸掛区分名"] == "その他"
+
+
+def test_surcharge_category_labels_match_actual_system_screen():
+    """2026-09-09（14.135、Noritsuguが実際のシステム画面（仕入伝票の
+    諸掛一覧）と実データ（仕入ID6422）を突き合わせて発見）: 14.86では
+    「sync.py側の対応表が正しい」と判断していたが、これは誤りだった。
+    実際のシステム画面の順序・実データの諸掛区分IDの値を突き合わせて
+    確定した正しい対応表（関税=6、消費税に該当するのは2・7・8）を
+    そのままテストする。"""
+    from services.data_providers import _SURCHARGE_CATEGORY_LABELS
+
+    assert _SURCHARGE_CATEGORY_LABELS == {
+        1: "国内手数料（税抜）", 2: "国内手数料消費税額", 3: "運賃", 4: "燃料サーチャージ",
+        5: "通関料他", 6: "関税", 7: "輸入消費税（地方）", 8: "輸入消費税（内国）",
+    }
+
+
+def test_import_cost_estimate_tariff_join_filters_by_correct_category_id(monkeypatch):
+    """2026-09-09（14.135）: 14.134実装当初は諸掛区分ID=1を関税として
+    フィルタしていたが、これは_SURCHARGE_CATEGORY_LABELSの14.86時点の
+    誤りをそのまま引き継いでいたため、実際には「国内手数料（税抜）」を
+    関税として集計してしまっていた（FEDEX×ベルトの全伝票で関税額が
+    0円という不自然な結果になっていた）。実際の関税はID=6であるため、
+    SQLのJOIN条件がID=6でフィルタしていることを確認する。"""
+    captured = {}
+
+    def _fake_query(self, sql, params=()):
+        if "為替" in sql and "FROM purchases WHERE" in sql:
+            return [{"為替": 155.0}]
+        captured["sql"] = sql
+        return []
+
+    monkeypatch.setattr(LogsysProvider, "_query", _fake_query)
+
+    LogsysProvider()._import_cost_estimate(
+        {"quantity": 300, "unit_price_usd": 3, "category_code": 7}
+    )
+
+    assert 'ps."諸掛区分ID" = 6' in captured["sql"]
+    assert 'ps."諸掛区分ID" = 1' not in captured["sql"]
 
 
 def test_purchase_surcharges_returns_unavailable_when_empty(monkeypatch):

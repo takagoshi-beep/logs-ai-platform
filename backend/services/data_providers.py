@@ -53,14 +53,19 @@ def _product_category_label(code: Any) -> str:
 # （1=USD, 2=円, 3=RMB、Noritsuguが実際にcode_masterで確認して提示）。
 _CURRENCY_LABELS = {1: "USD", 2: "円", 3: "RMB"}
 
-# 2026-07-13（14.86追加）: purchase_surchargesの"諸掛区分ID"（CHARGES_
-# CATEGORY）。14.85時点ではsync.pyとapp.pyのコメントで矛盾する対応表が
-# あり未確認としていたが、Noritsuguがcode_masterで実データを確認し、
-# sync.py側の対応表が正しいと確定した。消費税に該当する区分は3・5・6
-# （sync.pyのコメント通り。app.py側の「2・7・8」は誤りだった）。
+# 2026-09-09（14.135、Noritsuguが実データ・実システムの画面で発見）:
+# purchase_surchargesの"諸掛区分ID"（CHARGES_CATEGORY）の対応表を訂正。
+# 14.86では「sync.py側の対応表（1=関税〜8=通関料他）が正しく、app.py側
+# （1=国内手数料〜）が誤り」と判断していたが、これは誤りだった。実際の
+# システム画面（仕入伝票の諸掛一覧）と、その伝票の生データ（諸掛区分ID
+# 1〜8の実際の値）を突き合わせたところ、app.py側の対応表（1=国内手数料
+# （税抜）〜8=輸入消費税（内国）、消費税に該当する区分は2・7・8）が
+# 正しいと判明した。14.86の判断は、実際のシステム画面と照合せず、
+# 2つのコメントのどちらが「それらしいか」で判断してしまっていた
+# （どちらも実データで裏を取っていなかった）。
 _SURCHARGE_CATEGORY_LABELS = {
-    1: "関税", 2: "国内手数料（税抜）", 3: "国内手数料消費税額", 4: "運賃",
-    5: "輸入消費税（地方）", 6: "輸入消費税（内国）", 7: "燃料サーチャージ", 8: "通関料他",
+    1: "国内手数料（税抜）", 2: "国内手数料消費税額", 3: "運賃", 4: "燃料サーチャージ",
+    5: "通関料他", 6: "関税", 7: "輸入消費税（地方）", 8: "輸入消費税（内国）",
 }
 
 
@@ -397,7 +402,7 @@ class LogsysProvider:
         # （ad valorem）一方、運賃・通関料・燃料サーチャージ等の「その他
         # の諸掛」は商品価値にほとんど左右されない固定的な性質を持つ
         # （14.133の教訓）。この2つの性質の違いを反映するため、
-        # purchase_surchargesから実際の関税額（諸掛区分ID=1）を伝票
+        # purchase_surchargesから実際の関税額（諸掛区分ID=6）を伝票
         # ごとに集計し、関税とその他の諸掛を分けて扱う。
         sql = (
             'WITH voucher_agg AS ('
@@ -406,7 +411,7 @@ class LogsysProvider:
             '         SUM(p."諸掛込金額円") AS "合計諸掛込金額円", '
             '         COALESCE(SUM(ps."金額円"), 0) AS "関税合計円" '
             '  FROM purchases p '
-            '  LEFT JOIN purchase_surcharges ps ON ps."仕入ID" = p."ID" AND ps."諸掛区分ID" = 1 '
+            '  LEFT JOIN purchase_surcharges ps ON ps."仕入ID" = p."ID" AND ps."諸掛区分ID" = 6 '
             '  WHERE p."ステータス" IN (2, 3) AND p."商品分類" = %s AND p."仕入金額円" > 0 '
             '    AND p."諸掛込金額円" > p."仕入金額円" AND p."仕入確定フラグ" = 1 '
             '    AND p."伝票日" >= CURRENT_DATE - INTERVAL \'1 year\' '
@@ -491,8 +496,16 @@ class LogsysProvider:
             # 一方、運賃・通関料・燃料サーチャージ等の「その他の諸掛」は
             # 商品価値にほとんど左右されない固定的な性質を持つ（14.133の
             # 教訓、そのまま維持）。そこで、実際に記録された関税額
-            # （purchase_surchargesの諸掛区分ID=1、"関税合計円"）を使い、
+            # （purchase_surchargesの諸掛区分ID=6、"関税合計円"）を使い、
             # 関税とその他の諸掛を分けて算出する。
+            #
+            # 2026-09-09（14.135、Noritsuguが実際のシステム画面と実データを
+            # 突き合わせて発見）: 14.134実装当初は諸掛区分ID=1を関税として
+            # フィルタしていたが、これは_SURCHARGE_CATEGORY_LABELSの14.86
+            # 時点の誤り（対応表全体が実際とズレていた）をそのまま引き継いで
+            # いたため、FEDEX×ベルトの全伝票で関税額が0円という不自然な
+            # 結果になっていた。実際の関税はID=6であり、ID=6に修正した後、
+            # 正しくデータが取得できることを確認した。
             #
             # 関税率は、実際に関税額が記録されている伝票（"関税合計円">0）
             # だけを対象に平均を取る。DDP（関税・輸送費を仕入先が商品代金
@@ -1337,15 +1350,15 @@ class LogsysProvider:
 
     def _purchase_surcharges(self, params: dict[str, Any]) -> dict[str, Any]:
         """purchase_surchargesをpurchasesとJOINし、仕入の諸掛（輸入経費）
-        内訳を取得する（2026-07-13、14.85追加、14.86で区分ラベル確定）。
+        内訳を取得する（2026-07-13、14.85追加。区分ラベルは14.86で一度
+        確定したが誤りだったと判明し、14.135で訂正済み）。
 
         従来チャットから参照されていなかったテーブル。
 
-        諸掛区分ID（CHARGES_CATEGORY、1〜8）は、Noritsuguがcode_masterで
-        実データを確認し対応表を確定済み（_SURCHARGE_CATEGORY_LABELS）。
-        14.85時点ではsync.py/app.pyのコメントで矛盾する対応表があり
-        未確認としていたが、sync.py側が正しいと判明した（app.py側の
-        「1=国内手数料」は誤り）。消費税に該当する区分は3・5・6。
+        諸掛区分ID（CHARGES_CATEGORY、1〜8）は、Noritsuguが実際のシステム
+        画面（仕入伝票の諸掛一覧）と実データを突き合わせて対応表を確定
+        済み（_SURCHARGE_CATEGORY_LABELS、14.135）。消費税に該当する
+        区分は2・7・8。
         """
         where = 'pu."ステータス" IN (2, 3)'
         args: list[Any] = []
@@ -1375,8 +1388,8 @@ class LogsysProvider:
             self.name, "purchase_surcharges",
             "ok" if rows else "unavailable",
             f"仕入諸掛明細{len(rows)}件を取得（各行の「諸掛区分名」は"
-            "code_masterで確認済みのラベル変換済み。消費税に該当するのは"
-            "区分3・5・6）。",
+            "実際のシステム画面で確認済みのラベル変換済み。消費税に該当するのは"
+            "区分2・7・8）。",
             rows,
         )
 
